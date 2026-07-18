@@ -20,6 +20,7 @@ const state = {
   updateStatus: { currentVersion: '', sources: [] },
   updateCheck: null,
   updateDialogOpen: false,
+  updateApplying: false,
   casePage: 'list',
   recordPage: 'list',
   caseSearch: '',
@@ -1064,7 +1065,8 @@ function renderOnlineUpdateDialog() {
   window.renderUpdateDialog?.({
     open: state.updateDialogOpen,
     status: state.updateStatus,
-    check: state.updateCheck
+    check: state.updateCheck,
+    applying: state.updateApplying
   });
 }
 
@@ -1116,10 +1118,18 @@ async function waitForBackendAndReload() {
 }
 
 async function applyOnlineUpdate(sourceKey) {
-  const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ sourceKey, restart: true }) });
-  toast(`已更新至 ${result.version}，正在重启服务`);
-  if (result.restartScheduled) waitForBackendAndReload();
-  else window.location.reload();
+  state.updateApplying = true;
+  renderOnlineUpdateDialog();
+  try {
+    const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ sourceKey, restart: true }) });
+    const sourceHint = result.fallbackFrom ? `，已自动切换至${result.sourceLabel}` : '';
+    toast(`已更新至 ${result.version}${sourceHint}，正在重启服务`);
+    if (result.restartScheduled) waitForBackendAndReload();
+    else window.location.reload();
+  } finally {
+    state.updateApplying = false;
+    renderOnlineUpdateDialog();
+  }
 }
 
 async function openSendDialog(target) {
