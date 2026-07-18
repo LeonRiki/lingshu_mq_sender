@@ -447,19 +447,16 @@ function scheduleSelfRestart() {
   }
 }
 
-async function applyRemoteUpdate() {
+async function applyRemoteUpdate(sourceKey) {
   if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
   updateInProgress = true;
   let staging = '';
   let backup;
   try {
-    const checked = await checkForUpdate();
-    if (!checked.release) {
-      const errors = checked.sources.filter(source => !source.ok).map(source => `${source.label}：${source.error}`);
-      throw updateError(errors.length ? `没有可用更新源：${errors.join('；')}` : '没有可用更新源', 502);
-    }
-    if (!checked.updateAvailable) throw updateError('当前已是最新版本', 409);
-    const release = checked.release;
+    const source = UPDATE_SOURCES.find(item => item.key === String(sourceKey || ''));
+    if (!source) throw updateError('请选择有效的更新源');
+    const release = await getLatestRelease(source);
+    if (!versionGreater(release.version, currentAppVersion())) throw updateError('所选更新源未提供更高版本', 409);
     staging = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
     for (const file of release.files) {
       const target = safeUpdatePath(staging, file.path);
@@ -1569,7 +1566,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/update/apply') {
       const body = await parseBody(req);
-      const result = await applyRemoteUpdate();
+      const result = await applyRemoteUpdate(body.sourceKey);
       const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
       return json(res, 200, { ok: true, ...result, restartScheduled });
     }

@@ -904,6 +904,7 @@ async function loadInitial() {
   state.config = normalizeConfigLabels(await api('/api/config'));
   state.fields = (await api('/api/meta')).sessionAttributeFields || [];
   await loadUpdateStatus().catch(error => console.warn('无法读取在线更新状态：', error));
+  await checkForUpdate().catch(error => console.warn('无法检查在线更新：', error));
   renderQuickTools();
   await loadCases();
   showCaseList();
@@ -1083,26 +1084,43 @@ function closeUpdateDialog() {
   renderOnlineUpdateDialog();
 }
 
-async function checkForUpdate() {
+async function checkForUpdate(options = {}) {
   state.updateCheck = await api('/api/update/check', { method: 'POST' });
   renderOnlineUpdateDialog();
   renderListToolbars();
-  if (!state.updateCheck.updateAvailable) {
+  if (options.notify && !state.updateCheck.updateAvailable) {
     const available = (state.updateCheck.sources || []).some(source => source.ok);
     toast(available ? '当前已是最新版本' : '两个更新源均不可用', available ? 'success' : 'warning');
   }
 }
 
-async function applyOnlineUpdate() {
-  const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ restart: true }) });
+async function waitForBackendAndReload() {
+  const deadline = Date.now() + 90 * 1000;
+  await new Promise(resolve => setTimeout(resolve, 3500));
+  while (Date.now() < deadline) {
+    try {
+      await api('/api/update/status');
+      window.location.reload();
+      return;
+    } catch (error) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+  toast('服务重启超时，请手动刷新页面', 'warning');
+}
+
+async function applyOnlineUpdate(sourceKey) {
+  const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ sourceKey, restart: true }) });
   toast(`已更新至 ${result.version}，正在重启服务`);
-  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
+  if (result.restartScheduled) waitForBackendAndReload();
+  else window.location.reload();
 }
 
 async function rollbackOnlineUpdate(backupId) {
   const result = await api('/api/update/rollback', { method: 'POST', body: JSON.stringify({ backupId, restart: true }) });
   toast(`已回滚 ${result.restored.length} 个文件，正在重启服务`);
-  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
+  if (result.restartScheduled) waitForBackendAndReload();
+  else window.location.reload();
 }
 
 async function openSendDialog(target) {
@@ -1805,8 +1823,8 @@ function bindEvents() {
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
     if (type === 'close-update-dialog') closeUpdateDialog();
-    if (type === 'check-update') checkForUpdate().catch(showError);
-    if (type === 'apply-online-update') applyOnlineUpdate().catch(showError);
+    if (type === 'check-update') checkForUpdate({ notify: true }).catch(showError);
+    if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
     if (type === 'rollback-online-update') rollbackOnlineUpdate(backupId).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);

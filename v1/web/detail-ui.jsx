@@ -337,12 +337,18 @@ function UpdateDialog({ data }) {
   const status = data.status || {};
   const check = data.check;
   const [backupId, setBackupId] = useState('');
+  const [sourceKey, setSourceKey] = useState('');
   useEffect(() => {
     if (!data.open) return;
     setBackupId(status.backups?.[0]?.id || '');
   }, [data.open, status.backups]);
   const release = check?.release;
   const sourceStates = check?.sources || (status.sources || []).map(source => ({ ...source, ok: null }));
+  const selectableSources = sourceStates.filter(source => source.ok && source.updateAvailable);
+  useEffect(() => {
+    if (!data.open) return;
+    setSourceKey(current => selectableSources.some(source => source.key === current) ? current : (selectableSources[0]?.key || ''));
+  }, [data.open, check]);
   const backupOptions = (status.backups || []).map(backup => ({
     value: backup.id,
     label: `${backup.previousVersion || '未知版本'} · ${backup.createdAt || backup.id}`
@@ -356,12 +362,12 @@ function UpdateDialog({ data }) {
     <Flex vertical gap={16} className="update-dialog-content">
       <Flex vertical gap={8}>
         <Text strong>当前版本 {status.currentVersion || '-'}</Text>
-        <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'green' : 'blue'}>{source.label} · {source.repository}{source.ok === false ? ` · ${source.error}` : source.version ? ` · v${source.version}` : ''}</Tag>)}</Space>
+        <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.updateAvailable ? 'green' : source.ok ? 'blue' : 'default'}>{source.label} · {source.repository}{source.ok === false ? ` · ${source.error}` : source.version ? ` · v${source.version}` : ''}</Tag>)}</Space>
         <Flex justify="flex-end"><Button type="primary" icon={<ReloadOutlined />} onClick={() => emitListToolbar('check-update')}>检查更新</Button></Flex>
       </Flex>
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
-      {check?.updateAvailable ? <Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update')}><Button type="primary" icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex> : null}
+      {check?.updateAvailable ? <Flex vertical gap={8}><Text strong>选择下载源</Text><Radio.Group value={sourceKey} onChange={event => setSourceKey(event.target.value)} vertical>{sourceStates.map(source => <Radio key={source.key} value={source.key} disabled={!source.ok || !source.updateAvailable}>{source.label} · {source.version ? `v${source.version}` : source.error || '未发现更新'}</Radio>)}</Radio.Group><Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
       <Flex vertical gap={8} className="update-rollback-section">
         <Text strong>历史备份</Text>
         <Flex gap={8} wrap>
@@ -374,7 +380,9 @@ function UpdateDialog({ data }) {
 }
 
 function UpdateManagerButton({ visible, updateAvailable }) {
-  return visible ? <Tooltip title="检查在线更新"><Badge dot={Boolean(updateAvailable)}><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Badge></Tooltip> : null;
+  if (!visible) return null;
+  if (updateAvailable) return <Tooltip title="发现新版本，选择来源后更新"><Button color="green" variant="solid" icon={<ReloadOutlined />} aria-label="更新" onClick={() => emitListToolbar('open-update-dialog')}>更新</Button></Tooltip>;
+  return <Tooltip title="检查在线更新"><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Tooltip>;
 }
 
 function ImportCaseDialog({ data, onCancel, onConfirm }) {
