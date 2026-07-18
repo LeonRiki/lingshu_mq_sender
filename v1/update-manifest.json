@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "notes": [],
   "files": [
     {
@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "ca0b5a915a49aa02e67a65943b7c16f82429b6a1a4a4c27fe7ca144c5d24f738"
+      "sha256": "7e96cd31a5b81e8ff2127d559bf6ed474761ef5e18bd5e7646298d9e3d21a9c9"
     },
     {
       "path": "docs/消息流可视化构建需求.md",
@@ -25,11 +25,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "beb4c3a0008aef9f506d594356a119f54f99a160427eb4c05963af9666c5103c"
+      "sha256": "da763937016afb43e0e6b564968423c46406584f2be70f12caf0ace169b687b2"
     },
     {
       "path": "package.json",
-      "sha256": "fd6b8d8cc0f201cce36a35c27a35e94cf06f5d3e73924fb320ebdfdd8e544a0c"
+      "sha256": "1409c17070798768f9352dde59379819aed2858dfaff631442566606906e3549"
     },
     {
       "path": "scripts/generate-update-manifest.js",
@@ -37,23 +37,23 @@
     },
     {
       "path": "server.js",
-      "sha256": "9a2483a360defd68a431298e584ce956c813154df3a0f078e22a00eccc360b3d"
+      "sha256": "1101986b76678780ff8aca1760dc8cd0a0db5033fd88d67ee65d9e3bc30d77ae"
     },
     {
       "path": "version.json",
-      "sha256": "de76543832fed28163b6108c2401b41d8052b7db1989fb621a0a4e314b8551e5"
+      "sha256": "cd29f2832dcc3f710b9eaf449f74fa6af3a3ece4dc38d8473e5f4f1f46a7266a"
     },
     {
       "path": "web/app.js",
-      "sha256": "e85af60d24113fedecd4f288c45b6277fd099a061773fb7a04d042f7405a40c9"
+      "sha256": "405b125bb979fe3f8b75d9222343cf6b50fbab20497e4af8363e15a4a7b24168"
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "299b535635e1a60bed3a2a0269e31c375eaa20719e0d581f1e033fbe7eb3a97e"
+      "sha256": "ab56b41ffd20c44f5c94ec132bb182ea5602790230d081a9d3e19578fad6865a"
     },
     {
       "path": "web/detail-ui.jsx",
-      "sha256": "4282b5193b4067f725ab3006670d86c7562b3fc4cc53f8c90519af1db6200831"
+      "sha256": "d82ccf203ca5d834cd4508ad80e4c94d971fe383daa64ff4893b44745022d6c8"
     },
     {
       "path": "web/editor-ui.jsx",
@@ -73,7 +73,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "c817f10817c103f540152c346fd01727b316f2cb34bcab06168c9bcb651c1b0a"
+      "sha256": "9d8189d0e3cf97d4582e43822fbf55ff0f6533e0ab8723472584f14367e42f20"
     },
     {
       "path": "win-启动服务.bat",

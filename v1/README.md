@@ -45,14 +45,20 @@ cache/        MQ 配置、运行缓存与在线更新备份
 
 ## 在线更新发布
 
-在线更新仅使用公开 GitHub Release，不保存 GitHub Token。发布新版本时：
+在线更新固定检查两个公开来源，不需要用户填写仓库地址或保存 Token：
+
+- GitHub `LeonRiki/lingshu_mq_sender` 的正式 Release
+- 魔搭模型仓库 `LeonRiki/lingshu_mq` 的 `master` 分支
+
+发布新版本时：
 
 1. 更新 `version.json` 中的版本号。
 2. 执行 `npm run build`，再执行 `npm run release:manifest` 生成 `update-manifest.json`。
 3. 提交源码和清单，创建与版本对应的 Git tag。
 4. 创建 GitHub Release，并将 `update-manifest.json` 作为名为 `v1-update-manifest.json` 的附件上传。
+5. 将相同提交推送到魔搭模型仓库的 `master` 分支。
 
-客户端在“在线更新”中填写公开仓库的 `owner/repository` 后，即可检查并安装新版本。更新只会替换源码白名单内的文件，绝不会覆盖 `config.json`、`cache/mq-configs.json`、`cases/` 或 `records/`。
+客户端在“在线更新”中即可检查并安装新版本。更新会优先使用版本更高的来源；更新只会替换源码白名单内的文件，绝不会覆盖 `config.json`、`cache/mq-configs.json`、`cases/` 或 `records/`。
 
 ## 依赖
 

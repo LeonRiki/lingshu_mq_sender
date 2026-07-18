@@ -17,7 +17,7 @@ const state = {
   mqConfigs: [],
   mqSettingsOpen: false,
   mqSettingsSelectedId: null,
-  updateStatus: { currentVersion: '', repository: '', configured: false, backups: [] },
+  updateStatus: { currentVersion: '', sources: [], backups: [] },
   updateCheck: null,
   updateDialogOpen: false,
   casePage: 'list',
@@ -1078,23 +1078,14 @@ function closeUpdateDialog() {
   renderUpdateDialog();
 }
 
-async function saveUpdateSettings(repository) {
-  state.updateStatus = await api('/api/update/settings', {
-    method: 'PUT',
-    body: JSON.stringify({ repository })
-  });
-  state.updateCheck = null;
-  renderUpdateDialog();
-  renderListToolbars();
-  toast('在线更新源已保存');
-}
-
 async function checkForUpdate() {
   state.updateCheck = await api('/api/update/check', { method: 'POST' });
   renderUpdateDialog();
   renderListToolbars();
-  if (!state.updateCheck.configured) toast('请先填写公开 GitHub 仓库', 'warning');
-  else if (!state.updateCheck.updateAvailable) toast('当前已是最新版本');
+  if (!state.updateCheck.updateAvailable) {
+    const available = (state.updateCheck.sources || []).some(source => source.ok);
+    toast(available ? '当前已是最新版本' : '两个更新源均不可用', available ? 'success' : 'warning');
+  }
 }
 
 async function applyOnlineUpdate() {
@@ -1791,7 +1782,7 @@ function bindEvents() {
   });
   document.addEventListener('list-page-ui-ready', renderListToolbars);
   document.addEventListener('list-toolbar-action', e => {
-    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, repository, backupId } = e.detail || {};
+    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId } = e.detail || {};
     if (type === 'new-case') createCase().catch(showError);
     if (type === 'import-case' && file) importTestCaseFile(file, format).catch(showError);
     if (type === 'export-cases') exportCases();
@@ -1809,7 +1800,6 @@ function bindEvents() {
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
     if (type === 'close-update-dialog') closeUpdateDialog();
-    if (type === 'save-update-settings') saveUpdateSettings(repository).catch(showError);
     if (type === 'check-update') checkForUpdate().catch(showError);
     if (type === 'apply-online-update') applyOnlineUpdate().catch(showError);
     if (type === 'rollback-online-update') rollbackOnlineUpdate(backupId).catch(showError);

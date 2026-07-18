@@ -12,11 +12,27 @@ const CACHE_DIR = path.join(ROOT, 'cache');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const MQ_CONFIGS_FILE = path.join(CACHE_DIR, 'mq-configs.json');
 const UPDATE_DIR = path.join(CACHE_DIR, 'updates');
-const UPDATE_SETTINGS_FILE = path.join(UPDATE_DIR, 'settings.json');
 const UPDATE_BACKUPS_DIR = path.join(UPDATE_DIR, 'backups');
 const UPDATE_STAGING_DIR = path.join(UPDATE_DIR, 'staging');
 const VERSION_FILE = path.join(ROOT, 'version.json');
 const UPDATE_MANIFEST_ASSET = 'v1-update-manifest.json';
+const UPDATE_SOURCES = [
+  {
+    key: 'github',
+    label: 'GitHub',
+    repository: 'LeonRiki/lingshu_mq_sender',
+    contentRoot: 'v1',
+    type: 'github-release'
+  },
+  {
+    key: 'modelscope',
+    label: '魔搭',
+    repository: 'LeonRiki/lingshu_mq',
+    contentRoot: 'v1',
+    revision: 'master',
+    type: 'modelscope-repository'
+  }
+];
 const UPDATE_ROOT_FILES = new Set([
   '.env.example',
   'README.md',
@@ -115,33 +131,6 @@ function updateError(message, statusCode = 400) {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
-}
-
-function normalizePublicRepository(value) {
-  const raw = String(value || '').trim()
-    .replace(/^https:\/\/github\.com\//i, '')
-    .replace(/\.git$/i, '')
-    .replace(/^\/+|\/+$/g, '');
-  if (!raw) return '';
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) {
-    throw updateError('公开仓库格式应为 owner/repository');
-  }
-  return raw;
-}
-
-function loadUpdateSettings() {
-  const settings = readJson(UPDATE_SETTINGS_FILE, {});
-  try {
-    return { repository: normalizePublicRepository(settings.repository) };
-  } catch (err) {
-    return { repository: '' };
-  }
-}
-
-function saveUpdateSettings(data) {
-  const settings = { repository: normalizePublicRepository(data?.repository) };
-  writePrivateJson(UPDATE_SETTINGS_FILE, settings);
-  return settings;
 }
 
 function currentAppVersion() {
@@ -249,14 +238,26 @@ async function fetchGitHubJson(url) {
   }
 }
 
-async function getLatestRelease(repository) {
-  const repo = normalizePublicRepository(repository);
-  if (!repo) throw updateError('请先配置公开 GitHub 仓库');
-  const release = await fetchGitHubJson(`https://api.github.com/repos/${repo}/releases/latest`);
+function parseRemoteVersion(buffer, sourceLabel) {
+  const version = buffer.toString('utf8').trim().split(/\r?\n/)[0]?.trim() || '';
+  if (!version || !/\d/.test(version) || /[<>{}]/.test(version)) throw updateError(`${sourceLabel} 版本文件格式无效`, 502);
+  return version;
+}
+
+function modelscopeFileUrl(source, rel) {
+  const params = new URLSearchParams({
+    Revision: source.revision,
+    FilePath: `${source.contentRoot}/${rel}`
+  });
+  return `https://www.modelscope.cn/api/v1/models/${source.repository}/repo?${params}`;
+}
+
+async function getGitHubRelease(source) {
+  const release = await fetchGitHubJson(`https://api.github.com/repos/${source.repository}/releases/latest`);
   const tag = String(release.tag_name || '').trim();
   if (!/^[A-Za-z0-9._-]+$/.test(tag)) throw updateError('GitHub Release 标签格式不受支持', 502);
   const asset = (Array.isArray(release.assets) ? release.assets : []).find(item => item?.name === UPDATE_MANIFEST_ASSET);
-  const expectedAssetUrl = `https://api.github.com/repos/${repo}/releases/assets/`;
+  const expectedAssetUrl = `https://api.github.com/repos/${source.repository}/releases/assets/`;
   if (!asset || !String(asset.url || '').startsWith(expectedAssetUrl)) {
     throw updateError(`Release 缺少 ${UPDATE_MANIFEST_ASSET} 附件`, 502);
   }
@@ -272,27 +273,78 @@ async function getLatestRelease(repository) {
     throw updateError('更新清单不是有效 JSON', 502);
   }
   return {
-    repository: repo,
-    tag,
+    ...source,
+    ref: tag,
     version: manifest.version,
     files: manifest.files,
     notes: manifest.notes,
     publishedAt: String(release.published_at || ''),
-    releaseName: String(release.name || release.tag_name || '')
+    releaseName: String(release.name || release.tag_name || ''),
+    fileUrl: rel => `https://raw.githubusercontent.com/${source.repository}/${tag}/${source.contentRoot}/${rel.split('/').map(encodeURIComponent).join('/')}`
   };
 }
 
+async function getModelScopeRelease(source) {
+  const version = parseRemoteVersion(await fetchRemoteBuffer(modelscopeFileUrl(source, 'version.json'), { maxBytes: 16 * 1024 }), source.label);
+  let manifest;
+  try {
+    const manifestBuffer = await fetchRemoteBuffer(modelscopeFileUrl(source, 'update-manifest.json'), { maxBytes: 512 * 1024 });
+    manifest = validateUpdateManifest(JSON.parse(manifestBuffer.toString('utf8')));
+  } catch (err) {
+    if (err.statusCode) throw err;
+    throw updateError('魔搭更新清单不是有效 JSON', 502);
+  }
+  if (manifest.version !== version) throw updateError('魔搭版本文件与更新清单版本不一致', 502);
+  return {
+    ...source,
+    ref: source.revision,
+    version,
+    files: manifest.files,
+    notes: manifest.notes,
+    publishedAt: '',
+    releaseName: `${source.repository}@${source.revision}`,
+    fileUrl: rel => modelscopeFileUrl(source, rel)
+  };
+}
+
+async function getLatestRelease(source) {
+  if (source.type === 'github-release') return getGitHubRelease(source);
+  if (source.type === 'modelscope-repository') return getModelScopeRelease(source);
+  throw updateError(`未知更新源：${source.key}`, 500);
+}
+
 async function checkForUpdate() {
-  const settings = loadUpdateSettings();
   const currentVersion = currentAppVersion();
-  if (!settings.repository) return { currentVersion, repository: '', configured: false, updateAvailable: false, backups: listUpdateBackups() };
-  const release = await getLatestRelease(settings.repository);
+  const sources = await Promise.all(UPDATE_SOURCES.map(async source => {
+    try {
+      const release = await getLatestRelease(source);
+      return {
+        key: source.key,
+        label: source.label,
+        repository: source.repository,
+        ok: true,
+        version: release.version,
+        updateAvailable: versionGreater(release.version, currentVersion),
+        release
+      };
+    } catch (err) {
+      return {
+        key: source.key,
+        label: source.label,
+        repository: source.repository,
+        ok: false,
+        error: err.message,
+        updateAvailable: false
+      };
+    }
+  }));
+  const available = sources.filter(source => source.ok && source.release);
+  const latest = available.reduce((best, source) => !best || versionGreater(source.release.version, best.version) ? source.release : best, null);
   return {
     currentVersion,
-    repository: settings.repository,
-    configured: true,
-    updateAvailable: versionGreater(release.version, currentVersion),
-    release,
+    sources: sources.map(({ release, ...source }) => source),
+    updateAvailable: Boolean(latest && versionGreater(latest.version, currentVersion)),
+    release: latest,
     backups: listUpdateBackups()
   };
 }
@@ -396,14 +448,16 @@ async function applyRemoteUpdate() {
   let backup;
   try {
     const checked = await checkForUpdate();
-    if (!checked.configured) throw updateError('请先配置公开 GitHub 仓库');
+    if (!checked.release) {
+      const errors = checked.sources.filter(source => !source.ok).map(source => `${source.label}：${source.error}`);
+      throw updateError(errors.length ? `没有可用更新源：${errors.join('；')}` : '没有可用更新源', 502);
+    }
     if (!checked.updateAvailable) throw updateError('当前已是最新版本', 409);
     const release = checked.release;
     staging = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
     for (const file of release.files) {
       const target = safeUpdatePath(staging, file.path);
-      const rawUrl = `https://raw.githubusercontent.com/${release.repository}/${release.tag}/${file.path.split('/').map(encodeURIComponent).join('/')}`;
-      const buffer = await fetchRemoteBuffer(rawUrl, { maxBytes: 20 * 1024 * 1024 });
+      const buffer = await fetchRemoteBuffer(release.fileUrl(file.path), { maxBytes: 20 * 1024 * 1024 });
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, buffer, { mode: 0o644 });
       if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
@@ -1498,20 +1552,9 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, cfg);
     }
     if (req.method === 'GET' && pathname === '/api/update/status') {
-      const settings = loadUpdateSettings();
       return json(res, 200, {
         currentVersion: currentAppVersion(),
-        repository: settings.repository,
-        configured: Boolean(settings.repository),
-        backups: listUpdateBackups()
-      });
-    }
-    if (req.method === 'PUT' && pathname === '/api/update/settings') {
-      const settings = saveUpdateSettings(await parseBody(req));
-      return json(res, 200, {
-        currentVersion: currentAppVersion(),
-        repository: settings.repository,
-        configured: Boolean(settings.repository),
+        sources: UPDATE_SOURCES.map(({ key, label, repository }) => ({ key, label, repository })),
         backups: listUpdateBackups()
       });
     }
@@ -1703,7 +1746,6 @@ module.exports = {
   checkMqGatewayReady,
   currentAppVersion,
   isUpdateAllowedPath,
-  normalizePublicRepository,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
   summarizeMqSend,

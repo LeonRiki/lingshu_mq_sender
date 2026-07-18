@@ -336,36 +336,28 @@ function MqSettingsButton({ visible }) {
 function UpdateDialog({ data }) {
   const status = data.status || {};
   const check = data.check;
-  const [repository, setRepository] = useState(status.repository || '');
   const [backupId, setBackupId] = useState('');
   useEffect(() => {
     if (!data.open) return;
-    setRepository(status.repository || '');
     setBackupId(status.backups?.[0]?.id || '');
-  }, [data.open, status.repository, status.backups]);
+  }, [data.open, status.backups]);
   const release = check?.release;
+  const sourceStates = check?.sources || (status.sources || []).map(source => ({ ...source, ok: null }));
   const backupOptions = (status.backups || []).map(backup => ({
     value: backup.id,
     label: `${backup.previousVersion || '未知版本'} · ${backup.createdAt || backup.id}`
   }));
   const checkSummary = !check
-    ? <Alert type="info" showIcon message="尚未检查更新" description="配置公开 GitHub 仓库后，可检查最新正式 Release。" />
-    : !check.configured
-      ? <Alert type="warning" showIcon message="尚未配置更新源" description="仓库必须为公开仓库，格式为 owner/repository。" />
-      : check.updateAvailable
-        ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.releaseName || release?.tag || ''} · 共 ${release?.files?.length || 0} 个更新文件`} />
-        : <Alert type="success" showIcon message="当前已是最新版本" description={`当前版本 ${check.currentVersion || status.currentVersion || '-'}`} />;
+    ? <Alert type="info" showIcon message="尚未检查更新" description="将依次检查固定的 GitHub 与魔搭更新源。" />
+    : check.updateAvailable
+      ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.label || ''} · ${release?.releaseName || release?.ref || ''} · 共 ${release?.files?.length || 0} 个更新文件`} />
+      : <Alert type={sourceStates.some(source => source.ok) ? 'success' : 'warning'} showIcon message={sourceStates.some(source => source.ok) ? '当前已是最新版本' : '更新源暂不可用'} description={`当前版本 ${check.currentVersion || status.currentVersion || '-'}`} />;
   return <Modal open={data.open} centered title="在线更新" width={720} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
     <Flex vertical gap={16} className="update-dialog-content">
       <Flex vertical gap={8}>
         <Text strong>当前版本 {status.currentVersion || '-'}</Text>
-        <label className="update-dialog-label">公开 GitHub 仓库
-          <Input value={repository} onChange={event => setRepository(event.target.value)} placeholder="owner/repository" />
-        </label>
-        <Flex justify="space-between" align="center" wrap gap={8}>
-          <Text type="secondary">仅支持公开 Release，不保存 GitHub Token。</Text>
-          <Space><Button onClick={() => emitListToolbar('save-update-settings', { repository })}>保存更新源</Button><Button type="primary" icon={<ReloadOutlined />} onClick={() => emitListToolbar('check-update')}>检查更新</Button></Space>
-        </Flex>
+        <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'green' : 'blue'}>{source.label} · {source.repository}{source.ok === false ? ` · ${source.error}` : source.version ? ` · v${source.version}` : ''}</Tag>)}</Space>
+        <Flex justify="flex-end"><Button type="primary" icon={<ReloadOutlined />} onClick={() => emitListToolbar('check-update')}>检查更新</Button></Flex>
       </Flex>
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
@@ -382,7 +374,7 @@ function UpdateDialog({ data }) {
 }
 
 function UpdateManagerButton({ visible, updateAvailable }) {
-  return visible ? <Tooltip title="检查或配置在线更新"><Badge dot={Boolean(updateAvailable)}><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Badge></Tooltip> : null;
+  return visible ? <Tooltip title="检查在线更新"><Badge dot={Boolean(updateAvailable)}><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Badge></Tooltip> : null;
 }
 
 function ImportCaseDialog({ data, onCancel, onConfirm }) {
