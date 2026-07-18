@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "version": "1.2.5",
+  "notes": [],
+  "files": [
+    {
+      "path": ".env.example",
+      "sha256": "16769a07dd2736e1f2fa6f8f461d304f959f1b19bbfb4b7609f458cd14567fa8"
+    },
+    {
+      "path": "README.md",
+      "sha256": "df0839c211089ae57f18cb14cbeaadea5540940d6ab7f8e9e39721d3e8a25983"
+    },
+    {
+      "path": "docs/消息流可视化构建需求.md",
+      "sha256": "f857005f32dd132a5bf25bc8e4f0c2ae547c6482783604059a3770074026a255"
+    },
+    {
+      "path": "mac-修复权限.command",
+      "sha256": "81bae8909e70742e256cae0dfc28cb4ed84251c694baf38a9d1b3e0818e7d9ab"
+    },
+    {
+      "path": "mac-启动服务.command",
+      "sha256": "ead4d578c5c7c0d3651480fdd6ae551524c7730bacfa04ad58a7afe4d19c922f"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "07d03b5529b182b249aafc049a4bb5dd528d82aacf9207dc75c0863b92fd7ef9"
+    },
+    {
+      "path": "package.json",
+      "sha256": "7184f5bb0c6fd17613ea23bb3978469aa1f7ce292681cb4ac5fbc742a8f591c2"
+    },
+    {
+      "path": "scripts/generate-update-manifest.js",
+      "sha256": "062bdfa249bff94334c094dd042a05697fd7f39254910f869bc3007c849a5187"
+    },
+    {
+      "path": "server.js",
+      "sha256": "74904c922e92fba29998688ebe455fc953a93321fc1345187011d1603d9b0565"
+    },
+    {
+      "path": "version.json",
+      "sha256": "3e174ab4fded11d95d4c2d2f66f06dc1a9768245a38a7e3c4c1e92141af64192"
+    },
+    {
+      "path": "web/app.js",
+      "sha256": "7598ba12dd9b1baf28b130cadc27295396be61b23739d57fb0ab9e773caea3d3"
+    },
+    {
+      "path": "web/detail-ui.js",
+      "sha256": "ce2027f78b7358c5c68fd30078ec398c79e10625678402ca1c3edbfe200e73ff"
+    },
+    {
+      "path": "web/detail-ui.jsx",
+      "sha256": "0c9b975b38a9da6c9886002394b62b470f12a708013708a7c63a70d2e39cc12d"
+    },
+    {
+      "path": "web/editor-ui.jsx",
+      "sha256": "d729fcc7dbb414fdfbacbd6aeb34928e9fed8c393ba5b2a70bbd677a6a678764"
+    },
+    {
+      "path": "web/favicon.ico",
+      "sha256": "d37101f94af206da48dd7f26c34c819adbf468674ae558702a7a3dca62842fc3"
+    },
+    {
+      "path": "web/favicon.png",
+      "sha256": "d37101f94af206da48dd7f26c34c819adbf468674ae558702a7a3dca62842fc3"
+    },
+    {
+      "path": "web/index.html",
+      "sha256": "7615656cc33abbbde21a891dd53920ba65be95925cb3e4bfc305866f66f4de27"
+    },
+    {
+      "path": "web/styles.css",
+      "sha256": "50b3e5bf3a45ef65ae1b58a6706a4126391270333fbea2e8b0b65ff4247e27e8"
+    },
+    {
+      "path": "win-启动服务.bat",
+      "sha256": "1255b345e322d176f951c273784ea30b4cd89a940462af9b1a0e66e53b20ad83"
+    }
+  ]
+}

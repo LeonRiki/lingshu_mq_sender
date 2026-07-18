@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>灵枢MQ发送器</title>
+  <link rel="icon" type="image/png" href="/favicon.png?v=20260714">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div id="appTabs"></div>
+    <div class="topbar-actions">
+      <div id="caseDetailHeader"></div>
+      <span id="appVersionApp" class="app-version"></span>
+      <div id="updateManagerApp"></div>
+      <div id="mqSettingsApp"></div>
+    </div>
+  </header>
+
+  <main>
+    <section id="casesView" class="view active">
+      <aside class="sidebar">
+        <div id="caseListApp"></div>
+      </aside>
+
+      <section class="editor">
+        <div id="emptyCase" class="empty">选择或创建一个测试用例</div>
+        <div id="caseEditor" class="editor-body hidden">
+          <input id="caseName" type="hidden">
+          <input id="expectedResult" type="hidden">
+          <div id="caseEditorApp"></div>
+
+          <section class="case-editor-block legacy-case-editor">
+            <header class="content-editor-heading">
+              <div>
+                <div class="panel-title">测试用例内容</div>
+              </div>
+              <label class="json-mode-switch" for="jsonModeToggle">
+                <span>JSON 模式</span>
+                <input id="jsonModeToggle" type="checkbox" role="switch" aria-label="JSON 模式">
+                <span class="switch-track" aria-hidden="true"></span>
+              </label>
+            </header>
+
+            <div id="detailMain" class="detail-main">
+            <section class="panel input-workbench">
+
+              <section id="messageContentEditor">
+                <section id="singleEditor">
+                  <div class="student-message-card">
+                    <div class="student-message-title">学员消息</div>
+                    <div id="singleHistory" class="single-history"></div>
+                    <div id="singleMessageList" class="message-list"></div>
+                    <div class="message-composer">
+                      <textarea id="singleInput" class="textarea message-input" placeholder="输入新的学员消息"></textarea>
+                      <button id="appendSingleMessageBtn" type="button">添加发送内容</button>
+                    </div>
+                    <section class="message-quick-config card-quick-config">
+                      <div class="quick-hover-groups">
+                        <div class="quick-hover-group">
+                          <button class="secondary quick-trigger">用户意向</button>
+                          <div id="intentQuick" class="hover-menu" role="menu"></div>
+                        </div>
+                        <div class="quick-hover-group">
+                          <button class="secondary quick-trigger">收货地址</button>
+                          <div id="addressQuick" class="hover-menu" role="menu"></div>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+
+                <section id="multiEditor" class="hidden">
+                  <div class="panel-header inner">
+                    <div class="multi-title">用户消息序列</div>
+                    <div class="interval-control">
+                      <label for="multiIntervalSeconds">消息间隔</label>
+                      <div>
+                        <input id="multiIntervalSeconds" class="input" type="number" min="0" value="3">
+                        <span>秒</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="chatList" class="chat-list"></div>
+                  <button id="addStudentBtn" class="secondary add-message-btn">添加用户消息</button>
+                </section>
+
+              </section>
+
+            </section>
+
+            <aside id="conversationProperties" class="panel session-card">
+              <div class="panel-title">会话属性</div>
+              <section class="sidebar-property-section">
+                <div class="property-heading required">会话轮数</div>
+                <div id="caseModeRadios" class="mode-radio-list">
+                  <label class="mode-radio"><input type="radio" name="caseModeRadio" value="single" checked><span>单轮</span></label>
+                  <label class="mode-radio"><input type="radio" name="caseModeRadio" value="multi"><span>多轮</span></label>
+                </div>
+                <select id="caseMode" class="hidden" aria-hidden="true">
+                  <option value="single">单次会话</option>
+                  <option value="multi">多次会话</option>
+                </select>
+              </section>
+
+              <section class="sidebar-property-section">
+                <div class="property-heading required">TagList 设置</div>
+                <div class="tag-entry-row">
+                  <textarea id="tagList" class="textarea small" placeholder="请输入标签"></textarea>
+                </div>
+                <div class="helper-section flat">
+                  <div class="helper-title">预设标签</div>
+                  <div id="tagQuick" class="quick-grid"></div>
+                  <div class="inline-row course-row">
+                    <input id="courseTimeQuick" class="input" placeholder="开课时间，如 260710">
+                    <button id="addCourseTimeQuick" class="secondary">添加</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="sidebar-property-section">
+                <div class="property-heading">inputList</div>
+                <textarea id="inputList" class="textarea small code" placeholder='["168885...:老师消息"]'></textarea>
+              </section>
+
+              <section class="sidebar-property-section">
+                <div class="property-heading">其他会话属性</div>
+                <select id="sessionMode" class="hidden"></select>
+                <div id="sessionModeRadios" class="compact-radio-row"></div>
+                <div id="attributeConfigContent">
+                  <div id="attrTargetRow" class="attr-target-row hidden">
+                    <label for="attrTarget">配置对象</label>
+                    <select id="attrTarget" class="input"></select>
+                  </div>
+                  <div class="attr-row">
+                    <select id="attrKey" class="input"></select>
+                    <div id="attrValueSlot"></div>
+                    <button id="addAttrBtn" class="secondary">添加属性</button>
+                  </div>
+                  <div id="attrList" class="attr-list"></div>
+                </div>
+              </section>
+            </aside>
+            </div>
+
+            <section id="jsonContentEditor" class="json-editor-panel hidden">
+              <div class="panel-title">当前用例数据 JSON</div>
+              <textarea id="messageJsonEditor" class="textarea code json-content-editor" spellcheck="false" placeholder="当前数据将显示在这里"></textarea>
+              <div class="panel-description">修改 JSON 后关闭 JSON 模式即可同步到消息和会话属性编辑界面。</div>
+            </section>
+          </section>
+
+          <section id="caseDetailActions" class="case-detail-actions"></section>
+        </div>
+      </section>
+    </section>
+
+    <section id="recordsView" class="view">
+      <aside class="sidebar">
+        <div id="recordListApp"></div>
+      </aside>
+      <section class="record-detail">
+        <button id="backToRecordsBtn" class="secondary hidden">返回列表</button>
+        <div id="emptyRecord" class="empty">选择一条测试记录查看快照</div>
+        <div id="recordDetail" class="hidden"></div>
+      </section>
+    </section>
+
+    <section id="labelsView" class="view">
+      <div id="labelManagementApp"></div>
+    </section>
+  </main>
+
+  <div id="sendDialogApp"></div>
+  <script src="/app.js"></script>
+  <script src="/detail-ui.js"></script>
+</body>
+</html>
