@@ -481,9 +481,9 @@ function RecordDetailHeader() {
 
 function DetailActions() {
   return (
-    <Space wrap size={8}>
-      <Button icon={<SaveOutlined />} onClick={() => emit('save')}>保存用例</Button>
-      <Button type="primary" icon={<SendOutlined />} onClick={() => emit('send')}>通过MQ发送</Button>
+    <Space wrap size={16}>
+      <Button icon={<SendOutlined />} onClick={() => emit('send')}>通过MQ发送</Button>
+      <Button type="primary" icon={<SaveOutlined />} onClick={() => emit('save')}>保存用例</Button>
     </Space>
   );
 }
