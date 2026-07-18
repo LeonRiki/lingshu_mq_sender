@@ -376,6 +376,10 @@ function createUpdateBackup(files) {
   return { id, root };
 }
 
+function ensureUpdateFilePermissions(target, rel) {
+  if (process.platform !== 'win32' && String(rel || '').endsWith('.command')) fs.chmodSync(target, 0o755);
+}
+
 function restoreUpdateBackup(id) {
   if (!/^[0-9_]+_[a-f0-9]{6}$/.test(String(id || ''))) throw updateError('备份标识无效');
   const root = path.resolve(UPDATE_BACKUPS_DIR, id);
@@ -396,6 +400,7 @@ function restoreUpdateBackup(id) {
     const temp = `${target}.rollback-${process.pid}-${Date.now()}.tmp`;
     fs.copyFileSync(source, temp);
     fs.renameSync(temp, target);
+    ensureUpdateFilePermissions(target, item.path);
     restored.push(item.path);
   });
   return { restored, previousVersion: String(metadata.previousVersion || '') };
@@ -485,6 +490,7 @@ async function applyRemoteUpdate(sourceKey) {
         const temp = `${target}.update-${process.pid}-${Date.now()}.tmp`;
         fs.copyFileSync(source, temp);
         fs.renameSync(temp, target);
+        ensureUpdateFilePermissions(target, file.path);
         applied.push(file.path);
       });
     } catch (err) {
@@ -1748,6 +1754,7 @@ module.exports = {
   casesFromCsvText,
   checkMqGatewayReady,
   currentAppVersion,
+  ensureUpdateFilePermissions,
   getFallbackUpdateSource,
   isUpdateAllowedPath,
   sendSnapshotToMq,
