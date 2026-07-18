@@ -45,6 +45,7 @@ const UPDATE_ROOT_FILES = new Set([
   'win-启动服务.bat'
 ]);
 const UPDATE_PREFIXES = ['docs/', 'scripts/', 'web/'];
+const UPDATE_MANIFEST_PREFIXES = ['scripts/', 'web/'];
 let updateInProgress = false;
 let restartScheduled = false;
 const PROTOCOL_MESSAGE_FIELDS = [
@@ -155,10 +156,18 @@ function versionGreater(left, right) {
   return false;
 }
 
-function isUpdateAllowedPath(value) {
+function isUpdatePathWithPrefixes(value, prefixes) {
   const rel = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!rel || rel.split('/').some(part => !part || part === '.' || part === '..')) return false;
-  return UPDATE_ROOT_FILES.has(rel) || UPDATE_PREFIXES.some(prefix => rel.startsWith(prefix));
+  return UPDATE_ROOT_FILES.has(rel) || prefixes.some(prefix => rel.startsWith(prefix));
+}
+
+function isUpdateAllowedPath(value) {
+  return isUpdatePathWithPrefixes(value, UPDATE_PREFIXES);
+}
+
+function isUpdateManifestPath(value) {
+  return isUpdatePathWithPrefixes(value, UPDATE_MANIFEST_PREFIXES);
 }
 
 function safeUpdatePath(baseDir, value) {
@@ -1713,6 +1722,7 @@ module.exports = {
   checkMqGatewayReady,
   currentAppVersion,
   isUpdateAllowedPath,
+  isUpdateManifestPath,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
   summarizeMqSend,

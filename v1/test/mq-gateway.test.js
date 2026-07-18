@@ -5,9 +5,18 @@ const {
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
+  isUpdateAllowedPath,
+  isUpdateManifestPath,
   sendSnapshotsInOrder,
   summarizeMqSend
 } = require('../server');
+
+test('新更新清单忽略 docs 与 test，旧清单仍兼容 docs', () => {
+  assert.equal(isUpdateAllowedPath('docs/消息流可视化构建需求.md'), true);
+  assert.equal(isUpdateManifestPath('docs/消息流可视化构建需求.md'), false);
+  assert.equal(isUpdateManifestPath('test/mq-gateway.test.js'), false);
+  assert.equal(isUpdateManifestPath('web/detail-ui.js'), true);
+});
 
 test('CSV 导入提取 input、skip_reason 与 modelName', () => {
   const cases = casesFromCsvText('input,skip_reason,modelName\n"第一条，含逗号","跳过原因","模型 A"\n"第二条\n含换行",,"模型 B"');
