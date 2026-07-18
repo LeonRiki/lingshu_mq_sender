@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "notes": [],
   "files": [
     {
@@ -9,7 +9,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "7e96cd31a5b81e8ff2127d559bf6ed474761ef5e18bd5e7646298d9e3d21a9c9"
+      "sha256": "df0839c211089ae57f18cb14cbeaadea5540940d6ab7f8e9e39721d3e8a25983"
     },
     {
       "path": "docs/消息流可视化构建需求.md",
@@ -25,11 +25,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "da763937016afb43e0e6b564968423c46406584f2be70f12caf0ace169b687b2"
+      "sha256": "026026ad86035b5d3ef18a9fa48e5b160363d337e4e65a78d417f0a921bc20ae"
     },
     {
       "path": "package.json",
-      "sha256": "1409c17070798768f9352dde59379819aed2858dfaff631442566606906e3549"
+      "sha256": "ac2c8157df04205b8e60104ba25b63f9cc40fda348b89eacba9f075024361aa8"
     },
     {
       "path": "scripts/generate-update-manifest.js",
@@ -37,11 +37,11 @@
     },
     {
       "path": "server.js",
-      "sha256": "1101986b76678780ff8aca1760dc8cd0a0db5033fd88d67ee65d9e3bc30d77ae"
+      "sha256": "785752e190e06187da41e7597daa89f4c4695c640c88cfce982d0bec163afe13"
     },
     {
       "path": "version.json",
-      "sha256": "cd29f2832dcc3f710b9eaf449f74fa6af3a3ece4dc38d8473e5f4f1f46a7266a"
+      "sha256": "fc10bffd324d6209b99bfd8a38dbeb00b547d66e7e156fdadd8582493c34abdb"
     },
     {
       "path": "web/app.js",

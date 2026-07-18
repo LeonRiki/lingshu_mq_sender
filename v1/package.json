@@ -1,6 +1,6 @@
 {
   "name": "workflow-message-tester-v1",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "AI 工作流消息测试平台 V1，本地 Node 服务 + 静态前端，无运行时 npm 依赖。",
   "scripts": {
