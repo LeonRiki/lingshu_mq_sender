@@ -1371,9 +1371,9 @@ pre {
 
 .message-case-scrollbar {
   position: absolute;
-  top: 4px;
+  top: 0;
   right: 3px;
-  bottom: 4px;
+  bottom: 0;
   width: 6px;
   opacity: 0;
   transition: opacity 0.16s ease;
