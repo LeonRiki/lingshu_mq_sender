@@ -189,24 +189,6 @@ button:disabled {
   min-width: 0;
 }
 
-.update-dialog-modal .ant-modal-content {
-  padding: 0;
-}
-
-.update-dialog-modal .ant-modal-header {
-  margin-bottom: 0;
-  padding: 28px 32px 0;
-}
-
-.update-dialog-modal .ant-modal-body {
-  padding: 28px 32px 32px;
-}
-
-.update-dialog-modal .ant-modal-close {
-  top: 28px;
-  right: 28px;
-}
-
 .update-dialog-title .ant-typography {
   margin: 0;
 }
@@ -234,9 +216,9 @@ button:disabled {
 .update-source-card.ant-radio-wrapper {
   position: relative;
   display: block;
-  min-height: 120px;
+  min-height: 72px;
   margin-inline-end: 0;
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
@@ -263,7 +245,7 @@ button:disabled {
 }
 
 .update-source-card-content {
-  min-height: 78px;
+  min-height: 60px;
 }
 
 .update-source-card-main {
@@ -285,6 +267,11 @@ button:disabled {
   object-fit: contain;
 }
 
+.update-source-name {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
 .update-source-check {
   flex: 0 0 auto;
   color: #22a559;
@@ -303,8 +290,8 @@ button:disabled {
 }
 
 .update-dialog-actions {
-  margin-top: 4px;
-  padding-top: 24px;
+  margin: 0 -28px;
+  padding: 20px 28px 24px;
   border-top: 1px solid var(--border);
 }
 
