@@ -355,20 +355,23 @@ function UpdateDialog({ data }) {
     if (!data.open) return;
     setSourceKey(current => selectableSources.some(source => source.key === current) ? current : (selectableSources[0]?.key || ''));
   }, [data.open, check]);
+  const selectedSource = selectableSources.find(source => source.key === sourceKey) || selectableSources[0];
+  const targetVersion = selectedSource?.version || release?.version || '-';
+  const currentVersion = check?.currentVersion || status.currentVersion || '-';
   const checkSummary = !check
     ? <Alert type="info" showIcon message="尚未检查更新" description="将依次检查固定的 GitHub 与魔搭更新源。" />
-    : check.updateAvailable
-      ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.label || ''} · v${release?.version || '-'} · 共 ${release?.files?.length || 0} 个更新文件`} />
-      : <Alert type={sourceStates.some(source => source.ok) ? 'success' : 'warning'} showIcon message={sourceStates.some(source => source.ok) ? '当前已是最新版本' : '更新源暂不可用'} description={`当前版本 ${check.currentVersion || status.currentVersion || '-'}`} />;
-  return <Modal open={data.open} centered title="在线更新" width={720} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
+    : !check.updateAvailable
+      ? <Alert type={sourceStates.some(source => source.ok) ? 'success' : 'warning'} showIcon message={sourceStates.some(source => source.ok) ? '当前已是最新版本' : '更新源暂不可用'} description={`当前版本 ${currentVersion}`} />
+      : null;
+  const modalTitle = check?.updateAvailable
+    ? <Flex vertical gap={2} className="update-dialog-title"><Text type="success" strong>发现新版本</Text><Flex align="center" gap={8} wrap><Title level={4}>更新至 v{targetVersion}</Title><Text type="secondary">当前版本 v{currentVersion}</Text></Flex></Flex>
+    : '在线更新';
+  return <Modal open={data.open} centered title={modalTitle} width={720} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
     <Flex vertical gap={16} className="update-dialog-content">
-      <Flex vertical gap={8}>
-        <Text strong>当前版本 {status.currentVersion || '-'}</Text>
-        {!check?.updateAvailable ? <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'blue' : 'default'} icon={<UpdateSourceIcon sourceKey={source.key} />}>{source.label} · {source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Tag>)}</Space> : null}
-      </Flex>
+      {!check?.updateAvailable ? <Flex vertical gap={8}><Text strong>当前版本 {currentVersion}</Text><Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'blue' : 'default'} icon={<UpdateSourceIcon sourceKey={source.key} />}>{source.label} · {source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Tag>)}</Space></Flex> : null}
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
-      {check?.updateAvailable ? <Flex vertical gap={8}><Text strong>选择下载源</Text><Radio.Group value={sourceKey} onChange={event => setSourceKey(event.target.value)} vertical>{sourceStates.map(source => <Radio key={source.key} value={source.key} disabled={!source.ok || !source.updateAvailable}><UpdateSourceLabel source={source} /></Radio>)}</Radio.Group><Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
+      {check?.updateAvailable ? <Flex vertical gap={16}><Flex vertical gap={8}><Text strong>选择更新源</Text><Radio.Group className="update-source-grid" value={sourceKey} onChange={event => setSourceKey(event.target.value)}>{sourceStates.map(source => <Radio key={source.key} className={`update-source-card ${sourceKey === source.key ? 'is-selected' : ''}`} value={source.key} disabled={!source.ok || !source.updateAvailable}><Flex vertical gap={4}><Space size={8}><UpdateSourceIcon sourceKey={source.key} /><Text strong>{source.label}</Text></Space><Text type="secondary">{source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Text></Flex></Radio>)}</Radio.Group></Flex><Text type="secondary" className="update-source-hint">将从 {selectedSource?.label || '-'} 更新至 v{targetVersion}。更新前会自动备份，更新完成后服务会自动重启。</Text><Flex className="update-dialog-actions" justify="flex-end" gap={8}><Button onClick={() => emitListToolbar('close-update-dialog')}>取消</Button><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
     </Flex>
   </Modal>;
 }
