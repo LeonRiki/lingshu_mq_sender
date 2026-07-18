@@ -5,6 +5,7 @@ const {
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
+  getFallbackUpdateSource,
   isUpdateAllowedPath,
   sendSnapshotsInOrder,
   summarizeMqSend
@@ -19,6 +20,11 @@ test('更新包只包含运行所需文件与静态资源', () => {
   assert.equal(isUpdateAllowedPath('scripts/generate-update-manifest.js'), false);
   assert.equal(isUpdateAllowedPath('web/detail-ui.jsx'), false);
   assert.equal(isUpdateAllowedPath('package-lock.json'), false);
+});
+
+test('GitHub 下载失败时切换到魔搭', () => {
+  assert.equal(getFallbackUpdateSource({ key: 'github' })?.key, 'modelscope');
+  assert.equal(getFallbackUpdateSource({ key: 'modelscope' }), null);
 });
 
 test('CSV 导入提取 input、skip_reason 与 modelName', () => {

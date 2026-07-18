@@ -312,6 +312,11 @@ async function getLatestRelease(source) {
   throw updateError(`未知更新源：${source.key}`, 500);
 }
 
+function getFallbackUpdateSource(source) {
+  if (source?.key !== 'github') return null;
+  return UPDATE_SOURCES.find(item => item.key === 'modelscope') || null;
+}
+
 async function checkForUpdate() {
   const currentVersion = currentAppVersion();
   const sources = await Promise.all(UPDATE_SOURCES.map(async source => {
@@ -435,16 +440,41 @@ async function applyRemoteUpdate(sourceKey) {
   try {
     const source = UPDATE_SOURCES.find(item => item.key === String(sourceKey || ''));
     if (!source) throw updateError('请选择有效的更新源');
-    const release = await getLatestRelease(source);
-    if (!versionGreater(release.version, currentAppVersion())) throw updateError('所选更新源未提供更高版本', 409);
-    staging = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
-    for (const file of release.files) {
-      const target = safeUpdatePath(staging, file.path);
-      const buffer = await fetchRemoteBuffer(release.fileUrl(file.path), { maxBytes: 20 * 1024 * 1024 });
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, buffer, { mode: 0o644 });
-      if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
+    const stageRemoteUpdate = async updateSource => {
+      let stageRoot = '';
+      try {
+        const release = await getLatestRelease(updateSource);
+        if (!versionGreater(release.version, currentAppVersion())) throw updateError('所选更新源未提供更高版本', 409);
+        stageRoot = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
+        for (const file of release.files) {
+          const target = safeUpdatePath(stageRoot, file.path);
+          const buffer = await fetchRemoteBuffer(release.fileUrl(file.path), { maxBytes: 20 * 1024 * 1024 });
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, buffer, { mode: 0o644 });
+          if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
+        }
+        return { release, source: updateSource, staging: stageRoot };
+      } catch (err) {
+        if (stageRoot) fs.rmSync(stageRoot, { recursive: true, force: true });
+        throw err;
+      }
+    };
+    let staged;
+    let fallbackFrom = '';
+    try {
+      staged = await stageRemoteUpdate(source);
+    } catch (err) {
+      const fallbackSource = getFallbackUpdateSource(source);
+      if (!fallbackSource || ![502, 504].includes(err.statusCode)) throw err;
+      try {
+        staged = await stageRemoteUpdate(fallbackSource);
+        fallbackFrom = source.key;
+      } catch (fallbackError) {
+        throw updateError(`GitHub 下载失败，魔搭备用源也不可用：${fallbackError.message}`, fallbackError.statusCode || 502);
+      }
     }
+    const { release } = staged;
+    staging = staged.staging;
     backup = createUpdateBackup(release.files);
     const applied = [];
     try {
@@ -466,7 +496,10 @@ async function applyRemoteUpdate(sourceKey) {
       backupId: backup.id,
       version: release.version,
       releaseName: release.releaseName,
-      notes: release.notes
+      notes: release.notes,
+      sourceKey: staged.source.key,
+      sourceLabel: staged.source.label,
+      fallbackFrom
     };
   } finally {
     if (staging) fs.rmSync(staging, { recursive: true, force: true });
@@ -1715,6 +1748,7 @@ module.exports = {
   casesFromCsvText,
   checkMqGatewayReady,
   currentAppVersion,
+  getFallbackUpdateSource,
   isUpdateAllowedPath,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
