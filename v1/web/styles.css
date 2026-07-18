@@ -1293,16 +1293,16 @@ pre {
   margin-bottom: 10px;
 }
 
-.message-quick-tabs .ant-tabs-content-holder,
-.message-quick-tabs .ant-tabs-content,
-.message-quick-tabs .ant-tabs-tabpane {
+.message-quick-tabs .ant-tabs-body-holder,
+.message-quick-tabs .ant-tabs-body,
+.message-quick-tabs .ant-tabs-content {
   min-height: 0;
   flex: 1;
 }
 
-.message-quick-tabs .ant-tabs-content-holder,
-.message-quick-tabs .ant-tabs-content,
-.message-quick-tabs .ant-tabs-tabpane-active {
+.message-quick-tabs .ant-tabs-body-holder,
+.message-quick-tabs .ant-tabs-body,
+.message-quick-tabs .ant-tabs-content-active {
   display: flex;
 }
 
