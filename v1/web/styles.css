@@ -942,6 +942,10 @@ pre {
   padding-bottom: 24px;
 }
 
+.case-detail-open.visual-editor-ready .editor {
+  padding-bottom: 86px;
+}
+
 .visual-editor-ready .editor-body {
   min-height: auto;
 }
