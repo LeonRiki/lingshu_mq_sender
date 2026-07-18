@@ -1257,7 +1257,10 @@ async function batchEditSelectedCases() {
     userTags: labelNames('userTags'),
     archivedUserTags: labelNames('userTags', 'archived')
   });
-  if (!changes || (!changes.changeScenario && !changes.changeTags)) return;
+  const fieldChanges = changes?.fieldChanges || {};
+  const fieldValues = changes?.fieldValues || {};
+  const hasSessionFieldChanges = Object.values(fieldChanges).some(Boolean);
+  if (!changes || (!changes.changeScenario && !changes.changeTags && !hasSessionFieldChanges)) return;
 
   const businessScenario = String(changes.businessScenario || '').trim();
   const tags = (changes.tags || []).map(value => String(value || '').trim()).filter(Boolean);
@@ -1275,6 +1278,9 @@ async function batchEditSelectedCases() {
     const next = copyCaseData(current);
     if (changes.changeScenario) next.meta.businessScenario = businessScenario;
     if (changes.changeTags) next.message.tagList = tags;
+    Object.entries(fieldChanges).forEach(([field, changed]) => {
+      if (changed) next.message[field] = String(fieldValues[field] || '').trim();
+    });
     return api(`/api/cases/${encodeURIComponent(caseId)}`, {
       method: 'PUT',
       body: JSON.stringify(next)

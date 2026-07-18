@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, ConfigProvider, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, ConfigProvider, DatePicker, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleFilled,
@@ -416,6 +417,8 @@ function ImportCaseDialog({ data, onCancel, onConfirm }) {
 function BatchEditDialog({ data, onCancel, onConfirm }) {
   const [changeScenario, setChangeScenario] = useState(false);
   const [changeTags, setChangeTags] = useState(false);
+  const [fieldChanges, setFieldChanges] = useState({ latestMsgTime: false, friendNick: false, weworkAccountAlias: false, addTime: false });
+  const [fieldValues, setFieldValues] = useState({ latestMsgTime: '', friendNick: '', weworkAccountAlias: '', addTime: '' });
   const [businessScenario, setBusinessScenario] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
   const [tags, setTags] = useState([]);
@@ -431,7 +434,16 @@ function BatchEditDialog({ data, onCancel, onConfirm }) {
     setBusinessScenario(value);
     setScenarioSearch('');
   };
-  return <Modal open centered title="批量修改测试用例" onCancel={onCancel} footer={<Space><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!changeScenario && !changeTags} onClick={() => onConfirm({ changeScenario, businessScenario, changeTags, tags })}>确定</Button></Space>}>
+  const sessionFields = [
+    { key: 'latestMsgTime', label: '最新消息时间', type: 'datetime' },
+    { key: 'friendNick', label: '好友昵称', type: 'text' },
+    { key: 'weworkAccountAlias', label: '企微账号别名', type: 'text' },
+    { key: 'addTime', label: '添加时间', type: 'datetime' }
+  ];
+  const hasSessionFieldChanges = Object.values(fieldChanges).some(Boolean);
+  const setFieldChange = (key, checked) => setFieldChanges(current => ({ ...current, [key]: checked }));
+  const setFieldValue = (key, value) => setFieldValues(current => ({ ...current, [key]: value }));
+  return <Modal open centered title="批量修改测试用例" onCancel={onCancel} footer={<Space><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!changeScenario && !changeTags && !hasSessionFieldChanges} onClick={() => onConfirm({ changeScenario, businessScenario, changeTags, tags, fieldChanges, fieldValues })}>确定</Button></Space>}>
     <Flex vertical gap={16}>
       <Text type="secondary">已选择 {data.count} 个测试用例</Text>
       <Flex vertical gap={8}>
@@ -442,6 +454,13 @@ function BatchEditDialog({ data, onCancel, onConfirm }) {
         <Checkbox checked={changeTags} onChange={event => setChangeTags(event.target.checked)}>TagList</Checkbox>
         {changeTags ? <Select mode="tags" value={tags} options={(data.userTags || []).map(value => ({ value, label: value }))} tokenSeparators={[',', '，', ';']} onChange={values => setTags(values.filter(value => !(data.archivedUserTags || []).includes(value)))} placeholder="选择或输入 TagList" style={{ width: '100%' }} /> : null}
       </Flex>
+      {sessionFields.map(field => <Flex key={field.key} vertical gap={8}>
+        <Checkbox checked={fieldChanges[field.key]} onChange={event => setFieldChange(field.key, event.target.checked)}>{field.label}（{field.key}）</Checkbox>
+        {fieldChanges[field.key] ? field.type === 'datetime'
+          ? <DatePicker showTime allowClear value={fieldValues[field.key] ? dayjs(fieldValues[field.key]) : null} onChange={(_, value) => setFieldValue(field.key, value || '')} format="YYYY-MM-DD HH:mm:ss" placeholder={`选择${field.label}`} style={{ width: '100%' }} />
+          : <Input value={fieldValues[field.key]} onChange={event => setFieldValue(field.key, event.target.value)} placeholder={`输入${field.label}`} />
+          : null}
+      </Flex>)}
     </Flex>
   </Modal>;
 }
