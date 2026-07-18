@@ -162,6 +162,23 @@ button:disabled {
   margin-top: 16px;
 }
 
+.update-dialog-content {
+  min-width: 0;
+}
+
+.update-dialog-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.update-rollback-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 .app-title {
   font-size: 18px;
   font-weight: 700;

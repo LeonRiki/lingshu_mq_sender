@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './editor-ui.jsx';
-import { Badge, Button, Checkbox, ConfigProvider, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, ConfigProvider, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import {
   ArrowLeftOutlined,
   CopyOutlined,
@@ -333,6 +333,58 @@ function MqSettingsButton({ visible }) {
   return visible ? <Tooltip title="MQ 发送配置"><Button type="text" icon={<SettingOutlined />} aria-label="MQ 发送配置" onClick={() => emitListToolbar('open-mq-settings')}>MQ发送配置</Button></Tooltip> : null;
 }
 
+function UpdateDialog({ data }) {
+  const status = data.status || {};
+  const check = data.check;
+  const [repository, setRepository] = useState(status.repository || '');
+  const [backupId, setBackupId] = useState('');
+  useEffect(() => {
+    if (!data.open) return;
+    setRepository(status.repository || '');
+    setBackupId(status.backups?.[0]?.id || '');
+  }, [data.open, status.repository, status.backups]);
+  const release = check?.release;
+  const backupOptions = (status.backups || []).map(backup => ({
+    value: backup.id,
+    label: `${backup.previousVersion || '未知版本'} · ${backup.createdAt || backup.id}`
+  }));
+  const checkSummary = !check
+    ? <Alert type="info" showIcon message="尚未检查更新" description="配置公开 GitHub 仓库后，可检查最新正式 Release。" />
+    : !check.configured
+      ? <Alert type="warning" showIcon message="尚未配置更新源" description="仓库必须为公开仓库，格式为 owner/repository。" />
+      : check.updateAvailable
+        ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.releaseName || release?.tag || ''} · 共 ${release?.files?.length || 0} 个更新文件`} />
+        : <Alert type="success" showIcon message="当前已是最新版本" description={`当前版本 ${check.currentVersion || status.currentVersion || '-'}`} />;
+  return <Modal open={data.open} centered title="在线更新" width={720} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
+    <Flex vertical gap={16} className="update-dialog-content">
+      <Flex vertical gap={8}>
+        <Text strong>当前版本 {status.currentVersion || '-'}</Text>
+        <label className="update-dialog-label">公开 GitHub 仓库
+          <Input value={repository} onChange={event => setRepository(event.target.value)} placeholder="owner/repository" />
+        </label>
+        <Flex justify="space-between" align="center" wrap gap={8}>
+          <Text type="secondary">仅支持公开 Release，不保存 GitHub Token。</Text>
+          <Space><Button onClick={() => emitListToolbar('save-update-settings', { repository })}>保存更新源</Button><Button type="primary" icon={<ReloadOutlined />} onClick={() => emitListToolbar('check-update')}>检查更新</Button></Space>
+        </Flex>
+      </Flex>
+      {checkSummary}
+      {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
+      {check?.updateAvailable ? <Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update')}><Button type="primary" icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex> : null}
+      <Flex vertical gap={8} className="update-rollback-section">
+        <Text strong>历史备份</Text>
+        <Flex gap={8} wrap>
+          <Select value={backupId || undefined} onChange={setBackupId} options={backupOptions} placeholder="暂无可回滚备份" style={{ minWidth: 300, flex: 1 }} />
+          <Popconfirm title="回滚同样会重启本机服务。确认继续？" okText="回滚" cancelText="取消" onConfirm={() => emitListToolbar('rollback-online-update', { backupId })}><Button danger disabled={!backupId}>回滚所选备份</Button></Popconfirm>
+        </Flex>
+      </Flex>
+    </Flex>
+  </Modal>;
+}
+
+function UpdateManagerButton({ visible, updateAvailable }) {
+  return visible ? <Tooltip title="检查或配置在线更新"><Badge dot={Boolean(updateAvailable)}><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Badge></Tooltip> : null;
+}
+
 function ImportCaseDialog({ data, onCancel, onConfirm }) {
   const [selectedScenario, setSelectedScenario] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
@@ -447,6 +499,8 @@ let batchEditRoot;
 let appendRecordMessageRoot;
 let mqSettingsButtonRoot;
 let mqSettingsRoot;
+let updateManagerButtonRoot;
+let updateDialogRoot;
 
 function showUnsavedCaseChangesDialog() {
   const host = document.getElementById('unsavedCaseChangesDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'unsavedCaseChangesDialog' }));
@@ -574,6 +628,21 @@ window.renderMqSettings = data => {
   const host = document.getElementById('mqSettingsDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'mqSettingsDialog' }));
   mqSettingsRoot ||= createRoot(host);
   mqSettingsRoot.render(<ConfigProvider componentSize="middle"><MqSettingsDialog data={data} /></ConfigProvider>);
+};
+
+window.renderUpdateManagerButton = data => {
+  const versionHost = document.getElementById('appVersionApp');
+  if (versionHost) versionHost.textContent = data.currentVersion ? `v${data.currentVersion}` : '';
+  const host = document.getElementById('updateManagerApp');
+  if (!host) return;
+  updateManagerButtonRoot ||= createRoot(host);
+  updateManagerButtonRoot.render(<ConfigProvider componentSize="middle"><UpdateManagerButton visible={data.visible} updateAvailable={data.updateAvailable} /></ConfigProvider>);
+};
+
+window.renderUpdateDialog = data => {
+  const host = document.getElementById('updateDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'updateDialog' }));
+  updateDialogRoot ||= createRoot(host);
+  updateDialogRoot.render(<ConfigProvider componentSize="middle"><UpdateDialog data={data} /></ConfigProvider>);
 };
 
 document.dispatchEvent(new Event('list-page-ui-ready'));

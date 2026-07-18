@@ -17,6 +17,9 @@ const state = {
   mqConfigs: [],
   mqSettingsOpen: false,
   mqSettingsSelectedId: null,
+  updateStatus: { currentVersion: '', repository: '', configured: false, backups: [] },
+  updateCheck: null,
+  updateDialogOpen: false,
   casePage: 'list',
   recordPage: 'list',
   caseSearch: '',
@@ -388,7 +391,9 @@ function showRecordDetailPage() {
 }
 
 function renderListToolbars() {
-  window.renderMqSettingsButton?.({ visible: !document.body.classList.contains('case-detail-open') && !document.body.classList.contains('record-detail-open') });
+  const visible = !document.body.classList.contains('case-detail-open') && !document.body.classList.contains('record-detail-open');
+  window.renderMqSettingsButton?.({ visible });
+  window.renderUpdateManagerButton?.({ visible, currentVersion: state.updateStatus.currentVersion, updateAvailable: state.updateCheck?.updateAvailable });
   if (!window.renderAntListPages) return;
   window.renderAntListPages({
     activeView: $('labelsView').classList.contains('active') ? 'labels' : $('recordsView').classList.contains('active') ? 'records' : 'cases',
@@ -898,6 +903,7 @@ function quickConfigHtml() {
 async function loadInitial() {
   state.config = normalizeConfigLabels(await api('/api/config'));
   state.fields = (await api('/api/meta')).sessionAttributeFields || [];
+  await loadUpdateStatus().catch(error => console.warn('无法读取在线更新状态：', error));
   renderQuickTools();
   await loadCases();
   showCaseList();
@@ -1046,6 +1052,61 @@ async function saveMqConfig(config) {
   state.mqSettingsSelectedId = saved.id;
   renderMqSettingsDialog();
   toast('MQ 配置已保存');
+}
+
+async function loadUpdateStatus() {
+  state.updateStatus = await api('/api/update/status');
+  return state.updateStatus;
+}
+
+function renderUpdateDialog() {
+  window.renderUpdateDialog?.({
+    open: state.updateDialogOpen,
+    status: state.updateStatus,
+    check: state.updateCheck
+  });
+}
+
+async function openUpdateDialog() {
+  await loadUpdateStatus();
+  state.updateDialogOpen = true;
+  renderUpdateDialog();
+}
+
+function closeUpdateDialog() {
+  state.updateDialogOpen = false;
+  renderUpdateDialog();
+}
+
+async function saveUpdateSettings(repository) {
+  state.updateStatus = await api('/api/update/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ repository })
+  });
+  state.updateCheck = null;
+  renderUpdateDialog();
+  renderListToolbars();
+  toast('在线更新源已保存');
+}
+
+async function checkForUpdate() {
+  state.updateCheck = await api('/api/update/check', { method: 'POST' });
+  renderUpdateDialog();
+  renderListToolbars();
+  if (!state.updateCheck.configured) toast('请先填写公开 GitHub 仓库', 'warning');
+  else if (!state.updateCheck.updateAvailable) toast('当前已是最新版本');
+}
+
+async function applyOnlineUpdate() {
+  const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ restart: true }) });
+  toast(`已更新至 ${result.version}，正在重启服务`);
+  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
+}
+
+async function rollbackOnlineUpdate(backupId) {
+  const result = await api('/api/update/rollback', { method: 'POST', body: JSON.stringify({ backupId, restart: true }) });
+  toast(`已回滚 ${result.restored.length} 个文件，正在重启服务`);
+  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
 }
 
 async function openSendDialog(target) {
@@ -1730,7 +1791,7 @@ function bindEvents() {
   });
   document.addEventListener('list-page-ui-ready', renderListToolbars);
   document.addEventListener('list-toolbar-action', e => {
-    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement } = e.detail || {};
+    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, repository, backupId } = e.detail || {};
     if (type === 'new-case') createCase().catch(showError);
     if (type === 'import-case' && file) importTestCaseFile(file, format).catch(showError);
     if (type === 'export-cases') exportCases();
@@ -1746,6 +1807,12 @@ function bindEvents() {
     if (type === 'open-mq-settings') openMqSettings().catch(showError);
     if (type === 'close-mq-settings') closeMqSettings();
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
+    if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
+    if (type === 'close-update-dialog') closeUpdateDialog();
+    if (type === 'save-update-settings') saveUpdateSettings(repository).catch(showError);
+    if (type === 'check-update') checkForUpdate().catch(showError);
+    if (type === 'apply-online-update') applyOnlineUpdate().catch(showError);
+    if (type === 'rollback-online-update') rollbackOnlineUpdate(backupId).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);

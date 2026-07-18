@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 
 const ROOT = __dirname;
 const WEB_DIR = path.join(ROOT, 'web');
@@ -11,6 +11,25 @@ const RECORDS_DIR = path.join(ROOT, 'records');
 const CACHE_DIR = path.join(ROOT, 'cache');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const MQ_CONFIGS_FILE = path.join(CACHE_DIR, 'mq-configs.json');
+const UPDATE_DIR = path.join(CACHE_DIR, 'updates');
+const UPDATE_SETTINGS_FILE = path.join(UPDATE_DIR, 'settings.json');
+const UPDATE_BACKUPS_DIR = path.join(UPDATE_DIR, 'backups');
+const UPDATE_STAGING_DIR = path.join(UPDATE_DIR, 'staging');
+const VERSION_FILE = path.join(ROOT, 'version.json');
+const UPDATE_MANIFEST_ASSET = 'v1-update-manifest.json';
+const UPDATE_ROOT_FILES = new Set([
+  '.env.example',
+  'README.md',
+  'mac-修复权限.command',
+  'mac-启动服务.command',
+  'package-lock.json',
+  'package.json',
+  'server.js',
+  'version.json',
+  'win-启动服务.bat'
+]);
+const UPDATE_PREFIXES = ['docs/', 'scripts/', 'web/'];
+let updateInProgress = false;
 const PROTOCOL_MESSAGE_FIELDS = [
   'requestId', 'input', 'latestMsgTime', 'weworkCorpId', 'agentId', 'addTime',
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
@@ -59,7 +78,7 @@ const SUFFIXES = ['Wang', 'Li', 'Zhang', 'Liu', 'Chen', 'Yang', 'Zhao', 'Huang',
 const NICKS = ['精灵王21', '孙悟空', '白龙马', '唐僧', '猪八戒', '沙和尚', '玉帝', '太白金星', '牛魔王', '红孩儿'];
 
 function ensureDirs() {
-  [WEB_DIR, CASES_DIR, RECORDS_DIR, CACHE_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
+  [WEB_DIR, CASES_DIR, RECORDS_DIR, CACHE_DIR, UPDATE_DIR, UPDATE_BACKUPS_DIR, UPDATE_STAGING_DIR].forEach(dir => fs.mkdirSync(dir, { recursive: true }));
   if (!fs.existsSync(CONFIG_FILE)) writeJson(CONFIG_FILE, DEFAULT_CONFIG);
   if (fs.readdirSync(CASES_DIR).filter(f => f.endsWith('.json')).length === 0) {
     const sample = createEmptyCase('地址收集-一次性完整地址');
@@ -90,6 +109,332 @@ function writePrivateJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
   fs.chmodSync(file, 0o600);
+}
+
+function updateError(message, statusCode = 400) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function normalizePublicRepository(value) {
+  const raw = String(value || '').trim()
+    .replace(/^https:\/\/github\.com\//i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
+  if (!raw) return '';
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) {
+    throw updateError('公开仓库格式应为 owner/repository');
+  }
+  return raw;
+}
+
+function loadUpdateSettings() {
+  const settings = readJson(UPDATE_SETTINGS_FILE, {});
+  try {
+    return { repository: normalizePublicRepository(settings.repository) };
+  } catch (err) {
+    return { repository: '' };
+  }
+}
+
+function saveUpdateSettings(data) {
+  const settings = { repository: normalizePublicRepository(data?.repository) };
+  writePrivateJson(UPDATE_SETTINGS_FILE, settings);
+  return settings;
+}
+
+function currentAppVersion() {
+  const version = String(readJson(VERSION_FILE, {}).version || '').trim();
+  if (version) return version;
+  return String(readJson(path.join(ROOT, 'package.json'), {}).version || '0.0.0').trim();
+}
+
+function versionParts(value) {
+  return String(value || '').match(/\d+/g)?.map(Number) || [];
+}
+
+function versionGreater(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  const size = Math.max(a.length, b.length);
+  for (let index = 0; index < size; index += 1) {
+    const delta = (a[index] || 0) - (b[index] || 0);
+    if (delta !== 0) return delta > 0;
+  }
+  return false;
+}
+
+function isUpdateAllowedPath(value) {
+  const rel = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!rel || rel.split('/').some(part => !part || part === '.' || part === '..')) return false;
+  return UPDATE_ROOT_FILES.has(rel) || UPDATE_PREFIXES.some(prefix => rel.startsWith(prefix));
+}
+
+function safeUpdatePath(baseDir, value) {
+  const rel = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!isUpdateAllowedPath(rel)) throw updateError(`更新文件不在允许范围：${rel}`);
+  const base = path.resolve(baseDir);
+  const target = path.resolve(base, ...rel.split('/'));
+  if (!target.startsWith(`${base}${path.sep}`)) throw updateError(`更新路径不安全：${rel}`);
+  return target;
+}
+
+function sha256File(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function validateUpdateManifest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw updateError('更新清单格式无效');
+  const version = String(value.version || '').trim();
+  if (!version || !/\d/.test(version) || /[<>{}]/.test(version)) throw updateError('更新清单缺少有效版本号');
+  const rawFiles = Array.isArray(value.files) ? value.files : [];
+  if (!rawFiles.length || rawFiles.length > 500) throw updateError('更新清单未包含可更新文件');
+  const seen = new Set();
+  const files = rawFiles.map(item => {
+    const file = item && typeof item === 'object' ? item : {};
+    const rel = String(file.path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const sha256 = String(file.sha256 || '').toLowerCase();
+    if (!isUpdateAllowedPath(rel)) throw updateError(`更新清单包含不允许的文件：${rel}`);
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw updateError(`更新清单缺少校验值：${rel}`);
+    if (seen.has(rel)) throw updateError(`更新清单包含重复文件：${rel}`);
+    seen.add(rel);
+    return { path: rel, sha256 };
+  });
+  ['server.js', 'version.json', 'web/detail-ui.js'].forEach(required => {
+    if (!seen.has(required)) throw updateError(`更新清单缺少必要文件：${required}`);
+  });
+  const notes = (Array.isArray(value.notes) ? value.notes : [])
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map(item => item.slice(0, 300));
+  return { version, files, notes };
+}
+
+async function fetchRemoteBuffer(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeout || 15000);
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'LingShu-MQ-Updater/1.0', ...(options.headers || {}) },
+      signal: controller.signal,
+      redirect: 'follow'
+    });
+    if (!response.ok) throw updateError(`远端请求失败：HTTP ${response.status}`, 502);
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    const maxBytes = options.maxBytes || 20 * 1024 * 1024;
+    if (contentLength > maxBytes) throw updateError('远端文件超过大小限制', 502);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > maxBytes) throw updateError('远端文件超过大小限制', 502);
+    return buffer;
+  } catch (err) {
+    if (err.statusCode) throw err;
+    if (err.name === 'AbortError') throw updateError('连接更新源超时', 504);
+    throw updateError(`无法连接更新源：${err.message}`, 502);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchGitHubJson(url) {
+  const data = await fetchRemoteBuffer(url, {
+    headers: { Accept: 'application/vnd.github+json' },
+    maxBytes: 1024 * 1024
+  });
+  try {
+    return JSON.parse(data.toString('utf8'));
+  } catch (err) {
+    throw updateError('GitHub 返回了无效的 JSON', 502);
+  }
+}
+
+async function getLatestRelease(repository) {
+  const repo = normalizePublicRepository(repository);
+  if (!repo) throw updateError('请先配置公开 GitHub 仓库');
+  const release = await fetchGitHubJson(`https://api.github.com/repos/${repo}/releases/latest`);
+  const tag = String(release.tag_name || '').trim();
+  if (!/^[A-Za-z0-9._-]+$/.test(tag)) throw updateError('GitHub Release 标签格式不受支持', 502);
+  const asset = (Array.isArray(release.assets) ? release.assets : []).find(item => item?.name === UPDATE_MANIFEST_ASSET);
+  const expectedAssetUrl = `https://api.github.com/repos/${repo}/releases/assets/`;
+  if (!asset || !String(asset.url || '').startsWith(expectedAssetUrl)) {
+    throw updateError(`Release 缺少 ${UPDATE_MANIFEST_ASSET} 附件`, 502);
+  }
+  const manifestBuffer = await fetchRemoteBuffer(asset.url, {
+    headers: { Accept: 'application/octet-stream' },
+    maxBytes: 512 * 1024
+  });
+  let manifest;
+  try {
+    manifest = validateUpdateManifest(JSON.parse(manifestBuffer.toString('utf8')));
+  } catch (err) {
+    if (err.statusCode) throw err;
+    throw updateError('更新清单不是有效 JSON', 502);
+  }
+  return {
+    repository: repo,
+    tag,
+    version: manifest.version,
+    files: manifest.files,
+    notes: manifest.notes,
+    publishedAt: String(release.published_at || ''),
+    releaseName: String(release.name || release.tag_name || '')
+  };
+}
+
+async function checkForUpdate() {
+  const settings = loadUpdateSettings();
+  const currentVersion = currentAppVersion();
+  if (!settings.repository) return { currentVersion, repository: '', configured: false, updateAvailable: false, backups: listUpdateBackups() };
+  const release = await getLatestRelease(settings.repository);
+  return {
+    currentVersion,
+    repository: settings.repository,
+    configured: true,
+    updateAvailable: versionGreater(release.version, currentVersion),
+    release,
+    backups: listUpdateBackups()
+  };
+}
+
+function backupId() {
+  return `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function createUpdateBackup(files) {
+  const id = backupId();
+  const root = path.join(UPDATE_BACKUPS_DIR, id);
+  const sourceRoot = path.join(root, 'files');
+  const entries = files.map(({ path: rel }) => ({ path: rel, existed: fs.existsSync(safeUpdatePath(ROOT, rel)) }));
+  entries.filter(item => item.existed).forEach(item => {
+    const target = safeUpdatePath(ROOT, item.path);
+    const backup = safeUpdatePath(sourceRoot, item.path);
+    fs.mkdirSync(path.dirname(backup), { recursive: true });
+    fs.copyFileSync(target, backup);
+  });
+  writeJson(path.join(root, 'metadata.json'), {
+    id,
+    createdAt: nowIsoLocal(),
+    previousVersion: currentAppVersion(),
+    files: entries
+  });
+  return { id, root };
+}
+
+function restoreUpdateBackup(id) {
+  if (!/^[0-9_]+_[a-f0-9]{6}$/.test(String(id || ''))) throw updateError('备份标识无效');
+  const root = path.resolve(UPDATE_BACKUPS_DIR, id);
+  if (!root.startsWith(`${path.resolve(UPDATE_BACKUPS_DIR)}${path.sep}`) || !fs.existsSync(root)) throw updateError('找不到指定备份', 404);
+  const metadata = readJson(path.join(root, 'metadata.json'), null);
+  if (!metadata || !Array.isArray(metadata.files)) throw updateError('备份元数据无效', 500);
+  const restored = [];
+  metadata.files.forEach(item => {
+    const target = safeUpdatePath(ROOT, item.path);
+    if (!item.existed) {
+      fs.rmSync(target, { force: true });
+      restored.push(item.path);
+      return;
+    }
+    const source = safeUpdatePath(path.join(root, 'files'), item.path);
+    if (!fs.existsSync(source)) throw updateError(`备份文件缺失：${item.path}`, 500);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const temp = `${target}.rollback-${process.pid}-${Date.now()}.tmp`;
+    fs.copyFileSync(source, temp);
+    fs.renameSync(temp, target);
+    restored.push(item.path);
+  });
+  return { restored, previousVersion: String(metadata.previousVersion || '') };
+}
+
+function listUpdateBackups() {
+  if (!fs.existsSync(UPDATE_BACKUPS_DIR)) return [];
+  return fs.readdirSync(UPDATE_BACKUPS_DIR, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const metadata = readJson(path.join(UPDATE_BACKUPS_DIR, entry.name, 'metadata.json'), {});
+      return {
+        id: entry.name,
+        createdAt: String(metadata.createdAt || ''),
+        previousVersion: String(metadata.previousVersion || ''),
+        fileCount: Array.isArray(metadata.files) ? metadata.files.length : 0
+      };
+    })
+    .sort((left, right) => right.id.localeCompare(left.id));
+}
+
+function scheduleSelfRestart() {
+  const restartFile = path.join(UPDATE_DIR, `restart-${process.pid}-${Date.now()}.${process.platform === 'win32' ? 'bat' : 'sh'}`);
+  const pid = process.pid;
+  try {
+    if (process.platform === 'win32') {
+      const launcher = path.join(ROOT, 'win-启动服务.bat');
+      const script = `@echo off\r\ntimeout /t 2 /nobreak >nul\r\ntaskkill /F /PID ${pid} >nul 2>&1\r\ntimeout /t 1 /nobreak >nul\r\nstart \"\" /D \"${ROOT}\" cmd /c call \"${launcher}\"\r\ndel \"%~f0\"\r\n`;
+      fs.writeFileSync(restartFile, script, 'utf8');
+      const child = spawn('cmd', ['/c', restartFile], { detached: true, stdio: 'ignore' });
+      child.unref();
+    } else {
+      const launcher = path.join(ROOT, 'mac-启动服务.command');
+      const logFile = path.join(CACHE_DIR, 'server.log');
+      const quote = value => `'${String(value).replace(/'/g, "'\\\"'\\\"'")}'`;
+      const script = `#!/bin/sh\nsleep 2\nkill -TERM ${pid} 2>/dev/null\nsleep 1\ncd ${quote(ROOT)}\nnohup /bin/sh ${quote(launcher)} > ${quote(logFile)} 2>&1 &\nrm -- \"$0\"\n`;
+      fs.writeFileSync(restartFile, script, { encoding: 'utf8', mode: 0o700 });
+      fs.chmodSync(restartFile, 0o700);
+      const child = spawn('/bin/sh', [restartFile], { detached: true, stdio: 'ignore' });
+      child.unref();
+    }
+    return true;
+  } catch (err) {
+    console.error('安排更新后重启失败：', err);
+    return false;
+  }
+}
+
+async function applyRemoteUpdate() {
+  if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
+  updateInProgress = true;
+  let staging = '';
+  let backup;
+  try {
+    const checked = await checkForUpdate();
+    if (!checked.configured) throw updateError('请先配置公开 GitHub 仓库');
+    if (!checked.updateAvailable) throw updateError('当前已是最新版本', 409);
+    const release = checked.release;
+    staging = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
+    for (const file of release.files) {
+      const target = safeUpdatePath(staging, file.path);
+      const rawUrl = `https://raw.githubusercontent.com/${release.repository}/${release.tag}/${file.path.split('/').map(encodeURIComponent).join('/')}`;
+      const buffer = await fetchRemoteBuffer(rawUrl, { maxBytes: 20 * 1024 * 1024 });
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, buffer, { mode: 0o644 });
+      if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
+    }
+    backup = createUpdateBackup(release.files);
+    const applied = [];
+    try {
+      release.files.forEach(file => {
+        const source = safeUpdatePath(staging, file.path);
+        const target = safeUpdatePath(ROOT, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        const temp = `${target}.update-${process.pid}-${Date.now()}.tmp`;
+        fs.copyFileSync(source, temp);
+        fs.renameSync(temp, target);
+        applied.push(file.path);
+      });
+    } catch (err) {
+      restoreUpdateBackup(backup.id);
+      throw err;
+    }
+    return {
+      updated: applied,
+      backupId: backup.id,
+      version: release.version,
+      releaseName: release.releaseName,
+      notes: release.notes
+    };
+  } finally {
+    if (staging) fs.rmSync(staging, { recursive: true, force: true });
+    updateInProgress = false;
+  }
 }
 
 function json(res, status, data) {
@@ -1152,6 +1497,45 @@ async function handleApi(req, res, pathname, url) {
       writeJson(CONFIG_FILE, cfg);
       return json(res, 200, cfg);
     }
+    if (req.method === 'GET' && pathname === '/api/update/status') {
+      const settings = loadUpdateSettings();
+      return json(res, 200, {
+        currentVersion: currentAppVersion(),
+        repository: settings.repository,
+        configured: Boolean(settings.repository),
+        backups: listUpdateBackups()
+      });
+    }
+    if (req.method === 'PUT' && pathname === '/api/update/settings') {
+      const settings = saveUpdateSettings(await parseBody(req));
+      return json(res, 200, {
+        currentVersion: currentAppVersion(),
+        repository: settings.repository,
+        configured: Boolean(settings.repository),
+        backups: listUpdateBackups()
+      });
+    }
+    if (req.method === 'POST' && pathname === '/api/update/check') {
+      return json(res, 200, await checkForUpdate());
+    }
+    if (req.method === 'POST' && pathname === '/api/update/apply') {
+      const body = await parseBody(req);
+      const result = await applyRemoteUpdate();
+      const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
+      return json(res, 200, { ok: true, ...result, restartScheduled });
+    }
+    if (req.method === 'POST' && pathname === '/api/update/rollback') {
+      const body = await parseBody(req);
+      if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
+      updateInProgress = true;
+      try {
+        const result = restoreUpdateBackup(body.backupId);
+        const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
+        return json(res, 200, { ok: true, ...result, restartScheduled });
+      } finally {
+        updateInProgress = false;
+      }
+    }
     if (req.method === 'GET' && pathname === '/api/label-management') {
       return json(res, 200, labelManagementData());
     }
@@ -1317,7 +1701,12 @@ module.exports = {
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
+  currentAppVersion,
+  isUpdateAllowedPath,
+  normalizePublicRepository,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
-  summarizeMqSend
+  summarizeMqSend,
+  validateUpdateManifest,
+  versionGreater
 };
