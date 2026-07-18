@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.2",
+  "version": "1.2.3",
   "notes": [],
   "files": [
     {
@@ -25,11 +25,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "2a7c3d487269ff203279b58ae87a3da9663532a8be018d77af5f1292898202d5"
+      "sha256": "bdb73dca93562da246336784567e86eaad00c7a86185ce33a2a8829d2167e4c8"
     },
     {
       "path": "package.json",
-      "sha256": "3294c3deda625ad548a08a1d4d7fa05610a561a2fd991e4c57c59b7fd2199eb4"
+      "sha256": "a4851d74e543db6df4d3392d8242ce60acb3f805021ca53645a63ee7a8794b4b"
     },
     {
       "path": "scripts/generate-update-manifest.js",
@@ -41,11 +41,11 @@
     },
     {
       "path": "version.json",
-      "sha256": "a143e56fa443a69ec9956f16a4204092389c35b4ed2ccaa7cee90421f7ae6849"
+      "sha256": "8d6778a460d6595ce3393f24f99ecdce35278ab289aee13dcf3007653251e832"
     },
     {
       "path": "web/app.js",
-      "sha256": "405b125bb979fe3f8b75d9222343cf6b50fbab20497e4af8363e15a4a7b24168"
+      "sha256": "28a5807890d1f969a1d4b8ae2437852d85e1131464adc5f97fceab62be0f1f56"
     },
     {
       "path": "web/detail-ui.js",

@@ -1068,9 +1068,14 @@ function renderUpdateDialog() {
 }
 
 async function openUpdateDialog() {
-  await loadUpdateStatus();
   state.updateDialogOpen = true;
   renderUpdateDialog();
+  try {
+    await loadUpdateStatus();
+    renderUpdateDialog();
+  } catch (error) {
+    showError(error);
+  }
 }
 
 function closeUpdateDialog() {
