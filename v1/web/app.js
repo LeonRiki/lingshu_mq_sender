@@ -17,7 +17,7 @@ const state = {
   mqConfigs: [],
   mqSettingsOpen: false,
   mqSettingsSelectedId: null,
-  updateStatus: { currentVersion: '', sources: [], backups: [] },
+  updateStatus: { currentVersion: '', sources: [] },
   updateCheck: null,
   updateDialogOpen: false,
   casePage: 'list',
@@ -1088,9 +1088,15 @@ async function checkForUpdate(options = {}) {
   state.updateCheck = await api('/api/update/check', { method: 'POST' });
   renderOnlineUpdateDialog();
   renderListToolbars();
+  if (options.openWhenAvailable && state.updateCheck.updateAvailable) {
+    state.updateDialogOpen = true;
+    renderOnlineUpdateDialog();
+    return;
+  }
   if (options.notify && !state.updateCheck.updateAvailable) {
     const available = (state.updateCheck.sources || []).some(source => source.ok);
-    toast(available ? '当前已是最新版本' : '两个更新源均不可用', available ? 'success' : 'warning');
+    const version = state.updateCheck.currentVersion || state.updateStatus.currentVersion || '-';
+    toast(available ? `当前已是最新版本（v${version}）` : '两个更新源均不可用', available ? 'success' : 'warning');
   }
 }
 
@@ -1112,13 +1118,6 @@ async function waitForBackendAndReload() {
 async function applyOnlineUpdate(sourceKey) {
   const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ sourceKey, restart: true }) });
   toast(`已更新至 ${result.version}，正在重启服务`);
-  if (result.restartScheduled) waitForBackendAndReload();
-  else window.location.reload();
-}
-
-async function rollbackOnlineUpdate(backupId) {
-  const result = await api('/api/update/rollback', { method: 'POST', body: JSON.stringify({ backupId, restart: true }) });
-  toast(`已回滚 ${result.restored.length} 个文件，正在重启服务`);
   if (result.restartScheduled) waitForBackendAndReload();
   else window.location.reload();
 }
@@ -1824,8 +1823,8 @@ function bindEvents() {
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
     if (type === 'close-update-dialog') closeUpdateDialog();
     if (type === 'check-update') checkForUpdate({ notify: true }).catch(showError);
+    if (type === 'check-update-from-version') checkForUpdate({ notify: true, openWhenAvailable: true }).catch(showError);
     if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
-    if (type === 'rollback-online-update') rollbackOnlineUpdate(backupId).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);

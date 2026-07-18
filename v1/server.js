@@ -350,8 +350,7 @@ async function checkForUpdate() {
     currentVersion,
     sources: sources.map(({ release, ...source }) => source),
     updateAvailable: Boolean(latest && versionGreater(latest.version, currentVersion)),
-    release: latest,
-    backups: listUpdateBackups()
+    release: latest
   };
 }
 
@@ -402,22 +401,6 @@ function restoreUpdateBackup(id) {
     restored.push(item.path);
   });
   return { restored, previousVersion: String(metadata.previousVersion || '') };
-}
-
-function listUpdateBackups() {
-  if (!fs.existsSync(UPDATE_BACKUPS_DIR)) return [];
-  return fs.readdirSync(UPDATE_BACKUPS_DIR, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
-      const metadata = readJson(path.join(UPDATE_BACKUPS_DIR, entry.name, 'metadata.json'), {});
-      return {
-        id: entry.name,
-        createdAt: String(metadata.createdAt || ''),
-        previousVersion: String(metadata.previousVersion || ''),
-        fileCount: Array.isArray(metadata.files) ? metadata.files.length : 0
-      };
-    })
-    .sort((left, right) => right.id.localeCompare(left.id));
 }
 
 function scheduleSelfRestart() {
@@ -1557,8 +1540,7 @@ async function handleApi(req, res, pathname, url) {
     if (req.method === 'GET' && pathname === '/api/update/status') {
       return json(res, 200, {
         currentVersion: currentAppVersion(),
-        sources: UPDATE_SOURCES.map(({ key, label, repository }) => ({ key, label, repository })),
-        backups: listUpdateBackups()
+        sources: UPDATE_SOURCES.map(({ key, label, repository }) => ({ key, label, repository }))
       });
     }
     if (req.method === 'POST' && pathname === '/api/update/check') {
@@ -1569,18 +1551,6 @@ async function handleApi(req, res, pathname, url) {
       const result = await applyRemoteUpdate(body.sourceKey);
       const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
       return json(res, 200, { ok: true, ...result, restartScheduled });
-    }
-    if (req.method === 'POST' && pathname === '/api/update/rollback') {
-      const body = await parseBody(req);
-      if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
-      updateInProgress = true;
-      try {
-        const result = restoreUpdateBackup(body.backupId);
-        const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
-        return json(res, 200, { ok: true, ...result, restartScheduled });
-      } finally {
-        updateInProgress = false;
-      }
     }
     if (req.method === 'GET' && pathname === '/api/label-management') {
       return json(res, 200, labelManagementData());

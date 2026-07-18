@@ -336,12 +336,7 @@ function MqSettingsButton({ visible }) {
 function UpdateDialog({ data }) {
   const status = data.status || {};
   const check = data.check;
-  const [backupId, setBackupId] = useState('');
   const [sourceKey, setSourceKey] = useState('');
-  useEffect(() => {
-    if (!data.open) return;
-    setBackupId(status.backups?.[0]?.id || '');
-  }, [data.open, status.backups]);
   const release = check?.release;
   const sourceStates = check?.sources || (status.sources || []).map(source => ({ ...source, ok: null }));
   const selectableSources = sourceStates.filter(source => source.ok && source.updateAvailable);
@@ -349,10 +344,6 @@ function UpdateDialog({ data }) {
     if (!data.open) return;
     setSourceKey(current => selectableSources.some(source => source.key === current) ? current : (selectableSources[0]?.key || ''));
   }, [data.open, check]);
-  const backupOptions = (status.backups || []).map(backup => ({
-    value: backup.id,
-    label: `${backup.previousVersion || '未知版本'} · ${backup.createdAt || backup.id}`
-  }));
   const checkSummary = !check
     ? <Alert type="info" showIcon message="尚未检查更新" description="将依次检查固定的 GitHub 与魔搭更新源。" />
     : check.updateAvailable
@@ -368,21 +359,17 @@ function UpdateDialog({ data }) {
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
       {check?.updateAvailable ? <Flex vertical gap={8}><Text strong>选择下载源</Text><Radio.Group value={sourceKey} onChange={event => setSourceKey(event.target.value)} vertical>{sourceStates.map(source => <Radio key={source.key} value={source.key} disabled={!source.ok || !source.updateAvailable}>{source.label} · {source.version ? `v${source.version}` : source.error || '未发现更新'}</Radio>)}</Radio.Group><Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
-      <Flex vertical gap={8} className="update-rollback-section">
-        <Text strong>历史备份</Text>
-        <Flex gap={8} wrap>
-          <Select value={backupId || undefined} onChange={setBackupId} options={backupOptions} placeholder="暂无可回滚备份" style={{ minWidth: 300, flex: 1 }} />
-          <Popconfirm title="回滚同样会重启本机服务。确认继续？" okText="回滚" cancelText="取消" onConfirm={() => emitListToolbar('rollback-online-update', { backupId })}><Button danger disabled={!backupId}>回滚所选备份</Button></Popconfirm>
-        </Flex>
-      </Flex>
     </Flex>
   </Modal>;
 }
 
+function AppVersion({ currentVersion }) {
+  return <Tooltip title="检查在线更新"><Button type="text" className="app-version-button" aria-label={`版本 ${currentVersion || '-'}，检查更新`} onClick={() => emitListToolbar('check-update-from-version')}>{currentVersion ? `v${currentVersion}` : 'v-'}</Button></Tooltip>;
+}
+
 function UpdateManagerButton({ visible, updateAvailable }) {
-  if (!visible) return null;
-  if (updateAvailable) return <Tooltip title="发现新版本，选择来源后更新"><Button color="green" variant="solid" icon={<ReloadOutlined />} aria-label="更新" onClick={() => emitListToolbar('open-update-dialog')}>更新</Button></Tooltip>;
-  return <Tooltip title="检查在线更新"><Button type="text" icon={<ReloadOutlined />} aria-label="在线更新" onClick={() => emitListToolbar('open-update-dialog')}>在线更新</Button></Tooltip>;
+  if (!visible || !updateAvailable) return null;
+  return <Tooltip title="发现新版本，选择来源后更新"><Button type="text" className="new-version-trigger" aria-label="有新版本" onClick={() => emitListToolbar('open-update-dialog')}><Tag color="green" variant="solid" bordered={false} className="new-version-tag">有新版本</Tag></Button></Tooltip>;
 }
 
 function ImportCaseDialog({ data, onCancel, onConfirm }) {
@@ -499,6 +486,7 @@ let batchEditRoot;
 let appendRecordMessageRoot;
 let mqSettingsButtonRoot;
 let mqSettingsRoot;
+let appVersionRoot;
 let updateManagerButtonRoot;
 let updateDialogRoot;
 
@@ -632,7 +620,10 @@ window.renderMqSettings = data => {
 
 window.renderUpdateManagerButton = data => {
   const versionHost = document.getElementById('appVersionApp');
-  if (versionHost) versionHost.textContent = data.currentVersion ? `v${data.currentVersion}` : '';
+  if (versionHost) {
+    appVersionRoot ||= createRoot(versionHost);
+    appVersionRoot.render(<ConfigProvider componentSize="middle"><AppVersion currentVersion={data.currentVersion} /></ConfigProvider>);
+  }
   const host = document.getElementById('updateManagerApp');
   if (!host) return;
   updateManagerButtonRoot ||= createRoot(host);
