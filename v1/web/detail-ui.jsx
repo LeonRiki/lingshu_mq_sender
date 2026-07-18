@@ -4,11 +4,13 @@ import './editor-ui.jsx';
 import { Alert, Badge, Button, Checkbox, ConfigProvider, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import {
   ArrowLeftOutlined,
+  CloudServerOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
   FilterOutlined,
+  GithubOutlined,
   PlusOutlined,
   ReloadOutlined,
   SaveOutlined,
@@ -333,6 +335,15 @@ function MqSettingsButton({ visible }) {
   return visible ? <Tooltip title="MQ 发送配置"><Button type="text" icon={<SettingOutlined />} aria-label="MQ 发送配置" onClick={() => emitListToolbar('open-mq-settings')}>MQ发送配置</Button></Tooltip> : null;
 }
 
+function UpdateSourceIcon({ sourceKey }) {
+  return sourceKey === 'github' ? <GithubOutlined aria-hidden="true" /> : <CloudServerOutlined aria-hidden="true" />;
+}
+
+function UpdateSourceLabel({ source }) {
+  const detail = source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本';
+  return <Space size={6}><UpdateSourceIcon sourceKey={source.key} /><span>{source.label}</span><Text type="secondary">{detail}</Text></Space>;
+}
+
 function UpdateDialog({ data }) {
   const status = data.status || {};
   const check = data.check;
@@ -347,18 +358,17 @@ function UpdateDialog({ data }) {
   const checkSummary = !check
     ? <Alert type="info" showIcon message="尚未检查更新" description="将依次检查固定的 GitHub 与魔搭更新源。" />
     : check.updateAvailable
-      ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.label || ''} · ${release?.releaseName || release?.ref || ''} · 共 ${release?.files?.length || 0} 个更新文件`} />
+      ? <Alert type="success" showIcon message={`发现新版本 ${release?.version || ''}`} description={`${release?.label || ''} · v${release?.version || '-'} · 共 ${release?.files?.length || 0} 个更新文件`} />
       : <Alert type={sourceStates.some(source => source.ok) ? 'success' : 'warning'} showIcon message={sourceStates.some(source => source.ok) ? '当前已是最新版本' : '更新源暂不可用'} description={`当前版本 ${check.currentVersion || status.currentVersion || '-'}`} />;
   return <Modal open={data.open} centered title="在线更新" width={720} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
     <Flex vertical gap={16} className="update-dialog-content">
       <Flex vertical gap={8}>
         <Text strong>当前版本 {status.currentVersion || '-'}</Text>
-        <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.updateAvailable ? 'green' : source.ok ? 'blue' : 'default'}>{source.label} · {source.repository}{source.ok === false ? ` · ${source.error}` : source.version ? ` · v${source.version}` : ''}</Tag>)}</Space>
-        <Flex justify="flex-end"><Button type="primary" icon={<ReloadOutlined />} onClick={() => emitListToolbar('check-update')}>检查更新</Button></Flex>
+        {!check?.updateAvailable ? <Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'blue' : 'default'} icon={<UpdateSourceIcon sourceKey={source.key} />}>{source.label} · {source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Tag>)}</Space> : null}
       </Flex>
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
-      {check?.updateAvailable ? <Flex vertical gap={8}><Text strong>选择下载源</Text><Radio.Group value={sourceKey} onChange={event => setSourceKey(event.target.value)} vertical>{sourceStates.map(source => <Radio key={source.key} value={source.key} disabled={!source.ok || !source.updateAvailable}>{source.label} · {source.version ? `v${source.version}` : source.error || '未发现更新'}</Radio>)}</Radio.Group><Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
+      {check?.updateAvailable ? <Flex vertical gap={8}><Text strong>选择下载源</Text><Radio.Group value={sourceKey} onChange={event => setSourceKey(event.target.value)} vertical>{sourceStates.map(source => <Radio key={source.key} value={source.key} disabled={!source.ok || !source.updateAvailable}><UpdateSourceLabel source={source} /></Radio>)}</Radio.Group><Flex justify="flex-end"><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" disabled={!sourceKey} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
     </Flex>
   </Modal>;
 }
