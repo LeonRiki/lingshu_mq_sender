@@ -1357,6 +1357,12 @@ pre {
   overflow-y: auto;
 }
 
+@supports (overflow: overlay) {
+  .message-case-options {
+    overflow-y: overlay;
+  }
+}
+
 .message-case-option.ant-btn {
   align-self: stretch;
   width: auto;
