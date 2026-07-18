@@ -1356,7 +1356,8 @@ pre {
 }
 
 .message-case-option.ant-btn {
-  width: 100%;
+  align-self: stretch;
+  width: auto;
   max-width: 100%;
   height: auto;
   min-width: 0;

@@ -421,7 +421,7 @@ function MessageFlowBuilder({ flow, historyItems, availableCases, currentCaseId,
     </section>)}
   </div>;
   const otherCaseContent = <div className="message-case-options">
-    {reusableCases.length ? reusableCases.map(item => <Button key={item.id} className="message-case-option" block title={`${item.name}\n${item.messages[0]}`} onClick={() => addCaseMessages(item.messages)}>
+    {reusableCases.length ? reusableCases.map(item => <Button key={item.id} className="message-case-option" title={`${item.name}\n${item.messages[0]}`} onClick={() => addCaseMessages(item.messages)}>
       <span className="message-case-content">
         <span className="message-case-name">{item.name}</span>
         <span className="message-case-preview">{item.messages[0]}</span>
