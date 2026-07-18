@@ -197,6 +197,15 @@ button:disabled {
   font-size: 13px;
 }
 
+.update-dialog-current-version {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.update-source-section-label {
+  font-size: 13px;
+}
+
 .update-source-grid.ant-radio-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -205,9 +214,9 @@ button:disabled {
 }
 
 .update-source-card.ant-radio-wrapper {
-  display: flex;
-  align-items: flex-start;
-  min-height: 92px;
+  position: relative;
+  display: block;
+  min-height: 104px;
   margin-inline-end: 0;
   padding: 16px;
   border: 1px solid var(--border);
@@ -224,17 +233,50 @@ button:disabled {
   background: #f2fff6;
 }
 
-.update-source-card.ant-radio-wrapper.is-selected .ant-radio-inner {
-  border-color: #22a559;
-  background: #22a559;
-}
-
 .update-source-card .ant-radio {
-  margin-top: 2px;
+  position: absolute;
+  opacity: 0;
 }
 
 .update-source-card .ant-radio + * {
+  display: block;
+  width: 100%;
   min-width: 0;
+}
+
+.update-source-card-content {
+  min-height: 70px;
+}
+
+.update-source-card-main {
+  min-width: 0;
+}
+
+.update-source-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: 26px;
+  color: #1f2937;
+}
+
+.update-source-card.is-selected .update-source-brand-icon {
+  color: #2563eb;
+}
+
+.update-source-check {
+  flex: 0 0 auto;
+  color: #22a559;
+  font-size: 26px;
+}
+
+.update-source-check-empty {
+  width: 26px;
+  height: 26px;
+  border: 2px solid #aab4c3;
+  border-radius: 50%;
 }
 
 .update-source-hint {
