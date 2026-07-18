@@ -1059,7 +1059,7 @@ async function loadUpdateStatus() {
   return state.updateStatus;
 }
 
-function renderUpdateDialog() {
+function renderOnlineUpdateDialog() {
   window.renderUpdateDialog?.({
     open: state.updateDialogOpen,
     status: state.updateStatus,
@@ -1069,10 +1069,10 @@ function renderUpdateDialog() {
 
 async function openUpdateDialog() {
   state.updateDialogOpen = true;
-  renderUpdateDialog();
+  renderOnlineUpdateDialog();
   try {
     await loadUpdateStatus();
-    renderUpdateDialog();
+    renderOnlineUpdateDialog();
   } catch (error) {
     showError(error);
   }
@@ -1080,12 +1080,12 @@ async function openUpdateDialog() {
 
 function closeUpdateDialog() {
   state.updateDialogOpen = false;
-  renderUpdateDialog();
+  renderOnlineUpdateDialog();
 }
 
 async function checkForUpdate() {
   state.updateCheck = await api('/api/update/check', { method: 'POST' });
-  renderUpdateDialog();
+  renderOnlineUpdateDialog();
   renderListToolbars();
   if (!state.updateCheck.updateAvailable) {
     const available = (state.updateCheck.sources || []).some(source => source.ok);
