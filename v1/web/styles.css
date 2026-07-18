@@ -189,6 +189,24 @@ button:disabled {
   min-width: 0;
 }
 
+.update-dialog-modal .ant-modal-content {
+  padding: 0;
+}
+
+.update-dialog-modal .ant-modal-header {
+  margin-bottom: 0;
+  padding: 28px 32px 0;
+}
+
+.update-dialog-modal .ant-modal-body {
+  padding: 28px 32px 32px;
+}
+
+.update-dialog-modal .ant-modal-close {
+  top: 28px;
+  right: 28px;
+}
+
 .update-dialog-title .ant-typography {
   margin: 0;
 }
@@ -209,16 +227,16 @@ button:disabled {
 .update-source-grid.ant-radio-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 20px;
   width: 100%;
 }
 
 .update-source-card.ant-radio-wrapper {
   position: relative;
   display: block;
-  min-height: 104px;
+  min-height: 120px;
   margin-inline-end: 0;
-  padding: 16px;
+  padding: 20px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
@@ -245,7 +263,7 @@ button:disabled {
 }
 
 .update-source-card-content {
-  min-height: 70px;
+  min-height: 78px;
 }
 
 .update-source-card-main {
@@ -256,14 +274,15 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  font-size: 26px;
-  color: #1f2937;
+  width: 40px;
+  height: 40px;
 }
 
-.update-source-card.is-selected .update-source-brand-icon {
-  color: #2563eb;
+.update-source-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .update-source-check {
@@ -280,11 +299,12 @@ button:disabled {
 }
 
 .update-source-hint {
-  line-height: 1.7;
+  line-height: 1.8;
 }
 
 .update-dialog-actions {
-  padding-top: 16px;
+  margin-top: 4px;
+  padding-top: 24px;
   border-top: 1px solid var(--border);
 }
 
