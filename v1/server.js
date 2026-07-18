@@ -34,18 +34,20 @@ const UPDATE_SOURCES = [
   }
 ];
 const UPDATE_ROOT_FILES = new Set([
-  '.env.example',
-  'README.md',
-  'mac-修复权限.command',
   'mac-启动服务.command',
-  'package-lock.json',
-  'package.json',
   'server.js',
   'version.json',
   'win-启动服务.bat'
 ]);
-const UPDATE_PREFIXES = ['docs/', 'scripts/', 'web/'];
-const UPDATE_MANIFEST_PREFIXES = ['scripts/', 'web/'];
+const UPDATE_WEB_FILES = new Set([
+  'web/app.js',
+  'web/detail-ui.js',
+  'web/favicon.ico',
+  'web/favicon.png',
+  'web/index.html',
+  'web/styles.css'
+]);
+const UPDATE_ASSETS_PREFIX = 'web/assets/';
 let updateInProgress = false;
 let restartScheduled = false;
 const PROTOCOL_MESSAGE_FIELDS = [
@@ -156,18 +158,10 @@ function versionGreater(left, right) {
   return false;
 }
 
-function isUpdatePathWithPrefixes(value, prefixes) {
+function isUpdateAllowedPath(value) {
   const rel = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!rel || rel.split('/').some(part => !part || part === '.' || part === '..')) return false;
-  return UPDATE_ROOT_FILES.has(rel) || prefixes.some(prefix => rel.startsWith(prefix));
-}
-
-function isUpdateAllowedPath(value) {
-  return isUpdatePathWithPrefixes(value, UPDATE_PREFIXES);
-}
-
-function isUpdateManifestPath(value) {
-  return isUpdatePathWithPrefixes(value, UPDATE_MANIFEST_PREFIXES);
+  return UPDATE_ROOT_FILES.has(rel) || UPDATE_WEB_FILES.has(rel) || rel.startsWith(UPDATE_ASSETS_PREFIX);
 }
 
 function safeUpdatePath(baseDir, value) {
@@ -1722,7 +1716,6 @@ module.exports = {
   checkMqGatewayReady,
   currentAppVersion,
   isUpdateAllowedPath,
-  isUpdateManifestPath,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
   summarizeMqSend,

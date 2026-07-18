@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { isUpdateManifestPath } = require('../server');
+const { isUpdateAllowedPath } = require('../server');
 
 const ROOT = path.resolve(__dirname, '..');
 const output = path.join(ROOT, 'update-manifest.json');
@@ -20,7 +20,7 @@ const version = String(JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'
 if (!version) throw new Error('version.json 缺少 version');
 
 const files = trackedFiles()
-  .filter(file => isUpdateManifestPath(file))
+  .filter(file => isUpdateAllowedPath(file))
   .sort()
   .map(file => ({ path: file, sha256: sha256(path.join(ROOT, file)) }));
 

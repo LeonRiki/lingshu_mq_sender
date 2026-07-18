@@ -6,16 +6,19 @@ const {
   casesFromCsvText,
   checkMqGatewayReady,
   isUpdateAllowedPath,
-  isUpdateManifestPath,
   sendSnapshotsInOrder,
   summarizeMqSend
 } = require('../server');
 
-test('新更新清单忽略 docs 与 test，旧清单仍兼容 docs', () => {
-  assert.equal(isUpdateAllowedPath('docs/消息流可视化构建需求.md'), true);
-  assert.equal(isUpdateManifestPath('docs/消息流可视化构建需求.md'), false);
-  assert.equal(isUpdateManifestPath('test/mq-gateway.test.js'), false);
-  assert.equal(isUpdateManifestPath('web/detail-ui.js'), true);
+test('更新包只包含运行所需文件与静态资源', () => {
+  assert.equal(isUpdateAllowedPath('server.js'), true);
+  assert.equal(isUpdateAllowedPath('web/detail-ui.js'), true);
+  assert.equal(isUpdateAllowedPath('web/assets/github.png'), true);
+  assert.equal(isUpdateAllowedPath('docs/消息流可视化构建需求.md'), false);
+  assert.equal(isUpdateAllowedPath('test/mq-gateway.test.js'), false);
+  assert.equal(isUpdateAllowedPath('scripts/generate-update-manifest.js'), false);
+  assert.equal(isUpdateAllowedPath('web/detail-ui.jsx'), false);
+  assert.equal(isUpdateAllowedPath('package-lock.json'), false);
 });
 
 test('CSV 导入提取 input、skip_reason 与 modelName', () => {
