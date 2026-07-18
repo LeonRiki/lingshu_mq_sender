@@ -239,7 +239,13 @@ async function fetchGitHubJson(url) {
 }
 
 function parseRemoteVersion(buffer, sourceLabel) {
-  const version = buffer.toString('utf8').trim().split(/\r?\n/)[0]?.trim() || '';
+  const text = buffer.toString('utf8').trim();
+  let version = '';
+  try {
+    version = String(JSON.parse(text)?.version || '').trim();
+  } catch (err) {
+    version = text.split(/\r?\n/)[0]?.trim() || '';
+  }
   if (!version || !/\d/.test(version) || /[<>{}]/.test(version)) throw updateError(`${sourceLabel} 版本文件格式无效`, 502);
   return version;
 }
