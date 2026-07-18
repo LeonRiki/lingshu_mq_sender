@@ -1,0 +1,25 @@
+{
+  "name": "workflow-message-tester-v1",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI 工作流消息测试平台 V1，本地 Node 服务 + 静态前端，无运行时 npm 依赖。",
+  "scripts": {
+    "start": "node --watch server.js",
+    "start:no-open": "node --watch server.js --no-open",
+    "dev": "node --watch server.js --no-open",
+    "build": "esbuild web/detail-ui.jsx --bundle --minify --format=iife --global-name=CaseDetailUi --outfile=web/detail-ui.js",
+    "build:web": "npm run build"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.3.2",
+    "antd": "^6.5.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
