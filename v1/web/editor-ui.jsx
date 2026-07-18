@@ -312,6 +312,77 @@ function HistoryMessageEditor({ historyItems, onChange }) {
   </div>;
 }
 
+function OtherCaseList({ items, onSelect }) {
+  const scrollRef = useRef(null);
+  const dragRef = useRef(null);
+  const [metrics, setMetrics] = useState({ hasOverflow: false, thumbHeight: 0, thumbOffset: 0 });
+  const syncScrollbar = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const { clientHeight, scrollHeight, scrollTop } = element;
+    const maxScroll = Math.max(0, scrollHeight - clientHeight);
+    const hasOverflow = maxScroll > 0;
+    const thumbHeight = hasOverflow ? Math.max(24, clientHeight * clientHeight / scrollHeight) : 0;
+    const thumbOffset = hasOverflow ? (clientHeight - thumbHeight) * scrollTop / maxScroll : 0;
+    setMetrics(current => current.hasOverflow === hasOverflow && current.thumbHeight === thumbHeight && current.thumbOffset === thumbOffset ? current : { hasOverflow, thumbHeight, thumbOffset });
+  };
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return undefined;
+    const observer = new ResizeObserver(syncScrollbar);
+    observer.observe(element);
+    element.addEventListener('scroll', syncScrollbar, { passive: true });
+    syncScrollbar();
+    return () => {
+      observer.disconnect();
+      element.removeEventListener('scroll', syncScrollbar);
+    };
+  }, [items.length]);
+  useEffect(() => {
+    const onPointerMove = event => {
+      const drag = dragRef.current;
+      const element = scrollRef.current;
+      if (!drag || !element) return;
+      const maxScroll = element.scrollHeight - element.clientHeight;
+      const trackHeight = element.clientHeight - drag.thumbHeight;
+      if (maxScroll > 0 && trackHeight > 0) element.scrollTop = Math.max(0, Math.min(maxScroll, drag.scrollTop + (event.clientY - drag.clientY) * maxScroll / trackHeight));
+    };
+    const onPointerUp = () => { dragRef.current = null; };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, []);
+  const startDragging = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const element = scrollRef.current;
+    if (!element) return;
+    dragRef.current = { clientY: event.clientY, scrollTop: element.scrollTop, thumbHeight: metrics.thumbHeight };
+  };
+  const jumpToPosition = event => {
+    if (event.target !== event.currentTarget) return;
+    const element = scrollRef.current;
+    const track = event.currentTarget.getBoundingClientRect();
+    const maxScroll = element.scrollHeight - element.clientHeight;
+    const maxOffset = element.clientHeight - metrics.thumbHeight;
+    if (maxScroll > 0 && maxOffset > 0) element.scrollTop = Math.max(0, Math.min(maxScroll, (event.clientY - track.top - metrics.thumbHeight / 2) * maxScroll / maxOffset));
+  };
+  return <div className="message-case-scroll-area">
+    <div ref={scrollRef} className="message-case-options">
+      {items.length ? items.map(item => <Button key={item.id} className="message-case-option" title={`${item.name}\n${item.messages[0]}`} onClick={() => onSelect(item.messages)}>
+        <span className="message-case-content">
+          <span className="message-case-name">{item.name}</span>
+          <span className="message-case-preview">{item.messages[0]}</span>
+        </span>
+      </Button>) : <Text type="secondary" className="message-quick-empty">暂无其他用例</Text>}
+    </div>
+    {metrics.hasOverflow ? <div className="message-case-scrollbar" onPointerDown={jumpToPosition} aria-hidden="true"><div className="message-case-scrollbar-thumb" style={{ height: metrics.thumbHeight, transform: `translateY(${metrics.thumbOffset}px)` }} onPointerDown={startDragging} /></div> : null}
+  </div>;
+}
+
 function MessageFlowBuilder({ flow, historyItems, availableCases, currentCaseId, onFlowAndHistoryChange }) {
   const [composer, setComposer] = useState(null);
   const [draggingId, setDraggingId] = useState('');
@@ -420,14 +491,7 @@ function MessageFlowBuilder({ flow, historyItems, availableCases, currentCaseId,
       </div>
     </section>)}
   </div>;
-  const otherCaseContent = <div className="message-case-options">
-    {reusableCases.length ? reusableCases.map(item => <Button key={item.id} className="message-case-option" title={`${item.name}\n${item.messages[0]}`} onClick={() => addCaseMessages(item.messages)}>
-      <span className="message-case-content">
-        <span className="message-case-name">{item.name}</span>
-        <span className="message-case-preview">{item.messages[0]}</span>
-      </span>
-    </Button>) : <Text type="secondary" className="message-quick-empty">暂无其他用例</Text>}
-  </div>;
+  const otherCaseContent = <OtherCaseList items={reusableCases} onSelect={addCaseMessages} />;
   const renderComposer = className => <div className={`message-flow-composer ${className || ''}`}>
     <Input.TextArea ref={composerInputRef} autoFocus autoSize={{ minRows: 1, maxRows: 4 }} value={composer?.value || ''} placeholder="输入消息" onBlur={saveComposer} onChange={event => setComposer(current => ({ ...current, value: event.target.value }))} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); saveComposer(); } }} />
   </div>;

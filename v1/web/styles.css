@@ -1343,24 +1343,56 @@ pre {
   min-width: 68px;
 }
 
-.message-case-options {
-  display: flex;
-  width: 100%;
-  max-width: 100%;
+.message-case-scroll-area {
+  position: relative;
   min-width: 0;
   min-height: 0;
   flex: 1;
+}
+
+.message-case-options {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 8px;
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
-@supports (overflow: overlay) {
-  .message-case-options {
-    overflow-y: overlay;
-  }
+.message-case-options::-webkit-scrollbar {
+  display: none;
+}
+
+.message-case-scrollbar {
+  position: absolute;
+  top: 4px;
+  right: 3px;
+  bottom: 4px;
+  width: 6px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.message-case-scroll-area:hover .message-case-scrollbar {
+  opacity: 1;
+}
+
+.message-case-scrollbar-thumb {
+  width: 100%;
+  min-height: 24px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: grab;
+}
+
+.message-case-scrollbar-thumb:active {
+  cursor: grabbing;
 }
 
 .message-case-option.ant-btn {
