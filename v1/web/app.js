@@ -2,6 +2,7 @@ const state = {
   config: null,
   fields: [],
   cases: [],
+  casesLoading: true,
   records: [],
   activeCaseId: null,
   activeRecord: null,
@@ -409,7 +410,8 @@ function renderListToolbars() {
       sort: state.caseSort,
       pageNo: state.casePageNo,
       pageSize: state.casePageSize,
-      total: 0
+      total: 0,
+      loading: state.casesLoading
     },
     records: state.recordListData || {
       items: [],
@@ -902,17 +904,31 @@ function quickConfigHtml() {
 }
 
 async function loadInitial() {
-  state.config = normalizeConfigLabels(await api('/api/config'));
-  state.fields = (await api('/api/meta')).sessionAttributeFields || [];
-  await loadUpdateStatus().catch(error => console.warn('无法读取在线更新状态：', error));
-  await checkForUpdate().catch(error => console.warn('无法检查在线更新：', error));
+  const [config, meta] = await Promise.all([api('/api/config'), api('/api/meta')]);
+  state.config = normalizeConfigLabels(config);
+  state.fields = meta.sessionAttributeFields || [];
   renderQuickTools();
+  void (async () => {
+    try {
+      await loadUpdateStatus();
+      await checkForUpdate();
+    } catch (error) {
+      console.warn('无法检查在线更新：', error);
+    }
+  })();
   await loadCases();
   showCaseList();
 }
 
 async function loadCases() {
-  state.cases = (await api('/api/cases')).map(normalizeCase);
+  try {
+    state.cases = (await api('/api/cases')).map(normalizeCase);
+  } catch (error) {
+    state.casesLoading = false;
+    renderListToolbars();
+    throw error;
+  }
+  state.casesLoading = false;
   if (!state.activeCaseId && state.cases[0]) state.activeCaseId = state.cases[0].id;
   renderCaseList();
   renderEditor();

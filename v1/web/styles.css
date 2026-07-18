@@ -471,6 +471,11 @@ main {
   gap: 16px;
 }
 
+.ant-list-page.list-page-loading {
+  align-items: center;
+  justify-content: center;
+}
+
 .ant-list-page .ant-list-table {
   flex: 1;
   min-height: 0;
@@ -1339,16 +1344,24 @@ pre {
 
 .message-case-options {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-height: 0;
   flex: 1;
   flex-direction: column;
   gap: 8px;
+  box-sizing: border-box;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
 .message-case-option.ant-btn {
+  width: 100%;
+  max-width: 100%;
   height: auto;
+  min-width: 0;
   min-height: 54px;
+  box-sizing: border-box;
   justify-content: flex-start;
   overflow: hidden;
   padding: 7px 10px;

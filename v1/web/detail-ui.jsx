@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, ConfigProvider, DatePicker, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, ConfigProvider, DatePicker, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleFilled,
@@ -89,6 +89,7 @@ function RecordListToolbar({ data }) {
 }
 
 function CaseListPage({ data }) {
+  if (data.loading) return <div className="ant-list-page list-page-loading"><Spin description="正在加载测试用例" /></div>;
   const bulkHeaderActive = data.selected > 0;
   const bulkHeader = <Flex className="list-bulk-header" justify="space-between" align="center">
     <Text>{data.selected} selected</Text>
