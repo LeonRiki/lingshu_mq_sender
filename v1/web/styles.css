@@ -1302,6 +1302,7 @@ pre {
 .message-quick-tabs .ant-tabs-body-holder,
 .message-quick-tabs .ant-tabs-body,
 .message-quick-tabs .ant-tabs-content {
+  min-width: 0;
   min-height: 0;
   flex: 1;
 }
@@ -1346,6 +1347,7 @@ pre {
   display: flex;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   min-height: 0;
   flex: 1;
   flex-direction: column;
