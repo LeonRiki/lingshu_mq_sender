@@ -909,6 +909,21 @@ function deleteLabelManagementItems(body) {
   return { config: nextConfig, management: labelManagementData() };
 }
 
+function deleteUnusedLabelManagementItems(body) {
+  const type = body.type === 'businessScenarios' ? 'businessScenarios' : body.type === 'userTags' ? 'userTags' : '';
+  if (!type) {
+    const err = new Error('标签或业务场景类型不完整');
+    err.statusCode = 400;
+    throw err;
+  }
+  const cfg = loadConfig();
+  const unusedNames = cfg[type].filter(item => !labelUsage(type, item.name).length).map(item => item.name);
+  cfg[type] = cfg[type].filter(item => !unusedNames.includes(item.name));
+  const nextConfig = normalizeConfig(cfg);
+  writeJson(CONFIG_FILE, nextConfig);
+  return { config: nextConfig, management: labelManagementData(), deletedCount: unusedNames.length };
+}
+
 function parseTags(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (!value) return [];
@@ -1596,6 +1611,9 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/label-management/batch-delete') {
       return json(res, 200, deleteLabelManagementItems(await parseBody(req)));
+    }
+    if (req.method === 'POST' && pathname === '/api/label-management/delete-unused') {
+      return json(res, 200, deleteUnusedLabelManagementItems(await parseBody(req)));
     }
     if (req.method === 'GET' && pathname === '/api/meta') {
       return json(res, 200, {

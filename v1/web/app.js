@@ -1008,6 +1008,17 @@ async function deleteSelectedLabelItems(labelType, names) {
   toast(`已删除 ${selectedNames.length} 个${typeLabel}`);
 }
 
+async function deleteUnusedLabelItems(labelType) {
+  const typeLabel = labelType === 'userTags' ? '用户标签' : '业务场景';
+  const result = await api('/api/label-management/delete-unused', {
+    method: 'POST',
+    body: JSON.stringify({ type: labelType })
+  });
+  state.config = normalizeConfigLabels(result.config);
+  await loadCases();
+  toast(`已删除 ${result.deletedCount} 个未使用${typeLabel}`);
+}
+
 function availableAgentIds() {
   return [...new Set([
     state.config?.lastSelectedAgentId,
@@ -1844,6 +1855,7 @@ function bindEvents() {
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
+    if (type === 'delete-unused-label-items') deleteUnusedLabelItems(labelType).catch(showError);
     if (type === 'set-case-selection') {
       (pageIds || []).forEach(caseId => state.selectedCases.delete(caseId));
       (ids || []).forEach(caseId => state.selectedCases.add(caseId));

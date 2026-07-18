@@ -158,12 +158,14 @@ function LabelManagementPage({ data }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [target, setTarget] = useState(null);
+  const [unusedDeleteOpen, setUnusedDeleteOpen] = useState(false);
   const [action, setAction] = useState('archive');
   const [replacement, setReplacement] = useState('');
   const isTag = activeKey === 'userTags';
   const label = isTag ? '用户标签' : '业务场景';
   const items = (data?.[activeKey] || []).filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()));
   const activeItems = (data?.[activeKey] || []).filter(item => item.status === 'active' && item.name !== target?.name);
+  const unusedCount = (data?.[activeKey] || []).filter(item => !item.usageCount).length;
   useEffect(() => {
     const availableNames = new Set((data?.[activeKey] || []).map(item => item.name));
     setSelectedNames(names => names.filter(name => availableNames.has(name)));
@@ -193,6 +195,7 @@ function LabelManagementPage({ data }) {
   };
   const replacementAction = isTag ? 'remove' : 'clear';
   const replacementLabel = isTag ? '移除' : '清空';
+  const unusedDeleteLabel = `删除未使用${label}`;
   const targetInUse = Boolean(target?.usageCount);
   const bulkHeaderActive = selectedNames.length > 0;
   const bulkHeader = <Flex align="center" justify="space-between" gap={16}>
@@ -205,20 +208,26 @@ function LabelManagementPage({ data }) {
       : { ...column, title: null, onHeaderCell: () => ({ colSpan: 0 }) })
     : columns;
   return <div className="ant-list-page label-management-page">
-    <Flex justify="space-between" align="center" gap={16} wrap>
-      <Input value={search} onChange={event => setSearch(event.target.value)} placeholder={`搜索${label}`} style={{ width: 300 }} />
-      <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增{label}</Button>
-    </Flex>
-    <Tabs activeKey={activeKey} onChange={key => { setActiveKey(key); setSearch(''); setSelectedNames([]); }} items={[
+    <Tabs activeKey={activeKey} onChange={key => { setActiveKey(key); setSearch(''); setSelectedNames([]); setUnusedDeleteOpen(false); }} items={[
       { key: 'userTags', label: '用户标签' },
       { key: 'businessScenarios', label: '业务场景' }
     ]} />
+    <Flex justify="space-between" align="center" gap={16} wrap>
+      <Input value={search} onChange={event => setSearch(event.target.value)} placeholder={`搜索${label}`} style={{ width: 300 }} />
+      <Space size={8}>
+        <Button danger icon={<DeleteOutlined />} disabled={!unusedCount} onClick={() => setUnusedDeleteOpen(true)}>{unusedDeleteLabel}</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增{label}</Button>
+      </Space>
+    </Flex>
     <Table className="ant-list-table" size="middle" rowKey="name" columns={tableColumns} dataSource={items} tableLayout="auto" rowSelection={{ selectedRowKeys: selectedNames, onChange: setSelectedNames }} pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} />
     <Modal open={createOpen} centered title={`新增${label}`} onCancel={() => setCreateOpen(false)} footer={<Space><Button onClick={() => setCreateOpen(false)}>取消</Button><Button type="primary" disabled={!newName.trim()} onClick={create}>新增</Button></Space>}>
       <Input value={newName} onChange={event => setNewName(event.target.value)} placeholder={`输入${label}名称`} />
     </Modal>
     <Modal open={Boolean(target)} centered title={targetInUse ? `处理“${target?.name || ''}”` : `确认删除“${target?.name || ''}”`} onCancel={resetAction} footer={<Space><Button onClick={resetAction}>取消</Button>{targetInUse ? <Button type="primary" disabled={action === 'replace' && !replacement} onClick={() => requestAction(action)}>{action === 'archive' ? '归档' : action === 'replace' ? '替换' : replacementLabel}</Button> : <Button type="primary" danger onClick={() => requestAction('delete')}>删除</Button>}</Space>}>
       {targetInUse ? <Flex vertical gap={16}><Text>该项当前被 {target?.usageCount} 个测试用例使用。</Text><Radio.Group value={action} onChange={event => setAction(event.target.value)}><Flex vertical gap={12}><Radio value="archive">归档</Radio><Radio value="replace">替换为其他{label}</Radio><Radio value={replacementAction}>{replacementLabel}</Radio></Flex></Radio.Group>{action === 'replace' ? <Select value={replacement || undefined} onChange={setReplacement} options={activeItems.map(item => ({ value: item.name, label: item.name }))} placeholder={`选择替换后的${label}`} style={{ width: '100%' }} /> : null}</Flex> : <Text>确认删除“{target?.name}”吗？该项当前未被测试用例使用。</Text>}
+    </Modal>
+    <Modal open={unusedDeleteOpen} centered title={`确认${unusedDeleteLabel}`} onCancel={() => setUnusedDeleteOpen(false)} footer={<Space><Button onClick={() => setUnusedDeleteOpen(false)}>取消</Button><Button type="primary" danger onClick={() => { emitListToolbar('delete-unused-label-items', { labelType: activeKey }); setUnusedDeleteOpen(false); }}>删除</Button></Space>}>
+      <Text>将删除 {unusedCount} 个未被测试用例使用的{label}，删除后不可恢复。确认继续吗？</Text>
     </Modal>
   </div>;
 }
