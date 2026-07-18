@@ -1278,6 +1278,7 @@ pre {
   padding: 12px;
   border-left: 1px solid var(--border);
   background: #fff;
+  contain: size;
   overflow: hidden;
 }
 
