@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.4",
+  "version": "1.2.5",
   "notes": [],
   "files": [
     {
@@ -25,11 +25,11 @@
     },
     {
       "path": "package-lock.json",
-      "sha256": "b88e49fe7e1719696c1d91ac8102fc44c6e75767a7f77194f775988707f81f1e"
+      "sha256": "07d03b5529b182b249aafc049a4bb5dd528d82aacf9207dc75c0863b92fd7ef9"
     },
     {
       "path": "package.json",
-      "sha256": "01dc73a14de0e6a9381d7ee195af0ac0206dcdb995a6ad5c8e8d2b09ce09e0b3"
+      "sha256": "7184f5bb0c6fd17613ea23bb3978469aa1f7ce292681cb4ac5fbc742a8f591c2"
     },
     {
       "path": "scripts/generate-update-manifest.js",
@@ -37,23 +37,23 @@
     },
     {
       "path": "server.js",
-      "sha256": "9eddcae487893ebd2ba2f8b40af2cb8af968603c1fdec390792efdccdd0349d5"
+      "sha256": "74904c922e92fba29998688ebe455fc953a93321fc1345187011d1603d9b0565"
     },
     {
       "path": "version.json",
-      "sha256": "372335e533407f0009b082361510057de1a2e407483e777015183305cb913e7f"
+      "sha256": "3e174ab4fded11d95d4c2d2f66f06dc1a9768245a38a7e3c4c1e92141af64192"
     },
     {
       "path": "web/app.js",
-      "sha256": "a0dd42a40c7f216a00390d5e74315858cfe1cde709f82bacfbec899a716061ea"
+      "sha256": "7598ba12dd9b1baf28b130cadc27295396be61b23739d57fb0ab9e773caea3d3"
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "ab56b41ffd20c44f5c94ec132bb182ea5602790230d081a9d3e19578fad6865a"
+      "sha256": "ce2027f78b7358c5c68fd30078ec398c79e10625678402ca1c3edbfe200e73ff"
     },
     {
       "path": "web/detail-ui.jsx",
-      "sha256": "d82ccf203ca5d834cd4508ad80e4c94d971fe383daa64ff4893b44745022d6c8"
+      "sha256": "0c9b975b38a9da6c9886002394b62b470f12a708013708a7c63a70d2e39cc12d"
     },
     {
       "path": "web/editor-ui.jsx",
@@ -69,11 +69,11 @@
     },
     {
       "path": "web/index.html",
-      "sha256": "a91726d87b7af8e12a35da86e5dc44ea62d94ad92c0fec18b997845c7cf3025e"
+      "sha256": "7615656cc33abbbde21a891dd53920ba65be95925cb3e4bfc305866f66f4de27"
     },
     {
       "path": "web/styles.css",
-      "sha256": "9d8189d0e3cf97d4582e43822fbf55ff0f6533e0ab8723472584f14367e42f20"
+      "sha256": "50b3e5bf3a45ef65ae1b58a6706a4126391270333fbea2e8b0b65ff4247e27e8"
     },
     {
       "path": "win-启动服务.bat",
