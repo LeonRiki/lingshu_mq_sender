@@ -416,7 +416,7 @@ function MessageFlowBuilder({ flow, historyItems, availableCases, currentCaseId,
     {QUICK_MESSAGE_GROUPS.map(group => <section className="message-quick-group" key={group.title}>
       <Text className="message-quick-group-title">{group.title}</Text>
       <div className="message-quick-options">
-        {group.items.map(item => <Button key={item.label} size="small" onClick={() => addQuickMessage(item.values)}>{item.label}</Button>)}
+        {group.items.map(item => <Button key={item.label} size="small" shape="round" onClick={() => addQuickMessage(item.values)}>{item.label}</Button>)}
       </div>
     </section>)}
   </div>;
