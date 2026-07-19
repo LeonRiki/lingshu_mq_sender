@@ -1,13 +1,54 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const {
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
+  ensureUpdateFilePermissions,
+  getFallbackUpdateSource,
+  isUpdateAllowedPath,
   sendSnapshotsInOrder,
   summarizeMqSend
 } = require('../server');
+
+test('更新包只包含运行所需文件与静态资源', () => {
+  assert.equal(isUpdateAllowedPath('server.js'), true);
+  assert.equal(isUpdateAllowedPath('web/detail-ui.js'), true);
+  assert.equal(isUpdateAllowedPath('web/case-list-filter.js'), true);
+  assert.equal(isUpdateAllowedPath('web/assets/github.png'), true);
+  assert.equal(isUpdateAllowedPath('docs/消息流可视化构建需求.md'), false);
+  assert.equal(isUpdateAllowedPath('test/mq-gateway.test.js'), false);
+  assert.equal(isUpdateAllowedPath('scripts/generate-update-manifest.js'), false);
+  assert.equal(isUpdateAllowedPath('web/detail-ui.jsx'), false);
+  assert.equal(isUpdateAllowedPath('package-lock.json'), false);
+});
+
+test('GitHub 下载失败时切换到魔搭', () => {
+  assert.equal(getFallbackUpdateSource({ key: 'github' })?.key, 'modelscope');
+  assert.equal(getFallbackUpdateSource({ key: 'modelscope' }), null);
+});
+
+test('更新后的 mac command 文件保留执行权限', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-update-permissions-'));
+  try {
+    const launcher = path.join(root, 'mac-启动服务.command');
+    const regularFile = path.join(root, 'server.js');
+    fs.writeFileSync(launcher, '#!/bin/sh\n');
+    fs.writeFileSync(regularFile, '');
+    fs.chmodSync(launcher, 0o644);
+    fs.chmodSync(regularFile, 0o644);
+    ensureUpdateFilePermissions(launcher, 'mac-启动服务.command');
+    ensureUpdateFilePermissions(regularFile, 'server.js');
+    assert.equal(fs.statSync(launcher).mode & 0o111, 0o111);
+    assert.equal(fs.statSync(regularFile).mode & 0o111, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('CSV 导入提取 input、skip_reason 与 modelName', () => {
   const cases = casesFromCsvText('input,skip_reason,modelName\n"第一条，含逗号","跳过原因","模型 A"\n"第二条\n含换行",,"模型 B"');

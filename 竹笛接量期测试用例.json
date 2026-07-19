@@ -1,0 +1,53 @@
+{
+  "cases": [
+    { "businessScenario": "完整地址", "caseName": "一次性提供完整三要素", "jsonMessages": [{ "input": ["张三，13812345678，广东省广州市天河区体育西路103号天河大厦1203室"] }] },
+    { "businessScenario": "完整地址", "caseName": "地址含村、门牌号", "jsonMessages": [{ "input": ["李四 13912345678 河北省保定市涞水县赵各庄镇东河村36号"] }] },
+    { "businessScenario": "完整地址", "caseName": "地址含小区、楼栋、单元", "jsonMessages": [{ "input": ["王小红，13712345678，四川省成都市武侯区锦城花园8号楼2单元1501"] }] },
+    { "businessScenario": "完整地址", "caseName": "手机号前后带标点", "jsonMessages": [{ "input": ["收件人：赵敏；电话：13612345678；地址：北京市朝阳区望京街道阜通东大街6号院"] }] },
+    { "businessScenario": "完整地址", "caseName": "多轮补齐姓名、手机号和地址", "jsonMessages": [{ "input": ["我叫陈晓"] }, { "input": ["电话是13512345678"] }, { "input": ["地址是上海市浦东新区张江路88号3号楼501室"] }] },
+    { "businessScenario": "完整地址", "caseName": "历史已有完整地址，当前称已填写", "jsonMessages": [{ "input": ["我之前已经填过地址了"] }] },
+
+    { "businessScenario": "地址不完整", "caseName": "仅提供姓名", "jsonMessages": [{ "input": ["我叫张丽"] }] },
+    { "businessScenario": "地址不完整", "caseName": "仅提供手机号", "jsonMessages": [{ "input": ["我的电话是13812345678"] }] },
+    { "businessScenario": "地址不完整", "caseName": "仅提供地址", "jsonMessages": [{ "input": ["我住在杭州市西湖区文三路90号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "缺少姓名", "jsonMessages": [{ "input": ["电话13912345678，地址江苏省南京市鼓楼区中山北路100号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "缺少手机号", "jsonMessages": [{ "input": ["收件人王强，地址湖北省武汉市洪山区珞喻路152号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "缺少详细地址", "jsonMessages": [{ "input": ["李梅，13812345678，北京市朝阳区"] }] },
+    { "businessScenario": "地址不完整", "caseName": "手机号不足11位", "jsonMessages": [{ "input": ["张三，1381234567，广东省深圳市南山区科技园南区1号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "手机号超过11位", "jsonMessages": [{ "input": ["张三，138123456789，广东省深圳市南山区科技园南区1号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "手机号带空格", "jsonMessages": [{ "input": ["张三，138 1234 5678，广东省深圳市南山区科技园南区1号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "手机号带横杠", "jsonMessages": [{ "input": ["张三，138-1234-5678，广东省深圳市南山区科技园南区1号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "手机号带区号", "jsonMessages": [{ "input": ["张三，010-13812345678，广东省深圳市南山区科技园南区1号"] }] },
+    { "businessScenario": "地址不完整", "caseName": "仅称订单里已填写", "jsonMessages": [{ "input": ["我在订单里已经填过了"] }] },
+    { "businessScenario": "地址不完整", "caseName": "仅称其他平台已填写", "jsonMessages": [{ "input": ["我之前在别的平台留过地址"] }] },
+
+    { "businessScenario": "候补填写", "caseName": "暂时忙碌", "jsonMessages": [{ "input": ["我现在忙，晚点填"] }] },
+    { "businessScenario": "候补填写", "caseName": "稍后填写", "jsonMessages": [{ "input": ["我一会儿再发给你"] }] },
+    { "businessScenario": "候补填写", "caseName": "推迟到晚上处理", "jsonMessages": [{ "input": ["晚上回家后再弄吧"] }] },
+    { "businessScenario": "候补填写", "caseName": "不会填写地址", "jsonMessages": [{ "input": ["我不会填这个地址"] }] },
+    { "businessScenario": "地址填写指引", "caseName": "询问如何填写地址", "jsonMessages": [{ "input": ["地址怎么填呀？"] }] },
+
+    { "businessScenario": "首次拒绝", "caseName": "明确不想提供地址", "jsonMessages": [{ "input": ["我不想填地址"] }] },
+    { "businessScenario": "首次拒绝", "caseName": "质疑收集地址用途", "jsonMessages": [{ "input": ["为什么要我的地址？"] }] },
+    { "businessScenario": "首次拒绝", "caseName": "质疑信息安全性", "jsonMessages": [{ "input": ["你们是不是骗子，为什么要手机号和地址？"] }] },
+    { "businessScenario": "首次拒绝", "caseName": "表示不需要工具", "jsonMessages": [{ "input": ["不用寄了，我自己有笛子"] }] },
+    { "businessScenario": "二次拒绝", "caseName": "经劝说后再次拒绝", "jsonMessages": [{ "input": ["我不想填地址"] }, { "input": ["不用了，我确定不需要"] }] },
+
+    { "businessScenario": "境外地址", "caseName": "提供境外地址，询问是否有国内地址", "jsonMessages": [{ "input": ["王明，13812345678，美国加利福尼亚州洛杉矶市圣莫尼卡大道100号"] }] },
+    { "businessScenario": "境外地址", "caseName": "境外后补充国内完整地址", "jsonMessages": [{ "input": ["王明，13812345678，美国加利福尼亚州洛杉矶市圣莫尼卡大道100号"] }, { "input": ["有国内地址，张三，13812345678，浙江省杭州市余杭区文一西路969号"] }] },
+    { "businessScenario": "境外地址", "caseName": "确认没有国内地址", "jsonMessages": [{ "input": ["王明，13812345678，美国加利福尼亚州洛杉矶市圣莫尼卡大道100号"] }, { "input": ["没有国内地址，我人在国外"] }] },
+
+    { "businessScenario": "上课时间", "caseName": "明确有时间上课", "jsonMessages": [{ "input": ["有时间，晚上七点我可以准时上课"] }] },
+    { "businessScenario": "上课时间", "caseName": "明确没时间上课", "jsonMessages": [{ "input": ["我晚上要加班，没时间上课"] }] },
+    { "businessScenario": "上课时间", "caseName": "上课时间不明确", "jsonMessages": [{ "input": ["到时候看情况吧"] }] },
+    { "businessScenario": "上课时间", "caseName": "地址完整后同轮确认有时间", "jsonMessages": [{ "input": ["张三，13812345678，广东省佛山市南海区桂城街道灯湖西路20号，晚上七点也有时间"] }] },
+
+    { "businessScenario": "不回复边界", "caseName": "首次打招呼后学员回复", "jsonMessages": [{ "input": ["老师你好，我收到了"] }] },
+    { "businessScenario": "不回复边界", "caseName": "开课日期超过5天仍提供完整地址", "jsonMessages": [{ "input": ["我刚看到消息，地址是江苏省苏州市工业园区星湖街328号，王丽 13812345678"] }] },
+    { "businessScenario": "不回复边界", "caseName": "无开课日期标签时提供完整地址", "jsonMessages": [{ "input": ["张强，13912345678，山东省青岛市市南区香港中路10号"] }] },
+    { "businessScenario": "不回复边界", "caseName": "自由沟通第3次结束语", "jsonMessages": [{ "input": ["好的"] }] },
+
+    { "businessScenario": "图片场景", "caseName": "图片含竹笛使用问题", "jsonMessages": [{ "input": ["图片里这个笛膜怎么贴？"] }] },
+    { "businessScenario": "物流查询", "caseName": "查询竹笛物流", "jsonMessages": [{ "input": ["我的竹笛什么时候能到？帮我查下物流"] }] }
+  ]
+}

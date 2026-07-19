@@ -1,0 +1,2320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>消息随机值生成器</title>
+<style>
+  :root {
+    --bg: #0f0f14;
+    --field-bg: #1c1c2a;
+    --border: #2a2a3a;
+    --text: #e0e0e0;
+    --dim: #888;
+    --accent: #6c5ce7;
+    --accent-hover: #7d6ff0;
+    --green: #00d2a0;
+    --highlight: #ffd700;
+    --input-bg: #2e2e48;
+    --input-border: #3d3d55;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", "Menlo", monospace;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0; padding: 0;
+    min-height: 100vh;
+  }
+
+  .left {
+    position: fixed; top: 0; left: 0;
+    width: 320px; height: 100vh;
+    padding: 20px 16px;
+    display: flex; flex-direction: column; gap: 12px;
+    overflow-y: auto;
+    background: var(--field-bg);
+    border-right: 1px solid var(--border);
+    z-index: 10;
+  }
+
+  .main {
+    margin-left: 320px;
+    display: flex;
+    gap: 20px;
+    padding: 24px;
+    min-height: 100vh;
+    align-items: flex-start;
+  }
+  .center { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .right { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 0; max-height: calc(100vh - 48px); }
+
+  @media (max-width: 1200px) {
+    .left { position: relative; width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    .main { margin-left: 0; flex-direction: column; padding: 16px; }
+    .right { width: 100%; }
+  }
+
+  .btn {
+    flex: 1;
+    min-width: 0;
+    padding: 13px 12px;
+    border: none;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    letter-spacing: 0.03em;
+  }
+  .btn-rand {
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 18px;
+    font-size: 12px;
+    border-radius: 8px;
+    font-weight: 600;
+    flex: none;
+  }
+  .btn-rand:hover { background: var(--accent-hover); }
+  .btn-rand:active { transform: scale(0.97); }
+
+  .btn-copy {
+    background: transparent;
+    color: var(--green);
+    border: 2px solid var(--green);
+    flex: 1;
+  }
+  .btn-copy:hover { background: rgba(0,210,160,0.08); }
+  .btn-copy.copied { background: var(--green); color: #000; }
+
+  .btn-history {
+    background: transparent;
+    color: var(--dim);
+    border: 1px solid var(--border);
+    flex: 1;
+  }
+  .btn-history:hover { border-color: var(--accent); color: var(--text); }
+
+  .field-rows {
+    background: var(--field-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px 0;
+  }
+  .field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+  }
+  .field-row + .field-row { border-top: 1px solid var(--border); }
+  .field-row .field-info { min-width: 0; flex: 1; }
+  .field-row .field-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+    margin-bottom: 6px;
+  }
+  .field-row .field-value {
+    font-size: 13px;
+    color: var(--highlight);
+    word-break: break-all;
+    line-height: 1.3;
+  }
+  .field-row .field-sub {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+    word-break: break-all;
+  }
+  .field-row .field-sub .sv { color: #b0b0c8; }
+
+  .input-section {
+    background: var(--field-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .input-section .section-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+    margin-bottom: 10px;
+  }
+  .section-row { display: flex; align-items: center; gap: 8px; }
+  .agent-id-input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .agent-id-input:focus { border-color: var(--accent); }
+
+  .checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    padding: 5px 11px;
+    border-radius: 6px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    transition: all 0.12s;
+    user-select: none;
+  }
+  .checkbox-item:hover { border-color: #5a5a78; }
+  .checkbox-item.checked { border-color: var(--accent); background: rgba(108,92,231,0.15); }
+  .checkbox-item input[type="checkbox"] {
+    appearance: none;
+    width: 15px; height: 15px;
+    border: 2px solid var(--input-border);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .checkbox-item input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox-item input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px; top: 0px;
+    width: 5px; height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .checkbox-item .num {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--dim);
+    min-width: 14px;
+    text-align: center;
+  }
+  .checkbox-item.checked .num { color: #fff; }
+
+  .input-current {
+    font-size: 12px;
+    color: var(--dim);
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .input-current .val { color: var(--highlight); }
+
+  .intent-section {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .intent-section .section-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.02em;
+    margin-bottom: 10px;
+  }
+  .toggle-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .toggle-title { font-size: 12px; color: var(--dim); font-weight: 500; }
+  .toggle-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    align-items: center;
+  }
+  .toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    padding: 5px 11px;
+    border-radius: 6px;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    transition: all 0.12s;
+    user-select: none;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  .toggle-item:hover { border-color: #5a5a78; color: #fff; }
+  .toggle-item.checked { border-color: var(--accent); background: rgba(108,92,231,0.15); color: #fff; }
+  .toggle-item input[type="checkbox"] {
+    appearance: none;
+    width: 15px; height: 15px;
+    border: 2px solid var(--input-border);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .toggle-item input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .toggle-item input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px; top: 0px;
+    width: 5px; height: 9px;
+    border: solid #fff;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .toggle-clear {
+    padding: 5px 12px;
+    border-radius: 14px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid #4a3030;
+    background: transparent;
+    color: #c06060;
+    transition: all 0.12s;
+    white-space: nowrap;
+  }
+  .toggle-clear:hover { border-color: #c06060; background: rgba(192,96,96,0.1); }
+
+  .scenario-row {
+    display: flex;
+    gap: 8px;
+  }
+  .scenario-select {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 30px;
+  }
+  .scenario-select:focus { border-color: var(--accent); }
+  .scenario-select option {
+    background: var(--field-bg);
+    color: #fff;
+  }
+  .btn-apply {
+    background: var(--accent);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    white-space: nowrap;
+    transition: all 0.12s;
+  }
+  .btn-apply:hover { background: var(--accent-hover); }
+
+  .json-preview {
+    background: var(--field-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-x: auto;
+    max-height: 520px;
+    overflow-y: auto;
+  }
+  .json-preview pre {
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #ccc;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .json-key { color: #6c9ef5; }
+  .json-str { color: #f0a060; }
+  .json-num { color: #a0d2a0; }
+
+  .counter {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: right;
+  }
+
+  .history { margin-top: 8px; }
+  .history-title {
+    font-size: 12px;
+    color: var(--dim);
+    margin-bottom: 6px;
+    letter-spacing: 0.03em;
+  }
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .history-item {
+    font-size: 10px;
+    color: var(--dim);
+    background: var(--field-bg);
+    border: 1px solid #1e1e2e;
+    border-radius: 6px;
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .history-item:hover { border-color: var(--accent); color: var(--text); }
+  .history-item .idx { color: var(--accent); font-weight: 600; min-width: 20px; }
+  .history-item .triple {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .right-actions { display: flex; gap: 8px; }
+  .right-actions .btn { padding: 10px 12px; font-size: 12px; }
+
+  .import-row { display: flex; gap: 8px; align-items: center; }
+  .file-input { display: none; }
+  .btn-import {
+    background: transparent; border: 1px dashed #5a5a78; color: #9b9bb8;
+    padding: 10px 16px; border-radius: 8px; font-size: 13px;
+    font-family: inherit; cursor: pointer; transition: all 0.12s; text-align: center; flex: 1;
+  }
+  .btn-import:hover { border-color: var(--accent); color: #fff; }
+  .btn-sm {
+    background: var(--accent); color: #fff; padding: 5px 12px;
+    border-radius: 5px; font-size: 11px; font-family: inherit;
+    font-weight: 600; cursor: pointer; border: none; transition: all 0.12s; white-space: nowrap;
+  }
+  .btn-sm:hover { background: var(--accent-hover); }
+  .btn-sm.outline { background: transparent; border: 1px solid var(--input-border); color: var(--dim); }
+  .btn-sm.outline:hover { border-color: var(--accent); color: #fff; }
+  .btn-sm.danger { background: transparent; border:1px solid #4a3030; color:#c06060; }
+  .btn-sm.danger:hover { background: rgba(192,96,96,0.1); }
+  .case-list {
+    display: flex; flex-direction: column; gap: 4px;
+    flex: 1; overflow-y: auto; margin-top: 6px;
+    min-height: 200px;
+  }
+  .case-item {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim);
+    background: var(--input-bg); border: 1px solid transparent; border-radius: 5px;
+    padding: 7px 10px; cursor: grab; transition: all 0.12s;
+  }
+  .case-item:hover { border-color: var(--accent); color: #fff; }
+  .case-item.active { border-color: var(--accent); background: rgba(108,92,231,0.1); color: #fff; }
+  .case-item.dragging { opacity: 0.4; }
+  .case-item.drag-over { border-color: var(--green); border-style: dashed; }
+  .case-item .idx { color: var(--accent); font-weight: 600; min-width: 18px; flex-shrink: 0; }
+  .case-item .info { flex:1; overflow:hidden; min-width:0; }
+  .case-item .name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .case-item .expect { display:block; font-size:10px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
+  .case-item .del { color:#c06060; cursor:pointer; padding:2px 6px; border-radius:3px; font-size:10px; flex-shrink:0; }
+  .case-item .del:hover { background: rgba(192,96,96,0.2); }
+  .json-editor {
+    width:100%; flex:1; min-height:500px; background:var(--field-bg);
+    border:1px solid var(--border); border-radius:10px; padding:14px; color:#ccc;
+    font-family:"SF Mono","Fira Code","Cascadia Code","Menlo",monospace;
+    font-size:12px; line-height:1.55; resize:none; outline:none;
+    white-space:pre-wrap; word-break:break-all; tab-size:2;
+  }
+  .json-editor:focus { border-color: var(--accent); }
+  .editor-hint { font-size:10px; color:#5a5a6e; margin-top:4px; text-align:right; }
+  .left .section-label { margin-bottom: 4px; }
+
+  .csv-list { display:flex; flex-direction:column; gap:3px; min-height:0; }
+  .csv-item { background:var(--input-bg); border:1px solid transparent; border-radius:5px;
+    padding:6px 8px; cursor:pointer; transition:all 0.12s; }
+  .csv-item:hover { border-color:var(--accent); }
+  .csv-item .csv-main { font-size:12px; color:#ddd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .csv-item .csv-sub { font-size:10px; color:#666; margin-top:2px; }
+  .csv-item .csv-sub div { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .csv-detail { background:var(--input-bg); border:1px solid var(--input-border); border-radius:6px;
+    padding:8px 10px; margin:4px 0; }
+  .csv-detail .detail-field { margin-bottom:6px; }
+  .csv-detail .detail-label { font-size:10px; color:#777; margin-bottom:1px; }
+  .csv-detail .detail-value { font-size:12px; color:#ccc; word-break:break-all; line-height:1.4; margin-bottom:3px; }
+  .csv-detail .detail-field { display:flex; flex-direction:column; }
+  .csv-detail .detail-field .btn-sm { align-self:flex-start; margin-top:1px; }
+  .csv-list::-webkit-scrollbar { width:5px; }
+  .csv-list::-webkit-scrollbar-track { background:transparent; }
+  .csv-list::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:3px; }
+  .csv-list::-webkit-scrollbar-thumb:hover { background:rgba(255,255,255,0.15); }
+  .csv-list:not(:hover)::-webkit-scrollbar-thumb { background:transparent; }
+
+  .tab-bar { display:flex; gap:0; margin-bottom:0; }
+  .tab-btn { flex:1; padding:8px 0; text-align:center; font-size:13px; font-weight:600;
+    font-family:inherit; cursor:pointer; border:none; background:transparent; color:var(--dim);
+    border-bottom:2px solid transparent; transition:all 0.12s; }
+  .tab-btn:hover { color:#bbb; }
+  .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-panel { display:none; flex-direction:column; flex:1; min-height:0; }
+  .tab-panel.active { display:flex; }
+  .right { display:flex; flex-direction:column; }
+
+  /* macOS 风格滚动条 */
+  .left::-webkit-scrollbar,
+  .case-list::-webkit-scrollbar { width: 6px; }
+  .left::-webkit-scrollbar-track,
+  .case-list::-webkit-scrollbar-track { background: transparent; }
+  .left::-webkit-scrollbar-thumb,
+  .case-list::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08); border-radius: 3px;
+  }
+  .left::-webkit-scrollbar-thumb:hover,
+  .case-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.18);
+  }
+  .left:not(:hover)::-webkit-scrollbar-thumb,
+  .case-list:not(:hover)::-webkit-scrollbar-thumb,
+  .json-editor:not(:focus)::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+  .json-editor::-webkit-scrollbar { width: 6px; }
+  .json-editor::-webkit-scrollbar-track { background: transparent; }
+  .json-editor::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08); border-radius: 3px;
+  }
+  .json-editor::-webkit-scrollbar-thumb:hover,
+  .json-editor:focus::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.18);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="main">
+    <!-- ===== 左栏：测试用例管理 ===== -->
+    <div class="left">
+
+      <div class="section-label">测试用例管理</div>
+      <div class="import-row" style="margin-bottom:8px">
+        <input type="file" class="file-input" id="fileInput" accept=".md" onchange="importMarkdown(this)">
+        <button class="btn-import" onclick="document.getElementById('fileInput').click()">&#x1F4C2; 导入 .md</button>
+        <button class="btn-sm" onclick="addNewCase()">+</button>
+      </div>
+      <div class="case-list" id="caseList">
+        <div style="font-size:11px;color:var(--dim)">尚未导入测试用例</div>
+      </div>
+      <div class="import-row" style="margin-top:8px">
+        <button class="btn-sm outline" onclick="exportMarkdown()">&#x1F4BE; 保存为 .md</button>
+        <button class="btn-sm danger" onclick="resetCases()">&#x21BA; 重置</button>
+      </div>
+
+    </div>
+
+    <!-- ===== 中栏：快捷填写 ===== -->
+    <div class="center">
+
+      <div class="field-rows">
+        <div class="field-row">
+          <div class="field-info">
+            <div class="field-label">weworkAccount</div>
+            <div class="field-value" id="f1">—</div>
+            <div class="field-sub">weworkCorpId: <span class="sv" id="f1sub">—</span></div>
+          </div>
+          <button class="btn btn-rand" onclick="randomizeWeworkAccount()">随机</button>
+        </div>
+        <div class="field-row">
+          <div class="field-info">
+            <div class="field-label">friendExternalId</div>
+            <div class="field-value" id="f3">—</div>
+            <div class="field-sub">friendNick: <span class="sv" id="f3sub">—</span></div>
+          </div>
+          <button class="btn btn-rand" onclick="randomizeFriendExternalId()">随机</button>
+        </div>
+        <div class="field-row">
+          <div class="field-info">
+            <div class="field-label">requestId</div>
+            <div class="field-value" id="f2">—</div>
+          </div>
+          <button class="btn btn-rand" onclick="randomizeRequestId()">随机</button>
+        </div>
+      </div>
+
+      <div class="right-actions">
+        <button class="btn btn-copy" id="copyBtn" onclick="copyJSON()">&#x1F4CB; 复制完整 JSON</button>
+        <button class="btn btn-history" onclick="saveToCase()">&#x1F4BE; 保存到用例</button>
+      </div>
+
+      <input class="agent-id-input" id="caseNameInput" value="" oninput="onCaseNameChange()" placeholder="用例名称" style="margin-bottom:6px">
+      <input class="agent-id-input" id="expectedResultInput" value="" oninput="onExpectedResultChange()" placeholder="请输入此用例期望展示结果" style="margin-bottom:8px;font-size:12px;color:#999">
+
+      <textarea class="json-editor" id="jsonEditor" spellcheck="false" oninput="onJsonEditorInput()" placeholder="加载中..."></textarea>
+
+    </div>
+
+    <!-- ===== 右栏：Tab 切换 ===== -->
+    <div class="right">
+
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('input')">Input 内容</button>
+        <button class="tab-btn" onclick="switchTab('data')">添加实际数据</button>
+      </div>
+
+      <div class="tab-panel active" id="tabInput">
+        <div class="input-section" style="flex:1;display:flex;flex-direction:column">
+          <div class="section-row" style="margin-bottom:10px">
+            <input class="agent-id-input" id="agentIdInput" value="msg01" oninput="onAgentIdChange()" placeholder="Agent ID">
+            <input class="agent-id-input" id="aliasInput" value="汪洋老师" oninput="onAliasChange()" placeholder="班主任别名">
+          </div>
+          <div class="intent-section">
+            <div class="toggle-header"><span class="toggle-title">用户意向</span><span class="toggle-clear" onclick="clearIntents()">清空</span></div>
+            <div class="toggle-group fill" id="intentToggles"></div>
+          </div>
+          <div class="intent-section">
+            <div class="toggle-header"><span class="toggle-title">用户地址</span><span class="toggle-clear" onclick="clearAddress()">清空</span></div>
+            <div class="toggle-group fill" id="addressToggles"></div>
+          </div>
+          <div class="intent-section">
+            <div class="toggle-header"><span class="toggle-title">TagList</span><span class="toggle-clear" onclick="clearTags()">清空</span></div>
+            <div class="toggle-group fill" id="tagToggles"></div>
+          </div>
+          <div class="intent-section">
+            <div class="toggle-header"><span class="toggle-title">开课时间</span></div>
+            <div class="section-row">
+              <input class="agent-id-input" id="courseTimeInput" placeholder="如0630" style="flex:1">
+              <button class="btn-sm" onclick="addCourseTime()">添加</button>
+            </div>
+            <div style="font-size:10px;color:#5a5a6e;margin-top:4px" id="nowTimeHint"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tabData">
+        <div class="input-section" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div class="section-label" style="display:flex;justify-content:space-between;align-items:center">
+            <span>实际数据列表</span>
+            <span style="display:flex;gap:6px">
+              <input type="file" class="file-input" id="csvInput2" accept=".csv" onchange="importCSV(this)">
+              <button class="btn-sm" onclick="document.getElementById('csvInput2').click()">导入CSV</button>
+            </span>
+          </div>
+          <div class="csv-list" id="csvList" style="flex:1;overflow-y:auto">
+            <div style="font-size:11px;color:var(--dim)">点击导入CSV加载真实对话数据</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+const generatedTriples = new Set();
+const history = [];
+let currentMessage = null;
+
+function randStr(len) {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function randDigits(len) {
+  let s = '';
+  for (let i = 0; i < len; i++) s += Math.floor(Math.random() * 10);
+  return s;
+}
+
+function randHex(len) {
+  const chars = '0123456789abcdef';
+  let s = '';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function updateInputDisplay() {
+  // Input 内容由意向+地址勾选动态管理，此处无需单独显示
+}
+
+function onAgentIdChange() {
+  if (currentMessage) {
+    currentMessage.agentId = document.getElementById('agentIdInput').value.trim() || 'msg01';
+    updateJsonEditor(currentMessage);
+  }
+}
+
+function onCaseNameChange() {
+  const name = document.getElementById('caseNameInput').value.trim();
+  if (activeCaseIdx >= 0 && activeCaseIdx < importedCases.length && name) {
+    importedCases[activeCaseIdx].name = name;
+    renderCaseList();
+  }
+}
+
+function onExpectedResultChange() {
+  if (activeCaseIdx >= 0 && activeCaseIdx < importedCases.length) {
+    importedCases[activeCaseIdx].expectedResult = document.getElementById('expectedResultInput').value;
+    renderCaseList();
+  }
+}
+
+function onAliasChange() {
+  if (currentMessage) {
+    currentMessage.weworkAccountAlias = document.getElementById('aliasInput').value.trim() || '汪洋老师';
+    updateJsonEditor(currentMessage);
+  }
+}
+
+// 辅助：构建衍生字段
+function buildDerivedFields(msg) {
+  msg.trigger_message_id = msg.requestId || '';
+  msg.conversation_id = (msg.weworkAccount || '') + '_' + (msg.friendExternalId || '');
+  msg.user_input = Array.isArray(msg.input) ? (msg.input[0] || '') : (msg.input || '');
+}
+
+const INTENT_POOLS = {
+  greeting: [
+    '收到','方便','方便。','可以的','可以吧','好的','好的，老师','你好','嗯嗯',
+    '我已添加了你，现在可以聊天了','收到老师，明天我会参加学习的',
+    '老师好，今天什么时候开始上课？',
+  ],
+  order: [
+    '老师，领资料怎么领？','老师，你发资料我看看','快递到了吗？怎么还没收到',
+    '前天买的课本，还没收到信息','老师直播间里的手稿资料怎样领','看不到红卡片',
+    '不是说可以免费领取整套书法资料吗？','听院长讲还可以申请领古今名画动物全集',
+  ],
+  refund: [
+    '这个课程不太适合我，能退款吗','老师好，我想退一下课程',
+    '老师，上了几节课觉得跟不上，可以退吗',
+  ],
+  other: [
+    '我没啥基础，先看看可以[呲牙]','我完全是零基础，手抖得厉害，能学会吗',
+    '我没有任何工具做画','毛笔和墨汁在哪里买呀','那个链接打不开，点进去黑屏了',
+    '这个课要多少钱？是免费的吗','能回放吗课程','上课哪天开始？','学啥的',
+    '我已是功底没问题的了','我也搞了三十多年的对联了',
+    '老师您问了三次了[微笑]','这么晚了老师您该停下手头的事情休息了呀？',
+    '怕你生气，骂我光说不练','谢谢老师，您辛苦了','节日快乐！',
+    '最好第二天上午重播。','在回家的路上开车','[微笑]','[抱拳]',
+    '女儿让俺休息呢，画不了了[尴尬][捂脸][害羞]',
+    '课程笔记太重要了，对于记忆力下降的我来说可以反复看来加深印象',
+  ],
+  refuse_addr: [
+    '我有工具了，不需要寄','真的不需要，别再问了','不用了，我自己买就行',
+    '不需要寄东西，谢谢','别给我寄了，我有','不用发了','我不需要发任何笔墨',
+  ],
+  delay_addr: [
+    '现在在忙，晚点弄','等会儿填，我现在有点事','晚点再发给你地址',
+    '稍等，我在外面','回头再弄这个','晚点哈，现在不太方便',
+    '正是吃饭时间，不太方便','在回家的路上开车',
+  ],
+};
+
+const ADDRESS_POOLS = {
+  name: ['张三','李四','王五','赵六','陈七','刘八','杨九','周十','吴明','郑华','林芳','黄丽'],
+  phone: ['13800138001','13900139002','15000150003','18600186004','17700177005','18800188006','13600136007','15900159008'],
+  region: ['北京市朝阳区','上海市浦东新区','广州市天河区','深圳市南山区','杭州市西湖区','成都市武侯区','武汉市洪山区','南京市鼓楼区'],
+  detail: ['中关村大街1号创新大厦1203室','望京SOHO T1-B座2206','五道口华清嘉园8号楼3单元502','珠江新城花城大道66号保利中心1801','科技园南区高新大厦A座901','未来科技城海创园5号楼2层','西溪湿地旁天目山路388号','建设路55号华联大厦1508'],
+};
+
+const INTENT_KEYS = ['greeting','order','refund','other','refuse_addr','delay_addr'];
+const INTENT_LABELS = ['问候','查订单','退款','其他','拒绝填写地址','推迟填写地址'];
+const ADDRESS_KEYS = ['name','phone','region','detail'];
+const ADDRESS_LABELS = ['姓名','手机号','地区','详细地址'];
+const TAG_KEYS = ['addr_filled','addr_pending','addr_none','has_time','no_time'];
+const TAG_LABELS = ['已填地址','待填地址','不填地址','有时间','没时间']; // 值直接用 label 文本
+
+// 场景模板：{ name, inputList } — inputList 中用 1688858104791910 7881301638177775 占位
+const SCENARIOS = [
+  { name: '新学员-已填地址标签', expected: '打招呼不回复', data: { input: [" 我已经添加了你，现在我们可以开始聊天了。"], inputList: [], tagList: ["260710", "已填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '新学员-待填地址标签', expected: '打招呼不回复', data: { input: [" 我已经添加了你，现在我们可以开始聊天了。"], inputList: [], tagList: ["260710", "待填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '新学员-不填地址标签', expected: '打招呼不回复', data: { input: [" 我已经添加了你，现在我们可以开始聊天了。"], inputList: [], tagList: ["260710", "不填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-一次性完整地址', expected: '打标签-已填地址+追问上课时间', data: { input: ["张三 13812345678 北京市朝阳区建国路88号SOHO现代城A座1205"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-乡村地址', expected: '正确识别-已填地址', data: { input: ["李四 13900001111 广东省梅州市五华县水寨镇华兴村李屋组15号"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址模糊-学员确认地址详细', expected: '打标签-已填地址', data: { input: ["地址没问题，可以收到快递的"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写", "7881301638177775:王五 13712345678 湖北省武汉市洪山区珞喻路", "1688858104791910:好的，姓名和手机号收到了~地址能再详细一些吗？具体到小区/楼号/门牌号哦~"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-只有姓名', expected: '追问手机号+地址', data: { input: ["我叫赵六"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-手机号格式错误', expected: '识别手机号错误+追问正确手机号', data: { input: ["赵六 1381234567 北京市海淀区中关村大街1号"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-地址过于模糊', expected: '追问补充详细地址', data: { input: ["孙七 13600006666 北京"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-声称其他平台填过', expected: '解释理由（待业务补充）+追问信息', data: { input: ["我在订单里填过了"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-推迟填写', expected: '打标签-待填地址', data: { input: ["现在在忙，晚点弄"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-第1次拒绝-AI劝说', expected: '劝说继续提供地址', data: { input: ["我有工具了，不需要寄"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '地址收集-第2次拒绝-放弃', expected: '打标签-不填地址', data: { input: ["真的不需要，别再问了"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写", "7881301638177775:我有工具了不需要", "1688858104791910:同学咱们邮寄的是院长专用竹笛工具包，和市面上买的不太一样哈~对上课效果很重要的，方便的话一分钟发我下😁"], tagList: ["260710", "赠品单"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '上课时间-有时间', expected: '打标签-有时间+自由回复', data: { input: ["7月11日晚6点50开课没问题"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写", "7881301638177775:张三 13812345678 北京市朝阳区建国路88号SOHO现代城A座1205", "1688858104791910:好的，地址收到了~工具包尽快给您寄出\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710", "已填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '上课时间-错误日期有时间', expected: '纠正+二次确认', data: { input: ["7月11日晚6点50开课没问题"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写", "7881301638177775:张三 13812345678 北京市朝阳区建国路88号SOHO现代城A座1205", "1688858104791910:好的，地址收到了~工具包尽快给您寄出\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710", "已填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '上课时间-没时间', expected: '打标签-没时间+自由回复', data: { input: ["那天要加班，赶不上怎么办"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: 'FAQ-物流问题', expected: '回复物流查询地址', data: { input: ["快递到了吗？怎么还没收到"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写", "7881301638177775:张三 13812345678 北京市朝阳区建国路88号", "1688858104791910:好的，地址收到了~"], tagList: ["260710", "已填地址"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: 'FAQ-基础担忧', expected: '', data: { input: ["我完全是零基础，手抖得厉害，能学会吗"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: 'FAQ-平台技术问题', expected: '', data: { input: ["那个链接打不开，点进去黑屏了"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: 'FAQ-费用问题', expected: '', data: { input: ["这个课要多少钱？是免费的吗"], inputList: ["1688858104791910:同学您好 🌹，我是带您学习竹笛的唯一班主任【汪洋老师】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n7月10日晚6点50准时开课，每节课约90分钟，您时间安排得开吗？\n "], tagList: ["260710"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } },
+  { name: '三次结束回复', expected: '', data: { input: ["好的"], inputList: ["7881301638177775:嗯嗯", "1688858104791910:同学您好，竹笛可以陶冶情操，有益身心", "7881301638177775:嗯嗯好的", "1688858104791910:我这边正好有免费课程，您可以先体验下", "7881301638177775:明白"], tagList: ["0704", "已填地址", "没时间"], weworkAccount: 'WangXiangYun', weworkCorpId: 'ww89a527d678d4796f', requestId: 'ww5a7cc7146734a6fe_JingLingWang_7886308037696533_14797856737439995', friendExternalId: 'wmsZdGcwAATxbpof7XMK61M6IDTPx2HA', friendRemoteId: '7881301638177775', friendNick: '好客迎客松', agentId: 'msg01', weworkAccountAlias: '汪洋老师', latestMsgTime: '2026-07-10 10:00:00' } }
+];
+
+function applyScenario() {
+  if (!currentMessage) return;
+  const sel = document.getElementById('scenarioSelect');
+  const idx = parseInt(sel.value);
+  if (isNaN(idx) || idx < 0) return;
+  const scenario = SCENARIOS[idx];
+  const tid = randomTeacherId();
+  const stid = currentMessage.friendRemoteId;
+  // 覆盖 inputList（用当前 ID 替换模板中写死的 ID）
+  currentMessage.inputList = scenario.inputList.map(line =>
+    line.replace(/^168885\d{10}/, tid).replace(/^788130\d{10}/, stid)
+  );
+  currentMessage.input = [...scenario.input];
+  currentMessage.tagList = [...scenario.tagList];
+  syncTogglesFromInput(currentMessage.input);
+  updateInputDisplay();
+  refreshDisplay();
+}
+
+// 跟踪每个 toggle 当前选中的值（key → 当前值）
+const toggleValues = {};
+
+function pickFromPool(pool) {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function buildToggles(containerId, keys, labels, onChange) {
+  const group = document.getElementById(containerId);
+  const handler = onChange || 'onToggleChange';
+  let html = '';
+  keys.forEach(k => {
+    html +=
+      '<label class="toggle-item" id="tgl-' + k + '">' +
+      '<input type="checkbox" value="' + k + '" onchange="' + handler + '(\'' + k + '\')">' +
+      labels[keys.indexOf(k)] +
+      '</label>';
+  });
+  group.innerHTML = html;
+}
+
+function onTagToggle(key) {
+  const cb = document.querySelector('#tgl-' + key + ' input[type="checkbox"]');
+  const lbl = document.getElementById('tgl-' + key);
+  if (!cb || !currentMessage) return;
+  const label = TAG_LABELS[TAG_KEYS.indexOf(key)];
+  if (cb.checked) {
+    lbl.classList.add('checked');
+    if (!currentMessage.tagList.includes(label)) currentMessage.tagList.push(label);
+  } else {
+    lbl.classList.remove('checked');
+    currentMessage.tagList = currentMessage.tagList.filter(t => t !== label);
+  }
+  updateJsonEditor(currentMessage);
+}
+
+function onToggleChange(key) {
+  const cb = document.querySelector('#tgl-' + key + ' input[type="checkbox"]');
+  const lbl = document.getElementById('tgl-' + key);
+  if (!cb || !currentMessage) return;
+
+  if (cb.checked) {
+    lbl.classList.add('checked');
+    const pool = INTENT_POOLS[key] || ADDRESS_POOLS[key];
+    const val = pickFromPool(pool);
+    toggleValues[key] = val;
+    currentMessage.input.push(val);
+  } else {
+    lbl.classList.remove('checked');
+    if (toggleValues[key]) {
+      const idx = currentMessage.input.indexOf(toggleValues[key]);
+      if (idx >= 0) currentMessage.input.splice(idx, 1);
+      toggleValues[key] = null;
+    }
+  }
+  updateInputDisplay();
+  updateJsonEditor(currentMessage);
+}
+
+function clearToggles(keys) {
+  if (!currentMessage) return;
+  keys.forEach(k => {
+    if (toggleValues[k]) {
+      const idx = currentMessage.input.indexOf(toggleValues[k]);
+      if (idx >= 0) currentMessage.input.splice(idx, 1);
+      toggleValues[k] = null;
+    }
+    const cb = document.querySelector('#tgl-' + k + ' input[type="checkbox"]');
+    if (cb) cb.checked = false;
+    const lbl = document.getElementById('tgl-' + k);
+    if (lbl) lbl.classList.remove('checked');
+  });
+  updateInputDisplay();
+  updateJsonEditor(currentMessage);
+}
+
+function clearIntents() { clearToggles(INTENT_KEYS); }
+function clearAddress() { clearToggles(ADDRESS_KEYS); }
+function clearTags() {
+  TAG_KEYS.forEach(k => {
+    const cb = document.querySelector('#tgl-' + k + ' input[type="checkbox"]');
+    const lbl = document.getElementById('tgl-' + k);
+    if (cb) cb.checked = false;
+    if (lbl) lbl.classList.remove('checked');
+  });
+  if (currentMessage) { currentMessage.tagList = []; updateJsonEditor(currentMessage); }
+}
+
+function updateNowHint() {
+  const n = new Date();
+  document.getElementById('nowTimeHint').textContent =
+    '当前时间：' + (n.getMonth()+1) + '月' + n.getDate() + '日 ' +
+    n.getHours() + ':' + (''+n.getMinutes()).padStart(2,'0') + ':' + (''+n.getSeconds()).padStart(2,'0');
+}
+
+function addCourseTime() {
+  if (!currentMessage) return;
+  const val = document.getElementById('courseTimeInput').value.trim();
+  if (!val) return;
+  if (!currentMessage.tagList.includes(val)) currentMessage.tagList.push(val);
+  document.getElementById('courseTimeInput').value = '';
+  syncTogglesFromInput(currentMessage.input);
+  updateJsonEditor(currentMessage);
+}
+
+setInterval(updateNowHint, 1000);
+updateNowHint();
+
+function syncTogglesFromInput(inputVals) {
+  INTENT_KEYS.concat(ADDRESS_KEYS).forEach(k => {
+    toggleValues[k] = null;
+    const cb = document.querySelector('#tgl-' + k + ' input[type="checkbox"]');
+    const lbl = document.getElementById('tgl-' + k);
+    if (!cb) return;
+    cb.checked = false;
+    if (lbl) lbl.classList.remove('checked');
+  });
+  // 扫描 input 中的文本值，匹配池中内容
+  const allPools = { ...INTENT_POOLS, ...ADDRESS_POOLS };
+  inputVals.forEach(v => {
+    if (isNaN(Number(v))) {
+      for (const [key, pool] of Object.entries(allPools)) {
+        if (pool.includes(v)) {
+          toggleValues[key] = v;
+          const cb = document.querySelector('#tgl-' + key + ' input[type="checkbox"]');
+          const lbl = document.getElementById('tgl-' + key);
+          if (cb) cb.checked = true;
+          if (lbl) lbl.classList.add('checked');
+          break;
+        }
+      }
+    }
+  });
+  // 同步 TagList toggles
+  const tags = currentMessage.tagList || [];
+  TAG_KEYS.forEach(k => {
+    const label = TAG_LABELS[TAG_KEYS.indexOf(k)];
+    const cb = document.querySelector('#tgl-' + k + ' input[type="checkbox"]');
+    const lbl = document.getElementById('tgl-' + k);
+    if (cb) { cb.checked = tags.includes(label); if (lbl) lbl.classList.toggle('checked', cb.checked); }
+  });
+}
+
+const NAMES = ['JingLing', 'WuKong', 'BaiLong', 'TangSeng', 'ZhuBaJie', 'ShaSeng', 'YuDi', 'TaiBai', 'NiuMo', 'HongHai'];
+const SUFFIXES = ['Wang', 'Li', 'Zhang', 'Liu', 'Chen', 'Yang', 'Zhao', 'Huang', 'Zhou', 'Wu'];
+const NICKS = ['精灵王21', '孙悟空', '白龙马', '唐僧', '猪八戒', '沙和尚', '玉帝', '太白金星', '牛魔王', '红孩儿'];
+
+function randomWeworkAccount() {
+  const name = NAMES[Math.floor(Math.random() * NAMES.length)];
+  const suffix = SUFFIXES[Math.floor(Math.random() * SUFFIXES.length)];
+  return name + randDigits(2) + suffix;
+}
+
+function randomRequestId() {
+  const corpId = 'ww' + randHex(8);
+  const agent = NAMES[Math.floor(Math.random() * NAMES.length)];
+  return corpId + '_' + agent + '_' + randDigits(14) + '_' + Date.now();
+}
+
+function randomFriendExternalId() {
+  return randStr(16) + randDigits(4) + randStr(8);
+}
+
+// 学员 ID：788130 开头，16 位数字（线上真实规则）
+function randomFriendRemoteId() {
+  return '788130' + randDigits(10);
+}
+
+// 班主任 ID：168885 开头，16 位数字（线上真实规则）
+function randomTeacherId() {
+  return '168885' + randDigits(10);
+}
+
+function tryRandomize(field, currentVal) {
+  const gen = field === 'weworkAccount' ? randomWeworkAccount :
+              field === 'requestId' ? randomRequestId :
+              randomFriendExternalId;
+  let newVal, key;
+  for (let i = 0; i < 100; i++) {
+    newVal = gen();
+    const wa  = field === 'weworkAccount' ? newVal : currentMessage.weworkAccount;
+    const rid = field === 'requestId' ? newVal : currentMessage.requestId;
+    const fei = field === 'friendExternalId' ? newVal : currentMessage.friendExternalId;
+    key = wa + '|' + rid + '|' + fei;
+    if (!generatedTriples.has(key)) {
+      if (currentVal) {
+        const oldWa  = field === 'weworkAccount' ? currentVal : currentMessage.weworkAccount;
+        const oldRid = field === 'requestId' ? currentVal : currentMessage.requestId;
+        const oldFei = field === 'friendExternalId' ? currentVal : currentMessage.friendExternalId;
+        generatedTriples.delete(oldWa + '|' + oldRid + '|' + oldFei);
+      }
+      generatedTriples.add(key);
+      return newVal;
+    }
+  }
+  return null;
+}
+
+function randomizeWeworkAccount() {
+  if (!currentMessage) return;
+  const old = currentMessage.weworkAccount;
+  const newVal = tryRandomize('weworkAccount', old);
+  if (newVal === null) { alert('无法生成不重复的 weworkAccount，请先随机其他字段'); return; }
+  currentMessage.weworkAccount = newVal;
+  currentMessage.weworkCorpId = 'ww' + randHex(8);
+  // 刷新 inputList 中的 teacherId
+  const newTid = randomTeacherId();
+  currentMessage.inputList = currentMessage.inputList.map(line =>
+    line.replace(/^168885\d{10}/, newTid)
+  );
+  refreshDisplay();
+}
+
+function randomizeRequestId() {
+  if (!currentMessage) return;
+  const old = currentMessage.requestId;
+  const newVal = tryRandomize('requestId', old);
+  if (newVal === null) { alert('无法生成不重复的 requestId，请先随机其他字段'); return; }
+  currentMessage.requestId = newVal;
+  currentMessage.weworkCorpId = newVal.split('_')[0];
+  refreshDisplay();
+}
+
+function randomizeFriendExternalId() {
+  if (!currentMessage) return;
+  const old = currentMessage.friendExternalId;
+  const newVal = tryRandomize('friendExternalId', old);
+  if (newVal === null) { alert('无法生成不重复的 friendExternalId，请先随机其他字段'); return; }
+  currentMessage.friendExternalId = newVal;
+  currentMessage.friendNick = NICKS[Math.floor(Math.random() * NICKS.length)];
+  // 刷新 inputList 中的 studentId（即 friendRemoteId）
+  const newStid = randomFriendRemoteId();
+  currentMessage.friendRemoteId = newStid;
+  currentMessage.inputList = currentMessage.inputList.map(line =>
+    line.replace(/^788130\d{10}/, newStid)
+  );
+  refreshDisplay();
+}
+
+function updateJsonEditor(msg) {
+  buildDerivedFields(msg);
+  document.getElementById('jsonEditor').value = JSON.stringify(msg, null, 2);
+}
+
+function refreshDisplay() {
+  buildDerivedFields(currentMessage);
+  document.getElementById('f1').textContent = currentMessage.weworkAccount;
+  document.getElementById('f1sub').textContent = currentMessage.weworkCorpId;
+  document.getElementById('f2').textContent = currentMessage.requestId;
+  document.getElementById('f3').textContent = currentMessage.friendExternalId;
+  document.getElementById('f3sub').textContent = currentMessage.friendNick;
+  updateJsonEditor(currentMessage);
+  const btn = document.getElementById('copyBtn');
+  btn.textContent = '\u{1F4CB} 复制完整 JSON';
+  btn.classList.remove('copied');
+}
+
+function initDefaultMessage() {
+  const wa = randomWeworkAccount();
+  const rid = randomRequestId();
+  const fei = randomFriendExternalId();
+  const key = wa + '|' + rid + '|' + fei;
+  generatedTriples.add(key);
+
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const addTime = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()) +
+    ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+
+  const frid = randomFriendRemoteId();
+  const tid = randomTeacherId();
+  const nick = NICKS[Math.floor(Math.random() * NICKS.length)];
+  const alias = document.getElementById('aliasInput').value.trim() || '汪洋老师';
+  currentMessage = {
+    addTime,
+    agentId: 'msg01',
+    friendExternalId: fei,
+    friendNick: nick,
+    friendRemoteId: frid,
+    input: [],
+    inputList: [
+      tid + ':同学您好 🌹，我是带您学习竹笛的唯一班主任【' + alias + '】\n⏰训练营为期6天，7月10日开始每晚6点50上课\n您购买的礼盒请填写地址安排发货👉http://addr.example.com\n填写完毕回复：已填写',
+    ],
+    latestMsgTime: '1970-01-21 22:23:05',
+    requestId: rid,
+    tagList: ['条件1'],
+    weworkAccount: wa,
+    weworkAccountAlias: alias,
+    weworkCorpId: 'ww' + randHex(8),
+  };
+  buildDerivedFields(currentMessage);
+
+  refreshDisplay();
+}
+
+function copyJSON() {
+  try {
+    currentMessage = JSON.parse(document.getElementById('jsonEditor').value);
+    updateJsonEditor(currentMessage);
+  } catch(e) { /* JSON 无效时复制编辑器原文 */ }
+  const text = document.getElementById('jsonEditor').value;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = '\u{2705} 已复制!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = '\u{1F4CB} 复制完整 JSON';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+function saveToHistory() {
+  if (!currentMessage) return;
+  const copy = JSON.parse(JSON.stringify(currentMessage));
+  history.unshift(copy);
+  if (history.length > 20) history.pop();
+  renderHistory();
+}
+
+function saveToCase() {
+  if (!currentMessage) return;
+  // 先尝试从编辑器同步最新内容
+  try {
+    const obj = JSON.parse(document.getElementById('jsonEditor').value);
+    currentMessage = obj;
+    buildDerivedFields(currentMessage);
+    updateJsonEditor(currentMessage);
+  } catch(e) { /* 编辑器 JSON 无效时使用 currentMessage */ }
+  if (activeCaseIdx >= 0 && activeCaseIdx < importedCases.length) {
+    importedCases[activeCaseIdx].data = JSON.parse(JSON.stringify(currentMessage));
+    renderCaseList();
+    // 短暂高亮反馈
+    const btn = document.querySelector('.btn-history');
+    btn.textContent = '✅ 已保存';
+    setTimeout(() => { btn.textContent = '\u{1F4BE} 保存到用例'; }, 1500);
+  } else {
+    // 没有选中用例，提示先选择
+    alert('请先在左侧选择一个测试用例，再点击保存');
+  }
+}
+
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (!list) return;
+  list.innerHTML = history.map((m, i) =>
+    '<div class="history-item" data-idx="' + i + '">' +
+    '<span class="idx">#' + (history.length - i) + '</span>' +
+    '<span class="triple">' +
+    escapeHTML(m.weworkAccount) + ' | ' +
+    escapeHTML(m.requestId.slice(0, 30) + '…') + ' | ' +
+    escapeHTML(m.friendExternalId.slice(0, 16) + '…') +
+    '</span>' +
+    '<span style="font-size:9px;flex-shrink:0">' + m.addTime.slice(11) + '</span>' +
+    '</div>'
+  ).join('');
+}
+
+// 事件委托：点击历史记录项
+const historyList = document.getElementById('historyList');
+if (historyList) {
+  historyList.addEventListener('click', function(e) {
+    const item = e.target.closest('.history-item');
+    if (!item) return;
+    const idx = parseInt(item.getAttribute('data-idx'));
+    if (!isNaN(idx)) showHistory(idx);
+  });
+}
+
+function showHistory(idx) {
+  const m = history[idx];
+  currentMessage = m;
+  document.getElementById('f1').textContent = m.weworkAccount;
+  document.getElementById('f1sub').textContent = m.weworkCorpId;
+  document.getElementById('f2').textContent = m.requestId;
+  document.getElementById('f3').textContent = m.friendExternalId;
+  document.getElementById('f3sub').textContent = m.friendNick;
+  document.getElementById('agentIdInput').value = m.agentId;
+  document.getElementById('aliasInput').value = m.weworkAccountAlias || '汪洋老师';
+  syncTogglesFromInput(m.input);
+  updateInputDisplay();
+  updateJsonEditor(m);
+}
+
+function escapeHTML(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function syntaxHighlight(json) {
+  return json.replace(/(&[lg]t;)/g, '<span class="json-key">$1</span>')
+    .replace(/("(?:\\.|[^"\\])*")(\s*:)/g, '<span class="json-key">$1</span>$2')
+    .replace(/: ("(?:\\.|[^"\\])*")/g, ': <span class="json-str">$1</span>')
+    .replace(/: (\d+)/g, ': <span class="json-num">$1</span>');
+}
+
+// 导入的测试用例列表
+let importedCases = [];
+let activeCaseIdx = -1;
+
+// 解析 markdown：按 # 标题分割，提取 JSON 块
+function importMarkdown(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    importedCases = [];
+    const blocks = text.split(/\n(?=# )/);
+    blocks.forEach(block => {
+      const lines = block.trim().split('\n');
+      const titleLine = lines[0];
+      if (!titleLine.startsWith('# ')) return;
+      const name = titleLine.replace(/^# /, '').trim();
+      // 解析期望结果注释
+      var expectedResult = '';
+      var em = block.match(/<!-- expected: (.*?) -->/);
+      if (em) expectedResult = em[1].trim();
+      // 提取 JSON 块（{ 到 } 之间）
+      const jsonStart = block.indexOf('{');
+      const jsonEnd = block.lastIndexOf('}');
+      if (jsonStart < 0 || jsonEnd < 0) return;
+      try {
+        const jsonStr = block.slice(jsonStart, jsonEnd + 1);
+        const obj = JSON.parse(jsonStr);
+        importedCases.push({ name, data: obj, expectedResult: expectedResult });
+      } catch (err) {
+        console.warn('跳过无法解析的用例:', name, err.message);
+      }
+    });
+    activeCaseIdx = -1;
+    renderCaseList();
+    document.getElementById('caseList').parentElement.querySelector('.section-label').textContent =
+      '测试用例管理（' + importedCases.length + ' 条）';
+  };
+  reader.readAsText(file, 'UTF-8');
+  input.value = '';
+}
+
+// CSV 实际数据（独立存储，不混入测试用例）
+let csvRecords = [];
+let csvDetailIdx = -1;
+var BUILTIN_CSV = [
+{input:'老师您问了三次了[微笑]',addTag:'否',reply:'哎呀，被您发现啦，老师这不是太想把画具早点送到您手中嘛🙈。信息都收到咯，马上安排发货！5 月 4 日咱们跟着陈墨院长静心画画，这几天您先歇歇手，养足精神，期待课上见！',tags:'260504;2026Y4;赠品单;已填地址;有时间'},
+{input:'陈老师您好，您是为优秀的声乐老师，认识您很高兴，非常感谢！是这样的，本人是位老年阿姨，平时也比较喜欢学歌，但由于最近在口腔科拔牙，光拔牙需要1-2个月，然后没牙齿还需要等3-4个月才能咬模镶牙，所以将近半年后才能跟您学习。您教的很好很喜欢，所以点了关注。谢谢！',addTag:'是',reply:'阿姨您好，特别理解您的情况！不过陈小朵老师是国家一级演员、著名女高音\\n这次特聘只教这一期，机会真的很难得。您之前了解过她吗？教学方法通俗易懂，建议您准时来体验。',tags:'260502'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LiuShuMin_liushumin02_1777564840331.jpg"}',addTag:'否',reply:'收到同学的作业啦！老师先仔细看看，稍后给您做详细的点评指导。画得很用心哦！\\r\\n{\\"messageType\\": \\"review\\", \\"messageDelay\\": \\"0\\", \\"messageContent\\": \\"同学，这幅《猫咪戏蝶》画得真是太棒了！第一眼就被猫咪那双水灵灵的大眼睛吸引住了，黄色的眼珠点染得特别有神，把猫咪那种专注又好奇的神态表现得淋漓尽致。您用墨色晕染出的毛发质感非常自然，看起来蓬松柔软，非常有立体感。旁边两只色彩斑斓的蝴蝶点缀得恰到好处，既丰富了画面颜色，又和猫咪形成了很好的互动，让整个画面充满了生机与童趣。您的进步非常大，继续保持这份对绘画的热爱，期待看到您更多精彩的作品！\\"}',tags:'260429;2024Y2END;赠品单;已填地址;有时间;梅-雪花浓淡问题;梅-梅花形态不好;猫-毛画的黑不飘逸'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;回复时段1'},
+{input:'[微笑]',addTag:'否',reply:'哎呀，老师这不是太想把画具早点送到您手中嘛，一着急就重复啦🙈。信息都收到咯，马上安排发货！5 月 4 日咱们跟着陈墨院长静心画画，这几天您先歇歇手，养足精神，期待课上见！',tags:'260504;2026Y4;赠品单;已填地址;有时间'},
+{input:'前天买的课本，还没收到信息',addTag:'否',reply:'课本单独邮寄稍晚到，不影响明晚七点准时上课哦\\n这次由陈小朵老师授课，方法通俗，相信您会有明显进步。之前您了解过陈小朵老师吗？',tags:'260502;三线及其它城市'},
+{input:'陈老师您好，您是位优秀的声乐老师，认识您很高兴，非常感谢！是这样的，本人是位老年阿姨，平时也比较喜欢学歌，但由于最近在口腔科拔牙，光拔牙需要1-2个月，然后没牙齿还需要等3-4个月才能咬模镶牙，所以将近半年后才能跟您学习。您教的很好很喜欢，所以点了关注。谢谢！',addTag:'是',reply:'阿姨您好，得知您认识小朵老师真让人开心！她深耕歌坛 30 多年，是《我和你》原唱、中国歌剧舞剧院首席女高音及音乐学院博士。不过您别担心，这次只是体验课，不涉及长时间用牙，您之前接触过唱歌吗？',tags:'260502;退休'},
+{input:'我没啥基础，先看看可以[呲牙]',addTag:'否',reply:'',tags:'260501'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'888',addTag:'否',reply:'',tags:'260501'},
+{input:'8 8 8',addTag:'否',reply:'',tags:'260501'},
+{input:'看不到红卡片',addTag:'否',reply:'',tags:'260501'},
+{input:'[微笑]我不知道我学不学到',addTag:'否',reply:'',tags:'260501;有时间;回复时段1'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LiuShuMin_liushumin02_1777565297293.jpg"}',addTag:'否',reply:'收到同学的作业啦！老师先仔细看看，稍后给您做详细的点评指导。画得很用心哦！\\r\\n{\\"messageType\\": \\"review\\", \\"messageDelay\\": \\"0\\", \\"messageContent\\": \\"同学，您这幅《猫咪戏蝶》画得真棒，太有灵气了！第一眼就被这只小猫的大眼睛吸引住了，这翠绿色的眼睛画得炯炯有神，透着股机灵劲儿。您对墨色的运用很有心得，用淡淡的灰色晕染出毛发的蓬松感，显得特别干净、柔软。旁边那只红蝴蝶点缀得恰到好处，色彩鲜艳，正好和猫咪形成了有趣的互动，画面一下子就生动起来了。整幅作品构图饱满，神态捕捉得非常到位，充满了童趣和生活气息。您的进步很大，继续保持这份热情，期待看到您更精彩的作品！\\"}',tags:'260429;有时间;赠品单;已领取赠品;猫-毛画的黑不飘逸'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'有时间',addTag:'否',reply:'',tags:'260501'},
+{input:'能回放吗课程',addTag:'否',reply:'',tags:'260501'},
+{input:'老师直播间里的手稿资料怎样领，看不到红卡片',addTag:'否',reply:'',tags:'260501'},
+{input:'课程笔记太重要了，对于记忆力下降的我来说可以反复看来加深印象，能弥补既要听讲又要忙记录要点而削弱了听课的效果…谢谢老师！',addTag:'否',reply:'您说得太对啦！笔记就是咱们的“第二大脑”，随时翻看能帮您把陈墨老师讲的皴擦点染记得更牢📝。昨晚的猫咪戏蝶练得怎么样？有没有试着用新学的丝毛法？今晚 18:45 咱们要挑战《桂林山水》了，带着笔记来跟着老师一步步画会更轻松，期待您今天的进步哦！',tags:'260429;梅-作品不完整;无工具;无工具;猫-毛画的黑不飘逸'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'我不需要发任何笔墨',addTag:'否',reply:'',tags:'260501'},
+{input:'老师我的想法不切实际，请见谅哈？',addTag:'否',reply:'千万别这么说！您的想法特别棒，画画就是要把心中的江湖气画出来呀。🗡️其实今晚陈墨老师讲的《桂林山水》里的皴擦技法，正好能帮您表现山石的苍劲和侠客的意境。咱们一步步来，先把今晚的山水练好，以后画人物更顺手。晚上有空可以来直播间坐坐，我等着看您的进步哦！',tags:'260429;无工具;无工具;没时间;猫-五官不够协调'},
+{input:'8 8 8',addTag:'否',reply:'',tags:'260501'},
+{input:'这么晚了老师您该停下手头的事情休息了呀？',addTag:'否',reply:'您太贴心啦，心里暖暖的！🤗不过为了让大家学好，这点辛苦值得。昨晚《猫咪戏蝶》的线条练得咋样？有没有觉得丝毛难下笔？今晚 18:45 陈墨老师讲《桂林山水》，教您皴擦技法画山石，特别解压！记得来直播间互动，期待看到您的进步哦~',tags:'260429;无工具;无工具;没时间;猫-五官不够协调'},
+{input:'我没有任何工具做画',addTag:'否',reply:'同学别担心，没工具也能先学技法！🎨今晚陈墨老师讲《桂林山水》，您可以先用铅笔跟着练练山石结构和线条，感受笔墨的韵味。等工具到了再上色，效果会更惊艳。系统学习能帮您打好底子，避免走弯路，有空的话欢迎来直播间，我带您一起入门！',tags:'260429;无工具;无工具;没时间;猫-五官不够协调'},
+{input:'怕你生气，骂我光说不练',addTag:'否',reply:'哈哈，老师怎么会生气呢？您太可爱啦！🤗 国画讲究的是修身养性，开心最重要。昨晚《猫咪戏蝶》的线条练得咋样？哪怕用铅笔勾勒个轮廓也是进步呀！今晚陈墨老师教《桂林山水》，教您皴擦技法画山石，特别解压，有空欢迎来直播间互动，咱们一起动笔玩起来~',tags:'260429;无工具;无工具;没时间;猫-五官不够协调'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LiuShuMin_liushumin02_1777566113808.jpg"}',addTag:'否',reply:'同学，昨晚的《猫咪戏蝶》练得怎么样啦？看您之前说笔墨难控，今天试着多画几根线条找找手感了吗？别担心，刚开始手生太正常了。今晚 18:45 陈墨老师要教《桂林山水》，专门讲水墨层次和皴法，对您掌握笔墨帮助特别大，方便的话可以来听听，咱们一起突破瓶颈✏️',tags:'260429;赠品单;已填地址;有时间;梅-树干上雪没有留下来;猫-毛画的黑不飘逸'},
+{input:'女儿让俺休息呢，画不了了[尴尬][捂脸][害羞]',addTag:'否',reply:'哎呀，女儿是心疼您呢！不过国画正好能修身养性，画的时候随心而动，累了就歇会儿，反而能舒展筋骨。昨晚的《猫咪戏蝶》线条练得咋样啦？哪怕只画几笔也发给我看看，老师帮您把把关。今晚 18:45 陈墨老师要教《桂林山水》的独家水法，特别精彩，咱们尽量来听听，感受下水墨的奇妙变化呀🌊',tags:'260429;赠品单;已填地址;有时间;梅-树干上雪没有留下来;猫-毛画的黑不飘逸'},
+{input:'我已是功底没问题的了、你直播的笔法我好喜欢！我只想要你的帖、行书帖、可以给经费你！老师、我真的没时间上课',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'听院长讲还可以申请领古今名画动物全集，我能申请吗？还有今早我看您还给我发了一份书法方面的资料，我未来及收存很可惜，总之，对于您们能给的资料我都想要，不知这愿望是否能实现，因为这是我的愛！有机会我都想去学！',addTag:'否',reply:'同学您这份好学的心太让老师感动了！🤩资料都在您微信里，往上翻翻就能找到，书法和国画不分家，以后跟着陈墨老师系统学，更多珍贵资料都会分享给您。昨晚的猫咪练得顺手吗？今晚咱们要画《桂林山水》了，带着您的热情来，老师带您领略水墨山河的美！',tags:'260429;梅-作品不完整;无工具;无工具;猫-毛画的黑不飘逸'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'我可以看你的帖自吾',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'可以的',addTag:'否',reply:'',tags:'260501'},
+{input:'我也搞了三十多年的对联了',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'说完了我就喜欢你的行书帖',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'雯雯老师好，我今天虽然不能准时上课，但我还是看了院长讲课的录像，非常喜欢。遗憾的是我今天刚带孙子从昆明来红河州的建水古城度假。所以作业没法完成。敬请谅解，\n不过我会认真听课并将院长传授的技法作了记录争取与其他同学共同进步。\n谢谢各位老师，\n你们辛苦了。[咖啡][抱拳][抱拳][抱拳][玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'这个帖不对',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'888',addTag:'否',reply:'',tags:'260501'},
+{input:'888',addTag:'否',reply:'',tags:'260501'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/2f7ebfd319a07434396562f8c4799feb_705ad31c-6f9e-4971-baea-70029b128bab.jpg"}',addTag:'否',reply:'',tags:'260418;3;赠品单;已领取赠品'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'高峰13833002682河北省保定市莲池区财信小区2号楼一单元501室',addTag:'是',reply:'',tags:'260504;赠品单'},
+{input:'没',addTag:'是',reply:'',tags:'260504;赠品单;已填地址'},
+{input:'已经报名，已交299元。',addTag:'否',reply:'',tags:'260425;赠品单;有工具;有工具;有时间;出勤A;出勤B;作业2;猫-五官不够协调;已破冰;出勤C;出勤D;出勤E'},
+{input:'谢谢老师，您辛苦了',addTag:'否',reply:'',tags:'1;260428;赠品单;已领取赠品;已填地址;有工具;有工具;回复时段2;回复时段3;出勤A;作业1;回复时段4;回复时段6;A;出勤B;作业2;回复时段8;回复时段9;B;回复时段11;出勤C;作业3'},
+{input:'老师好，我看到提示就加上你了，现在才明白你是初级班的课程，我已经学过了，也马上就要上完院长班的课了，很快就要开始名家亲传班的课程了。就不进班了，谢谢老师！祝老师五一节快乐！',addTag:'否',reply:'',tags:'260501;2026Y5'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'正是吃饭时间，不太方便',addTag:'否',reply:'',tags:'260501'},
+{input:'不是说可以免费领取整套书法资料吗？南宁市植物路55号世源冷气公司刘军18977115000[抱拳]',addTag:'否',reply:'',tags:'260501'},
+{input:'可以吧',addTag:'是',reply:'',tags:'260504;赠品单;已领取赠品;已填地址'},
+{input:'方便。',addTag:'否',reply:'',tags:'260501'},
+{input:'好的，老师',addTag:'否',reply:'',tags:'260501'},
+{input:'谢谢磊磊老师。',addTag:'否',reply:'',tags:'260501'},
+{input:'老师，领资料怎么领？',addTag:'否',reply:'',tags:'260501'},
+{input:'老师，你发资料我看看',addTag:'否',reply:'',tags:'260501'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'方便听课',addTag:'否',reply:'',tags:'260501'},
+{input:'你好',addTag:'否',reply:'',tags:'260501'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'上课哪天开始？',addTag:'否',reply:'',tags:'260501'},
+{input:'收到老师，明天我会参加学习的',addTag:'否',reply:'',tags:'260501;2026Y4'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;回复时段1'},
+{input:'节日快乐！祝福你和家人五一节幸福安康！心想事成，万事如意！',addTag:'否',reply:'',tags:'260404;2026Y3;大师班1;完课1;完课2;完课3;完课4;新课作业1;完课5;完课6;小红书;完课8;完课10;银卡会员V1'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'最好笫二天上午重播。',addTag:'否',reply:'',tags:'260501'},
+{input:'已成功',addTag:'否',reply:'',tags:'260501'},
+{input:'6',addTag:'否',reply:'',tags:'260501'},
+{input:'在回家的路上开车',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'[抱拳]',addTag:'否',reply:'同学太客气啦！我是您的班主任清禾\\n明天晚上 7 点咱们就正式跟随陈小朵老师开启声乐体验课了，那这个上课时间您方便来上课吗？',tags:'260502'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'学啥的',addTag:'否',reply:'',tags:'260501'},
+{input:'收到了，谢谢老师，您辛苦了！',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'谢谢小月老师！',addTag:'否',reply:'您太客气啦~能陪伴您一起走进书法世界，我也特别开心🥰 5 月 3 号晚上 6 点 50 分，陈墨院长会带大家体验毛笔书法的魅力，记得提前准备好纸笔哦。这两天有任何准备上的小问题，随时喊我就行！',tags:'260503;有时间'},
+{input:'好的！',addTag:'否',reply:'收到您的确认啦！这两天您可以先找找家里的毛笔和墨汁，没有的话用普通毛边纸和墨水代替也完全没问题，咱们主打一个轻松体验✏️ 5 月 3 号晚上 6 点 50 分我会把上课链接发给您，有任何准备上的小疑问，随时喊我就行！',tags:'260503;有时间'},
+{input:'有的！',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'准时到课。',addTag:'否',reply:'收到您的承诺啦！有您这份心，陈墨院长和大家肯定都特别开心🥳 5 月 3 号晚上 6 点 50 分，我会把上课链接发给您，咱们一起静下心来感受毛笔在纸上行走的乐趣，期待和您云端相见！',tags:'260503;有时间;有工具;有工具'},
+{input:'谢谢老师！',addTag:'否',reply:'您太客气啦~能陪您一起开启书法之旅，我也特别开心🥰 5 月 3 号晚上 6 点 50 分，陈墨院长会带大家体验毛笔书法的魅力，提前准备好纸笔就好。这两天有任何准备上的小问题，随时喊我就行！',tags:'260503;有时间;有工具;有工具'},
+{input:'1',addTag:'否',reply:'',tags:'260501'},
+{input:'老师该休息了',addTag:'否',reply:'',tags:'260501'},
+{input:'张明庆，13146343402/北京海淀区大钟寺东路太阳园二号楼2602室',addTag:'是',reply:'',tags:'260504;赠品单'},
+{input:'幸会！节日快乐🎈',addTag:'否',reply:'🎈 您也节日快乐呀！收到您的问候真开心。咱们 5 月 3 号晚 6 点 50 就正式开课啦，陈墨院长会带大家从零基础体验毛笔书法的乐趣，既能静心又能修身养性。这两天您可以先准备下纸笔，期待和您一起在墨香中度过美好时光！',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'收到谢谢',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'[握手][咖啡]',addTag:'否',reply:'收到您的问候啦，心里暖暖的🤗 5 月 3 号晚咱们就正式开课了，陈墨院长会手把手带大家体验毛笔书法的魅力。这两天您可以先备好纸笔，哪怕只是静静看老师示范，也能让心静下来呢。期待和您一起开启这段墨香之旅！',tags:'260503;有时间'},
+{input:'我收到了，字都写好了',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'白酒到了，我签字',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'其他的话就不说了',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'我都有文房四宝',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'谢谢宇宙爸爸对我的关怀',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'否',reply:'',tags:'260501'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'已加',addTag:'是',reply:'',tags:'260503'},
+{input:'没问题',addTag:'否',reply:'收到您的确认啦！那5月3号晚上6点50分，我会准时把直播链接发给您。这是毛笔书法体验课，您提前备支毛笔就行，不用太专业，咱们跟着陈墨院长轻松入门就好🌼',tags:'260503;有时间'},
+{input:'能',addTag:'是',reply:'',tags:'260503;2025Y5END'},
+{input:'没有',addTag:'是',reply:'',tags:'260503;2025Y5END;有时间'},
+{input:'收到',addTag:'否',reply:'',tags:'260501'},
+{input:'好',addTag:'否',reply:'收到啦！那您这两天可以先看看工具清单，提前准备起来✏️。5 月 3 号晚上 6 点 50 开课前，我会拉您进群并发上课链接，到时候咱们跟着陈墨院长一起动笔体验，期待见到您的进步哦～',tags:'260503;2025Y5END;有时间;无工具;无工具'},
+{input:'[愉快]',addTag:'否',reply:'',tags:'2024Y1END;0929;1013;国画'},
+{input:'不一定',addTag:'否',reply:'理解您的顾虑，很多同学在开始前都会犹豫呢。其实咱们这次是陈墨院长亲授的毛笔书法直播体验课，哪怕只听一节，对用笔和静心都很有帮助，就当给自己一段放松时光🌼\\n\\n5 月 3 号晚 6 点 50 开课，您先预留出这个时间试试？提前准备支毛笔就行，不要求专业工具。方便的话回复个“好”，我给您开通权限。',tags:'260503'},
+{input:'[OK]',addTag:'否',reply:'收到您的确认啦！那 5 月 3 号晚 6 点 50 分，我准时拉您进直播间。这次是陈墨院长亲授的毛笔书法课，哪怕零基础也能跟上，就当给自己一段静心时光🌼',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;2025Y6END'},
+{input:'可以看回放吗？',addTag:'否',reply:'有回放的哈～不过建议您尽量来听直播，因为需要先进教室听满 10 分钟，系统才会自动生成回放链接。这次是陈墨院长亲自带的免费体验课，现场互动氛围特别好，还能跟着老师一起动笔练，机会挺难得的✏️咱们 3 号晚上 6 点 50 见？',tags:'260503;2025Y6END;有时间'},
+{input:'[强][强][强][抱拳][强]',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'老师   我是脚摔伤了，不能动，只能躺在床上，我会努力的，',addTag:'否',reply:'🤗 听到您受伤的消息，心里真不是滋味，您先安心养伤最重要。其实躺着也能听课，咱们这节毛笔书法体验课，跟着陈墨院长听讲解、看示范，光是用眼睛学、用心感受笔法，也能让心静下来，是很好的精神放松呢。您先把身体照顾好，开课前我会把链接发给您，您躺着听就行，不用有压力',tags:'260503;2025Y5END;有时间;无工具;无工具'},
+{input:'{"messageType":"voice","messageTranscript":"乳罩。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/BiXue_3_bixue_1777575491337.mp3"}',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'已加',addTag:'否',reply:'收到啦，您能顺利加上我就好！这是毛笔书法体验课，工具用家里的普通毛笔就行。这两天您可以先放松心态，等开课前我会把链接发给您，期待和您一起感受书写的静心时光🌼',tags:'260503;有时间'},
+{input:'可以',addTag:'否',reply:'',tags:'260501'},
+{input:'您好！',addTag:'否',reply:'您好呀！看到您回复我就放心啦～咱们 5 月 3 号晚上 6 点 50 分准时开课，是陈墨院长亲自带的毛笔书法体验课。这两天您可以先准备一支毛笔和墨水，不用太专业，能写字就行。到时候我会在群里发链接，期待和您一起静心练字哦✏️',tags:'260503'},
+{input:'好的，谢谢老师',addTag:'否',reply:'您太客气啦，安心养伤才是头等大事🤗。既然答应了会努力，那老师就放心了。开课前我会把链接发给您，您躺着听陈墨院长讲课，当是给心灵放个假，咱们到时候见！',tags:'260503;2025Y5END;有时间;无工具;无工具'},
+{input:'还未有时间。',addTag:'是',reply:'',tags:'260503'},
+{input:'收到，今天没时间看',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'我是这样想的',addTag:'否',reply:'👍 您这样想就对了！其实很多同学刚开始也犹豫，但跟着陈墨院长听完一节直播，都觉得心里特别静，手眼协调也跟着提升了。您安心养伤，躺着听讲解、看示范也是一种享受，开课前我把链接发给您，咱们一起放松一下心情。',tags:'260503;2025Y5END;有时间;无工具;无工具'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/7be7586989c39afa1dff816a8d47b1f2_2b0853e5-a450-4b1e-ad18-a231b47ba498.jpg"}',addTag:'否',reply:'',tags:'1;260428;赠品单;待填地址;已领取赠品;已破冰;有时间;出勤A;作业1;A;出勤B;作业2;B;出勤C;作业3'},
+{input:'嗯',addTag:'否',reply:'',tags:'260503;2025Y5END;有时间;无工具;无工具'},
+{input:'有',addTag:'是',reply:'',tags:'260503'},
+{input:'谢老师[合十][合十][强]',addTag:'否',reply:'🤗 您太客气啦，叫我小月老师就好\\n5 月 3 号周日晚上 6 点 50 分准时开课，到时候我会把直播链接发给您。\\n这两天您可以先准备一支毛笔和墨水，咱们是毛笔书法课，工具简单就行。\\n期待和您一起跟着陈墨院长感受书法的魅力',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;回复时段1'},
+{input:'小月老师您好',addTag:'否',reply:'您好呀！收到您的消息真开心～咱们毛笔书法体验课是5月3号周日晚上6点50开始，连续6晚。这两天您可以先准备下基础的毛笔和纸墨，不用太专业，顺手就行。您看这个时间方便来听陈墨院长的直播课吗？✏️',tags:'260503'},
+{input:'[胜利]',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'老师您好！',addTag:'否',reply:'您好呀！收到您的问候真开心 🌼。咱们 5 月 3 号晚 6 点 50 分就要正式开课啦，这是陈墨院长亲授的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。期待您来感受下书法的静心魅力，到时候我拉您进群发链接哈！',tags:'260503;重要'},
+{input:'666',addTag:'否',reply:'收到您的 666 啦，看来您心情不错呀！👍\\n\\n咱们 5 月 3 号晚 6 点 50 分就要正式开课了，陈墨院长会带大家体验毛笔书法的魅力。这两天您可以先准备一支毛笔和墨水，不用太专业，能写字就行。期待在直播间见到您，一起静心练字哦！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'没问题',addTag:'否',reply:'收到啦，您这态度真让人放心👍。那这两天您可以先备一支毛笔和墨汁，不用太专业，能写就行。5 月 3 号晚上 6 点 50 分，我会准时把直播链接发给您，咱们跟着陈墨院长一起感受毛笔书法的魅力，期待和您见面哦。',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;2024Y6END'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'有的，老师',addTag:'是',reply:'',tags:'260503;2024Y6END;有时间'},
+{input:'没有写过毛笔写，能学会吗',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'[玫瑰]',addTag:'否',reply:'🌹 收到您的玫瑰啦！看到您这么有热情，老师真开心。咱们5月3号周日晚6点50就正式开课了，这两天您可以先把笔墨纸砚找出来放好，到时候跟着陈墨院长直接动笔练，手感会更好哦',tags:'260503;2024Y6END;有时间;有工具;有工具'},
+{input:'收到。',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'好的',addTag:'否',reply:'收到啦！零基础完全不用担心，陈墨院长讲课特别细致，就是专门带着大家从零开始的✏️。很多同学刚开始也怕手抖，跟着练几天就能写出漂亮的笔画了。这两天您先备支普通毛笔和墨汁就行，5 月 3 号晚上我发链接带您一起体验，就当是给自己留段静心时光～',tags:'260503;有时间;无工具;无工具'},
+{input:'收到了！',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'好的',addTag:'否',reply:'👍 收到啦！零基础完全不用担心，陈墨院长讲课特别细致，就是专门带着大家从握笔开始学起的。咱们这次是毛笔书法体验课，工具要求也不高，家里有小毛笔就能跟着练。这两天您先放宽心，5 月 3 号晚上我会把链接发给您，咱们一起来感受下静心书写的乐趣就好啦',tags:'260503;有时间;无工具;无工具'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'否',reply:'🤗 欢迎同学呀！终于加上您啦，我是图图老师。咱们陈墨院长的国画体验课 5 月 4 号就正式开课咯，连续六晚带您零基础入门。为了让您上课顺手，我得先核对下您的收货地址和电话，方便给您寄画具，您看现在方便发我一下吗？',tags:'260504'},
+{input:'四川省泸州市龙马潭区韩林君空天专家社区',addTag:'是',reply:'收到啦～您的收货地址已登记好，书籍会尽快安排发出\\n明天晚上 7 点咱们的体验课就正式开始了，这个上课时间您方便来上课吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'我问了一下，这个准确',addTag:'否',reply:'收到，那咱们就定好啦！这次授课的是著名女高音陈小朵老师，她唱功了得更擅长教学，方法通俗易懂，相信您跟着学一定会有明显进步。对了，您之前了解过陈小朵老师吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'说小学韩林俊',addTag:'是',reply:'没问题，地址已确认好啦！这次授课的陈小朵老师深耕歌唱行业 30 多年\\n她是北京奥运会开幕式主题歌《我和你》原唱，也是中国歌剧舞剧院首席女高音和中国音乐学院博士。对了同学，您之前接触过唱歌吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市'},
+{input:'可以，可以，',addTag:'是',reply:'好的，那咱们就准时见！对了同学，您平时唱歌有没有特别想解决的问题呀？比如跑调、高音上不去或者气息不足之类的？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'没有得到过',addTag:'是',reply:'没得到过专业指导太正常啦，唱歌是把基础模块补齐\\n方向对了进步会很快，小朵老师会拆开讲清楚哈。',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件'},
+{input:'我都在当地的合唱团里面唱歌',addTag:'否',reply:'原来您还在合唱团呀，那现在时间灵活正好能更专注地打磨歌声呢。接下来的体验课记得提前安排好时间，尽量按时来跟着老师开口练习，把您的底子发挥得更好哦。',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'对对对',addTag:'否',reply:'那太棒啦，有合唱团基础学起来更顺手\\n明晚 7 点第一节课，小朵老师会带练发声，您尽量准时来体验下这种自然歌唱的感觉，给自己一段放松时间好吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'[OK]',addTag:'否',reply:'收到啦！那您先忙，这两天可以试着用现有的笔墨随便写写，找找手感🖌️。5月3号晚上6点50开课前，我会把上课链接发给您，并拉您进学习群，到时候咱们跟着陈墨院长一起静心练字就好。',tags:'260503;有时间;有工具;有工具'},
+{input:'[握手]',addTag:'否',reply:'🤗 收到您的问候啦！还有两天咱们 5 月 3 号的课就开始了，这两天您可以先把笔墨纸砚找出来放在手边，提前找找手感。开课前我会把链接发给您并拉您进群，到时候跟着陈墨院长一起静心写字就好',tags:'260503;有时间;有工具;有工具'},
+{input:'收到！准时上课！',addTag:'否',reply:'',tags:'260501;2025Y7END;有时间'},
+{input:'笔，墨纸等都有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'领取资料[合十][合十][玫瑰][玫瑰]',addTag:'否',reply:'同学您好呀，收到您的心意啦不过咱们这次是纯免费的直播体验课，没有额外的资料包可以单独领取哦。\\n\\n5 月 3 号周日晚上 6 点 50 分，陈墨院长会直接在直播间带着大家从零基础开始练毛笔字，现场跟着写就是最好的资料！您到时候准备好纸笔，我拉您进教室就行，期待和您一起静心写字✏️',tags:'260503;2025Y6END'},
+{input:'可以听课',addTag:'是',reply:'',tags:'260503;2025Y6END'},
+{input:'我是个病人，现在刚刚才输液结速了，见到你们还在工作，是个值得我遵敬的人，就看了就加上好友了，我的时间是乱的，到时候能不能跟的上再说，，，，，，一个爱好书法的病老头',addTag:'否',reply:'🤗 您刚输完液要多休息呀，看到您的留言心里暖暖的。咱们班很多银发同学，陈墨院长教得特别细，从握笔开始零基础也能跟。时间乱没关系，先安心养病，等 5 月 3 号晚上有空来听听，把书法当个静心爱好就好，不用有压力',tags:'260503'},
+{input:'都有的，草书贴？',addTag:'是',reply:'',tags:'260503;2025Y6END;有时间'},
+{input:'是谁讲课',addTag:'否',reply:'主讲是及象书画院的创始人陈墨院长，他是知名的青年艺术家，也是咱们中国书法的首席主讲呢。\\n\\n我作为班主任，主要负责全程陪伴大家，帮您解决学习中的小问题。这次体验课由陈院长亲自带大家领略毛笔书法的魅力，哪怕零基础也能跟上，特别能让人静心专注。5 月 3 号晚上 6 点 50 分准时开课，到时候我会在群里发链接，您记得留意消息哦 ✏️',tags:'260503;重要'},
+{input:'直播间老师说送字帖',addTag:'否',reply:'🎁 您说得对，陈墨院长确实会在直播间送字帖作为福利呢！不过咱们 5 月 3 号晚上 6 点 50 分正式开课后，我会第一时间在群里发领取方式。现在您先安心准备好纸笔，到时候跟着院长现场练，也是很好的体验哦',tags:'260503;2025Y6END;有时间;有工具;有工具'},
+{input:'你好！[握手][握手][握手]',addTag:'否',reply:'您好呀！看到您的握手啦，心里暖暖的。\\n\\n咱们 5 月 3 号晚上 6 点 50 分就正式开课了，这是陈墨院长亲自带的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。期待和您一起在墨香里静下心，享受书写的乐趣✏️。',tags:'260503'},
+{input:'好的，我知道了',addTag:'否',reply:'太好了，那明晚 7 点咱们准时见！跟着小朵老师轻松开嗓，感受身体自然发声的状态就好。',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'没水平，讲的好啰嗦',addTag:'否',reply:'您说得对，我刚才确实有点啰嗦啦，抱歉抱歉！其实陈墨院长讲课特别干脆利落，全是干货，很多同学反馈听他课特别过瘾，一点都不拖沓。咱们 5 月 3 号晚上开课，到时候您亲自感受一下就知道啦 ✌️',tags:'260503;重要'},
+{input:'可以的',addTag:'是',reply:'',tags:'260503'},
+{input:'行我看见你们的课本上很多歌都是我们以前唱过的。所以我就想买一本',addTag:'否',reply:'课本里的歌确实经典，您有基础唱起来更亲切呢\\n不过咱们这次重点是小朵老师在线课现场教学带练发声方法，书先不急，明晚先来体验下这种自然歌唱的感觉，给自己一段放松时间好吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'有一点吧',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'不是你啰嗦，是陈陈墨好啰嗦',addTag:'否',reply:'哈哈，原来您是想说陈院长讲得细致呀！其实呀，他是因为想照顾零基础的同学，把每个笔画都拆碎了讲，生怕大家听不懂。这就好比学走路，步子迈小点反而更稳当呢。5 月 3 号开课后，您试着静下心来听一节，说不定这种“慢节奏”正好能帮您找回专注的感觉 🌼',tags:'260503;重要'},
+{input:'你发老师的视频我看过',addTag:'否',reply:'您看过视频呀，那明晚来现场互动感受会更不一样！光看体会不到老师带着把身体打开、轻松发声的感觉哦。',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'确实很好唱的',addTag:'否',reply:'您听过小朵老师的歌呀，那这次跟着本尊学更亲切啦！\\n她现场带练自然发声，您有基础肯定上手快，有空来体验下这种轻松唱歌的感觉好吗？',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'好的，我准时参加',addTag:'否',reply:'太好了，有您这句话我就放心啦！明晚跟着小朵老师放松开嗓，好好享受这段属于您的歌唱时光。',tags:'260502;赠品单;已领取赠品;激活;激活;待介绍老师;三线及其它城市;待发文件;待发上课链接'},
+{input:'书法技巧，方式，方法没有别人的好',addTag:'否',reply:'您别急，每个老师风格确实不同呢。陈院长是特意把技巧拆碎了讲，就是怕大家跟不上，这种“笨办法”其实最适合打基础，能让人心静下来慢慢体会笔锋的变化。5 月 3 号开课后，您试着按他的方法写两笔，说不定会有新发现 🌟',tags:'260503;重要'},
+{input:'老师好',addTag:'否',reply:'您好呀！收到您的问候真开心～咱们5月3号晚6点50分就要正式开课啦，陈墨院长会亲自带大家体验毛笔书法的魅力。这两天您可以先备一支毛笔和墨水，不用太专业，能写就行。期待在课堂上见到您，一起静心练字好吗？🖌️',tags:'260503;重要'},
+{input:'[胜利]',addTag:'否',reply:'看到您发胜利的表情，老师心里也乐开了花！🌼昨晚《猫咪戏蝶》的线条练习得怎么样啦？有没有觉得哪里比较难下笔？别担心，刚开始手抖很正常。今晚陈墨老师要教《桂林山水》了，带您学独家的水法和皴法，方便的话可以来听听，期待看到您更大的进步！',tags:'260429;赠品单'},
+{input:'收到，谢谢老师！我还在国外，一周后才回国，国内用品齐全',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'他讲课最让人烦，谢谢，再见',addTag:'否',reply:'完全理解您的感受，听课确实得对胃口才行。不过这次是免费的直播体验课，机会挺难得的，不少同学原本也犹豫，但听完陈院长拆解笔法后，反而觉得特别解压静心。5 月 3 号晚上您就当给自己留段放松时间，随便听听看？说不定会有新感觉呢 🌼',tags:'260503;重要'},
+{input:'又不守時，说再见都起码是十几个',addTag:'否',reply:'您说得对，让您久等确实不好意思！其实陈院长是想把每个细节都讲透，可能没控制好时间。这次体验课机会难得，5 月 3 号晚上您有空可以来放松静心，随便听听笔法技巧，说不定会有新收获呢 🌼',tags:'260503;重要'},
+{input:'你好老师早上好。',addTag:'否',reply:'早上好呀！看到您来打招呼真开心～咱们5月3号周日晚上6点50就正式开课啦，这是毛笔书法体验课，工具简单准备就行。这两天您可以先放松心态，开课前我会把上课链接发给您，期待和您一起静心练字🌼',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'好嘞',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'老师好，我领一份学习资料。[握手][握手][握手][握手]',addTag:'否',reply:'您好呀，学习资料都在咱们正式课里由陈墨院长统一讲解呢，单独发反而怕您练偏了。✏️\\n\\n这次是毛笔书法体验课，5 月 3 号晚 6:50 开课，到时候我拉您进群发链接。您先备支毛笔，跟着院长学两笔，静心又解压，期待您来体验！',tags:'260503;重要'},
+{input:'老师您好领取',addTag:'否',reply:'您好呀！咱们是 5 月 3 号晚上 6 点 50 分正式开课，现在还没到领取时间呢。这是陈墨院长亲授的毛笔书法体验课，特别难得。您先安心准备下纸笔墨，开课前我会把链接发给您，到时候跟着院长慢慢练，静心又修身 ✏️',tags:'260503;重要'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'是',reply:'',tags:'260503'},
+{input:'[抱拳]',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[玫瑰][玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'收到您的花花啦，心里暖暖的！🌼\\n\\n咱们 5 月 3 号晚 6 点 50 分就要正式开课了，陈墨院长会带大家体验毛笔书法的魅力。这两天您可以先备一支毛笔和墨水，不用太专业，能写就行。期待在课堂上见到您，一起静心练字哦！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'[愉快][愉快][愉快]',addTag:'是',reply:'',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'好的',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'6',addTag:'是',reply:'',tags:'260503'},
+{input:'好的👌🏻',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[抱拳][抱拳][抱拳][抱拳]',addTag:'否',reply:'收到您的抱拳啦，感受到满满的诚意！🤝\\n\\n咱们后天（5 月 3 日）晚 6 点 50 分就正式开课了，陈墨院长会带大家体验毛笔书法的乐趣。这两天您可以先简单备支毛笔和墨水，不用太专业，能写就行。期待和您一起静心练字，享受这段美好时光！',tags:'260503;重要'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'好的',addTag:'是',reply:'',tags:'260503'},
+{input:'放便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师好',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便，有[抱拳]',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'不便听课',addTag:'是',reply:'',tags:'260503'},
+{input:'6',addTag:'否',reply:'收到啦！那您这两天可以先备一支普通毛笔和墨汁，超市文具店都有卖的。✏️要是暂时没工具也没关系，5 月 3 号晚先跟着陈墨院长听听看，到时候我拉您进群发链接哈。',tags:'260503;重要;有时间'},
+{input:'OK',addTag:'是',reply:'',tags:'260503'},
+{input:'好',addTag:'否',reply:'收到啦！那您这两天可以提前准备下毛笔和墨汁，不用太专业，能写字就行✏️。5 月 3 号周日晚上 6 点 50 分，我会准时把上课链接发给您，咱们跟着陈墨院长一起体验毛笔书法的乐趣，期待见到您哦！',tags:'260503;有时间'},
+{input:'真的免费，不收任何费用的吗[冷汗]',addTag:'否',reply:'您放心，这 6 天体验课确实是完全免费的，不收任何费用✌️这是陈墨院长特意为大家准备的福利。咱们先安心把这几天的毛笔书法课听完，感受下静心书写的乐趣，后面若有正式课程安排，届时我再详细跟您介绍哈～',tags:'260503;有时间'},
+{input:'暂时无法确定，可能出去旅游',addTag:'否',reply:'理解您，旅游放松也很棒呀！不过这次直播体验课只有这几天，陈墨院长的亲授很难得，哪怕只听一节对用笔也很有启发呢🌼\\n\\n要不您看看行程，尽量抽空来感受下？就当是旅途中给自己留段静心写字的时光，不用带专业工具，有支毛笔就能跟着练，您觉得呢？',tags:'260503;有时间'},
+{input:'好的',addTag:'否',reply:'收到啦！那您这两天可以先把家里的毛笔、墨汁找出来备着，不用太专业，能写字就行✏️。陈墨院长讲课特别细致，零基础也能跟上，咱们5 月 3 号晚上见，期待您写出第一笔好字！',tags:'260503;有时间'},
+{input:'谢谢！五一节快乐，！[玫瑰][合十][爱心]',addTag:'否',reply:'',tags:'2026Y3;未回复;260402;唱歌;未出勤;待点评3;作业1;作业2;唱歌讲师号;作业3;60min以上;作业4'},
+{input:'资料呢？',addTag:'否',reply:'您别急，正式的学习资料会在每晚直播课上，由陈墨院长现场演示并讲解发放呢📚。这两天您可以先准备下毛笔和墨汁，咱们 5 月 3 号晚上开课，到时候我第一时间把链接和资料都发给您，跟着院长练就行啦！',tags:'260503;有时间'},
+{input:'[OK]',addTag:'否',reply:'收到啦！看您这么爽快，我就放心了👍。既然工具都齐备，那 5 月 3 号晚上咱们就能跟着陈墨院长直接动笔练，边听边写进步最快。这两天您可以先试着摸摸笔，找找手感，期待您在课堂上的第一幅作品哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;2024Y7END;有时间;有工具;有工具;国画'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'可以看回放吗？',addTag:'否',reply:'有回放的，但需要您进直播间听满 10 分钟，系统才会自动生成哈。📝\\n\\n不过还是建议您尽量在 5 月 3 号晚上 6 点 50 分来现场，陈墨院长的直播课互动感很强，跟着练笔特别能静心。咱们先争取来体验这难得的免费机会，听完生成回放后，白天也能随时复习啦！',tags:'260503'},
+{input:'好的',addTag:'否',reply:'✌️ 工具齐全就更好啦其实呀，书法入门确实有些口诀帮助记忆，但陈墨院长更主张大家在直播课上跟着他的示范去体会用笔的韵律，这样手眼协调练得更快。5 月 3 号晚上 6 点 50 分开课，到时候您跟着院长边听边写，自然就能掌握窍门了，期待和您一起静心书写哦',tags:'260503;有时间'},
+{input:'方便。按时上课，谢谢老师！',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'文房四宝都有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'谢谢老师',addTag:'否',reply:'不客气呀～您太礼貌啦！那咱们 5 月 3 号周日晚上 6 点 50 分准时见哦，这是毛笔书法体验课，提前备好纸笔就行，零基础也能轻松跟上🌼到时候我会在群里发链接，期待和您一起静心练字！',tags:'260503'},
+{input:'好的',addTag:'是',reply:'',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师有字帖吗？',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'6',addTag:'否',reply:'收到啦！那开课前您可以先准备下基础工具，普通超市或文具店就能买到：一支毛笔、一瓶墨汁和几张书法纸就行，要求不高的 🖌️。\\n\\n要是暂时没备齐也没关系，5 月 3 号晚上先跟着陈墨院长听课、看示范，理解笔法也是很好的开始，之后随时再补上工具边听边练～',tags:'260503;重要;有时间'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;没时间;无工具;无工具'},
+{input:'有',addTag:'否',reply:'👍 太好了，工具齐全咱们学起来更顺手！ 其实呀，普通毛笔和墨汁就够用，不用追求太专业的。这次陈墨院长亲自授课，机会特别难得，哪怕只是跟着听一节，对用笔的理解都会有大收获呢。5 月 3 日晚上 6 点 50 分，来直播间给自己留一段静心写字的时光吧～',tags:'260503;重要;有时间'},
+{input:'都有',addTag:'否',reply:'那太棒啦，工具齐全咱们就能跟着陈墨院长安心练字了！👍其实呀，很多学员刚开始也担心自己没基础，但跟着院长从握笔开始学，慢慢就能静心写出漂亮的字。您先把笔墨纸备好，5 月 3 号晚上 6 点 50 分，我准时拉您进直播间，咱们一起体验毛笔书法的乐趣～',tags:'260503;重要;有时间;无工具;无工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'免费教程发给我就行',addTag:'否',reply:'您别说，光看文字教程确实很难体会毛笔的运笔手感呢。咱们这是陈墨院长亲自直播带练的体验课，有互动才能学得会呀✏️。5 月 3 号晚 6 点 50 分准时开课，我到时候把链接发您，您跟着院长写两笔，感觉完全不一样的！',tags:'260503'},
+{input:'没有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'平时也写毛笔字',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'[OK]',addTag:'否',reply:'收到您的确认啦！那 5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您。这是陈墨院长亲授的毛笔书法体验课，哪怕零基础也能跟着练，重在静心享受书写过程。这两天您可以先备支毛笔，咱们一起轻松开启这段笔墨时光 ✏️',tags:'260503;重要;有时间'},
+{input:'请你发放书法口诀表',addTag:'否',reply:'您真有先见之明，提前准备口诀表是个好习惯！不过呀，陈墨院长特意把独家书法口诀和技法拆解安排在了直播课里，跟着他的节奏边听边记，理解会更透彻呢。5 月 3 日晚 6 点 50 分，咱们直播间见，到时候记得拿好纸笔一起练 📝。',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'谢谢！五一节快乐，！[玫瑰][合十][爱心]',addTag:'否',reply:'',tags:'251217;2026Y1;2026Y3;唱歌讲师号'},
+{input:'能领课堂资料了吗',addTag:'否',reply:'资料会在正式开课时由陈墨院长在直播间统一发放哦，现在先安心准备纸笔就好✏️咱们5月3号晚上6点50分准时开课，到时候我拉您进群发链接，跟着院长练，收获肯定大！',tags:'260503;有时间'},
+{input:'10号以后可不可以？',addTag:'否',reply:'您别说，很多同学前期都忙，想往后调呢~不过咱们这期是5月3号周日准时开营的直播体验课，陈墨院长亲自带练，错过就没法补这一期的互动啦。🌼\\n其实呀，每天半小时正好给心灵放个假。您看要不先按这个节奏来试试？工具家里普通的毛笔墨水就能用，我稍后把入口发您哈。',tags:'260503'},
+{input:'方便，老师好！早上好！',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'{"messageType":"voice","messageTranscript":"蕾蕾老师，我不行啊，我斗大字儿不识一乐。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YuanLei_6_yuanlei04_1777582673199.mp3"}',addTag:'否',reply:'',tags:'260501'},
+{input:'老师。我要字帖和笔',addTag:'否',reply:'您别急，工具咱们开课前再准备也来得及～这次是毛笔书法体验课，家里有毛笔就行，没有的话用普通毛笔替代也可以，不追求专业哈。5 月 3 号晚 6:50 开课，我会在群里发链接和详细准备清单，您先安心等着，到时候跟着陈墨院长慢慢练就好啦 ✏️',tags:'260503;重要'},
+{input:'{"messageType":"voice","messageTranscript":"我今年八十多岁了。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YuanLei_6_yuanlei04_1777582684968.mp3"}',addTag:'否',reply:'',tags:'260501'},
+{input:'老师：有时间听课。',addTag:'是',reply:'',tags:'260503'},
+{input:'好',addTag:'否',reply:'收到啦！您平时有基础，这次跟着陈墨院长系统梳理一下笔法，肯定能更上一层楼。这两天您可以先试试手，5 月 3 日晚咱们直播间见，期待看到您的练习成果 🖌️。',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'老师好，',addTag:'否',reply:'您好呀！看到您打招呼真开心～咱们 5 月 3 号晚上 6 点 50 就正式开课啦，这是陈墨院长亲自带的毛笔书法体验课。这两天您可以先准备下基础的毛笔和纸墨，不用太专业，能写就行。期待和您一起在笔墨里静下心，感受书写的乐趣🌼',tags:'260503'},
+{input:'{"messageType":"voice","messageTranscript":"很抱歉啊，谢谢老师。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YuanLei_6_yuanlei04_1777582714720.mp3"}',addTag:'否',reply:'',tags:'260501'},
+{input:'我是来领字帖的',addTag:'否',reply:'您说得对，咱们课程确实会赠送实用字帖呢～不过字帖是配合直播课发放的，这样您跟着陈墨院长的示范边学边练，效果最好。5 月 3 号晚 6 点 50 开课，我到时候拉您进直播间，咱们一起领字帖、学书法，静心又充实，您看这个时间方便吗？✏️',tags:'260503'},
+{input:'[OK]',addTag:'否',reply:'收到您的确认啦！还有两天就要开课了，您可以趁周末把毛笔和墨汁准备好，不用太讲究，顺手就行🖌️。5 月 3 号周日晚上 6 点 50 分，我会把上课链接发给您，咱们跟着陈墨院长一起静心体验毛笔书法的魅力，期待和您相见哦！',tags:'260503;有时间'},
+{input:'方便方便',addTag:'是',reply:'',tags:'260503'},
+{input:'笔墨纸砚都现成的，我天天也在写',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'好的',addTag:'否',reply:'不客气呀！您工具都现成，天天还坚持写，这份热爱真让人佩服👍。那 5 月 3 号晚上跟着陈墨院长一起切磋切磋，看看名家是怎么运笔的，肯定能给您日常练习带来新启发，期待课上见！',tags:'260503;有时间;有工具;有工具'},
+{input:'不巧，这个时间有事要忙，可以看回放吗？',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'字帖什么时候能领到呀？',addTag:'否',reply:'字帖会在 5 月 3 号晚上直播课时发放哦！陈墨院长会带着大家边学边领，这样您能马上跟着示范练习，印象更深。这两天您可以先试试手头的笔墨，保持手感，期待和您一起在课上交流✏️',tags:'260503;有时间;有工具;有工具'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;重要;没时间'},
+{input:'有毛笔和墨计，没有字帖',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'否',reply:'👋 收到您的好友申请啦，我是小月老师 5 月 3 号晚上 6 点 50 分，咱们免费的毛笔书法体验课就正式开始了。陈墨院长会亲自带大家从零基础入门，感受书写的乐趣。这两天您可以先备支毛笔，到时候我拉您进群发链接，期待和您一起静心练字呀',tags:'260503'},
+{input:'那好',addTag:'否',reply:'那咱们就约定好啦！5 月 3 号晚上我拉您进直播间。这两天您可以先随心写写，保持下手感，跟着陈墨院长学几招新笔法，肯定能让您的日常练习更出彩🌟',tags:'260503;有时间;有工具;有工具'},
+{input:'好的，谢谢。',addTag:'否',reply:'不客气呀！您太礼貌啦～那咱们就安心等待 5 月 3 号晚上 6 点 50 分的开课，这两天您可以先试试手感，把毛笔和墨汁准备好就行。有任何小问题随时找我，期待在课堂上见到您认真练字的样子哦 ✏️',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'有',addTag:'否',reply:'太棒啦！那咱们就约好从明天 5 月 2 号开始，跟着朵朵老师放松唱，身体自然就有反应了。把这段时间当成给自己的放松礼物，期待听到您自信的歌声哦。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活'},
+{input:'好的',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'我现在和阳阳老师学书法课，先谢谢老师！',addTag:'是',reply:'',tags:'260504;赠品单;已填地址'},
+{input:'能听课！',addTag:'是',reply:'',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'我爱听歌，自己也唱歌，胆小不敢唱，怕别人笑话，我以前在手机K歌2千多首，3年时间，也开心，现在每天也在唱，但错发自信，录听后，不知为啥，还是差点劲，有些直白，情感带不上的关糸吧？',addTag:'否',reply:'您录了 2000 多首说明很有热情呀！这种“差点劲”其实是情感没打开\\n明晚跟着小朵老师试试“自然情感歌唱法”，帮您把歌声变得有温度，好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活'},
+{input:'有啊',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'报名听课',addTag:'是',reply:'',tags:'260503'},
+{input:'收到谢谢！',addTag:'否',reply:'不客气呀～那您先忙，我把上课链接准备好，5 月 3 号晚上 6 点 50 分准时发给您🌼 这两天您可以先把笔墨纸砚找出来放好，到时候跟着陈墨院长直接动笔练，手感热乎了进步更快哦！',tags:'260503;有时间;有工具;有工具'},
+{input:'亲都有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'收到了',addTag:'是',reply:'',tags:'260503'},
+{input:'小月老师好',addTag:'否',reply:'您好呀！看到您回复我就放心啦～咱们5月3号周日晚上6点50准时开课，是陈墨院长亲自讲授的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。到时候我提前发您上课链接，期待和您一起静心练字🌼',tags:'260503'},
+{input:'一节课多久？',addTag:'否',reply:'每节课大概一小时左右，节奏舒缓，刚好够陈墨院长把技法讲透，大家也能静心练一会儿。很多学员反馈这个时长既充实又不累，还能让心静下来呢。您先把纸笔备好，5 月 3 号晚上 6 点 50 分咱们一起开始 ✏️',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'[握手][握手]',addTag:'是',reply:'',tags:'260503'},
+{input:'在抖音群分享吗？',addTag:'否',reply:'咱们不在抖音群上课哦，课程是通过微信链接进行的。开课前我会把专属入口发给您，直接在微信里就能看陈墨院长的直播，互动也更方便。您放心，留意我的消息，5 月 3 号晚上咱们一起开始就行啦 📱',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'笔法口诀资料在哪？',addTag:'否',reply:'您别急，笔法口诀资料会在正式上课时，由陈墨院长在直播间里统一发放和讲解呢📚。\\n\\n这两天您可以先安心准备好纸笔墨，养养手感。5 月 3 号晚上 6 点 50 分，我会在群里发上课链接，到时候您准时进来，跟着院长边听边记就行啦！',tags:'260503;重要;没时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'近半年我平均三天学一首新歌，喜欢草原歌曲，通过唱歌，我比同令人要心太好，心情也好，心情也年青化，缺发很多计巧，用不上！',addTag:'否',reply:'您这状态太让人羡慕啦！唱歌让您心态年轻就是最大的收获。其实技巧是为了让情感更顺畅地流淌，跟着朵朵老师体验“自然情感歌唱法”，帮您把那些用不上的劲儿变成自然的流露，好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师早上好',addTag:'否',reply:'早上好呀！看到您的问候真温暖🌼 今天是咱们毛笔书法体验课的第一天，今晚 18:50 陈墨院长会亲自带大家从零开始感受书写的乐趣。您别担心学不会，跟着院长慢慢练，既能静心又能提升专注力。开课前我会把链接发给您，今天记得备支普通毛笔，晚上咱们一起试试！',tags:'260501;有时间'},
+{input:'谢谢老师指导',addTag:'否',reply:'别客气！您坚持学歌心态又好，特别棒\\n明晚跟着朵朵老师试试“自然情感歌唱法”，把技巧化作自然流露，让草原歌唱得更动人好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活'},
+{input:'已加入磊磊老师[握手]',addTag:'是',reply:'',tags:'260501;国画'},
+{input:'免费的书写口诀卡片',addTag:'否',reply:'您说的口诀卡片呀，那是陈墨院长在直播课上会分享的秘密武器呢！\\n\\n咱们 5 月 3 号晚 6:50 开课，到时候院长会在直播间里带着大家边写边讲，这些实用口诀自然就到手啦。现在先备好纸笔，跟着节奏走，保证您收获满满！✏️',tags:'260503;重要'},
+{input:'可以，然后怎么零元领取你们的什么资料呢？',addTag:'是',reply:'',tags:'260503'},
+{input:'来不了',addTag:'否',reply:'同学，陈小朵老师是国家一级演员、著名女高音\\n这次特聘只教这一期，机会太难得了，还是建议您尽量准时来呀。您之前了解过陈老师吗？她不仅唱得好，教得也特别棒，方法通俗易懂，相信您一听就会喜欢的。',tags:'260502'},
+{input:'你们发放的资料有些什么？',addTag:'否',reply:'您问的资料呀，主要是陈墨院长整理的名家字帖电子版和运笔图解，都是配合咱们毛笔书法体验课用的📚。等 3 号晚上开课，我会把链接和资料一起发到群里，您跟着课程节奏领就行，零基础也完全看得懂，先安心准备纸笔哈。',tags:'260503;有时间'},
+{input:'老师好！',addTag:'否',reply:'您好呀！看到您来打招呼真开心～咱们 5 月 3 号晚上 6 点 50 分就正式开课啦，是陈墨院长亲自带的毛笔书法体验课。这两天您可以先准备下家里的毛笔和宣纸，没有的话用普通毛边纸也行，主打一个轻松体验 🌼',tags:'260503;重要'},
+{input:'{"messageType":"voice","messageTranscript":"知道了，老师，谢谢。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/BiXue_3_bixue_1777584141220.mp3"}',addTag:'是',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'人老啦，有些字都忘啦，打错字是常事，让你见笑啦！',addTag:'是',reply:'您太谦虚啦，这哪是见笑，分明是可爱的真实呀！唱歌本就是自然流露，不用拘泥字眼。明晚跟着朵朵老师放松唱，把那份年轻心态尽情释放出来就好。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活'},
+{input:'？？就是上课，对吗？没有什么其他资料或者实物？',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'我现在住养老院呢！',addTag:'否',reply:'住养老院也能享受唱歌的快乐呀！好多老伙伴一起学更有氛围呢\\n明晚跟着朵朵老师放松唱，把歌声当成给生活的礼物，好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'所以有空唱歌玩',addTag:'否',reply:'能在养老院有空唱歌玩，这份心态真让人羡慕！明晚跟着小朵老师一起唱唱草原歌，把快乐分享给老伙伴们，让歌声更温暖动人好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'没有毛笔墨汁',addTag:'否',reply:'👌 没工具完全不影响您先听课哈。很多同学刚开始也是先去超市买支普通毛笔和墨汁，几块钱就能搞定。其实呀，这两天您可以先听陈墨院长讲用笔技巧，静心感受书法的魅力，等开课了再边听边练也不迟。5 月 3 日晚上 6 点 50 分，来体验这段放松时光就好啦',tags:'260503;有时间;无工具;无工具'},
+{input:'好的小月老师',addTag:'否',reply:'收到啦，有您这句话我就放心了✌️ 这两天您可以先找找家里的毛笔和宣纸，没有的话普通毛边纸也能代替，咱们主打一个轻松体验。开课当天我会准时把链接发给您，期待在陈墨院长的课堂上见到您哦！',tags:'260503;有时间'},
+{input:'学什么书体呢？',addTag:'否',reply:'咱们这次体验课主要带大家从楷书入门，感受毛笔的提按顿挫，陈墨院长也会穿插讲解行书的流畅笔法哦🌼。很多零基础同学反馈，光跟着练楷书的基本笔画，手就稳多了，心也静下来了。5 月 3 日晚 6 点 50 分，您准备好纸笔，来直播间亲自试试就知道啦！',tags:'260503;有时间;无工具;无工具'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'好嘞👌',addTag:'否',reply:'收到啦，看您这么积极我就放心了🥳 这两天您可以试着用现有的工具随意写写，找找手感。5 月 3 号晚上我会把陈墨院长的直播链接发给您，咱们一起开启这段静心之旅！',tags:'260503;有时间;有工具;有工具'},
+{input:'好啊！打扰啦，以后多多指导！',addTag:'否',reply:'别客气！能陪您唱歌是我的荣幸\\n跟着小朵老师把草原歌唱得更动人，期待听到您温暖的歌声哦，明晚咱们一起唱起来。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'收到👌',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'好嘞',addTag:'否',reply:'收到啦，看您这么积极我就放心了🥳 这两天您可以试着用现有的工具随意写写，找找手感。开课当天我会把陈墨院长的直播链接发给您，咱们一起开启这段静心之旅！',tags:'260503;有时间;有工具;有工具'},
+{input:'老师太帅啦，让人养眼啊',addTag:'否',reply:'您真会夸人！小朵老师不仅台风好，教课更温柔。明晚跟着老师放松唱，让歌声给您添份好心情好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'老师，直播的时候，柠檬老师说写字的口诀在您这领',addTag:'否',reply:'您别说，这个口诀确实是陈墨院长直播时会讲的重点内容呢✏️ 不过呀，我这边不单独发文字版，就是希望大家跟着院长的节奏，在直播间边听边记，这样印象更深，练字时更容易上手。5 月 3 号晚上咱们一起把口诀记在心里！',tags:'260503;有时间;有工具;有工具'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'需要付费吗？',addTag:'否',reply:'您放心，这次体验课是完全免费的，不需要任何费用哦。这是陈墨院长特意为大家准备的福利，旨在让您感受毛笔书法的魅力。咱们从最基础的握笔开始教，很多零基础的学员都反馈说既能静心又能学到真本事。您只要准备好纸笔，5 月 3 日晚 6 点 50 分准时来体验就好啦✏️',tags:'260503;重要'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'否',reply:'同学您好，我是本次体验课的班主任。咱们的在线课现场教学支持回放，错过或想复习都能随时观看\\n那 5 月 2 日晚上 7 点这个上课时间您方便来上课吗？',tags:'260502'},
+{input:'[抱拳][愉快]',addTag:'否',reply:'🤗 收到您的心意啦那咱们就安心准备 5 月 3 号晚上的毛笔书法课。这两天您可以先备支毛笔和墨汁，不用太专业，能写字就行。陈墨院长会从最基础的握笔教起，零基础也能轻松跟上，期待您静心书写的第一笔',tags:'260503;有时间'},
+{input:'好的',addTag:'否',reply:'收到啦，看您回复这么干脆，我就放心了🥳 这两天您可以先用现有的笔墨随意写写，找找手感。5 月 3 号晚上我会把陈墨院长的直播链接发给您，咱们一起开启这段静心之旅！',tags:'260503;有时间;有工具;有工具'},
+{input:'好吧！我今天有事，一会儿子接我回家过五一节，再见！',addTag:'否',reply:'太好了，提前祝您五一快乐！回家好好放松\\n咱们明晚七点准时见，跟着小朵老师开心唱起来。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'👌',addTag:'否',reply:'收到啦，看您回复这么干脆，我就知道您准备好啦✌️ 5 月 3 号晚上我会把陈墨院长的直播链接发给您。这两天您可以先用现有的笔墨随意写写，找找手感，咱们一起轻松开启这段静心之旅！',tags:'260503;有时间;有工具;有工具'},
+{input:'笔法上诀呢',addTag:'否',reply:'您别急，具体的笔法口诀呀，陈墨院长会在 5 月 3 号晚上的直播课里详细拆解示范呢✏️。那是咱们毛笔书法体验课的核心内容，光看文字不如跟着院长动笔练来得直观。这两天您可以先备好纸笔墨，到时候跟着直播节奏走，保证您听得懂、学得会！',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'6',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师要资料',addTag:'否',reply:'您别急，上课需要的资料不用提前准备哈。咱们是 5 月 3 号晚上 6 点 50 分准时开课，到时候我会直接在微信上把听课链接和电子资料发给您，特别方便。您现在只要安心等待，准备好纸笔墨，跟着陈墨院长轻松体验毛笔书法的乐趣就好啦 ✏️',tags:'260503;重要'},
+{input:'[OK][玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'收到您的玫瑰啦，心里暖暖的🌹这两天您可以先备支普通的毛笔和墨汁，不用太专业，能写字就行。陈墨院长会从最基础的握笔教起，零基础也能轻松跟上，期待您静心书写的第一笔。',tags:'260503;有时间'},
+{input:'刘贤其同学，您好呀！我是您国画课班主任--图图老师，负责您6天的【国画班】院长亲自授课，并给您邮寄图书~，上课时间是5月4日【星期一】到5月9日，连续六天，每晚18：45开始上课，在这里你将学习：专业国画知识和绘画技巧、六幅国画作品创作。\n\n\n姓名：刘贤其同学，您好呀！我是您国画课班主任--图图老师，负责您6天的【国画班】院长亲自授课，并给您邮寄图书~，上课时间是5月4日【星期一】到5月9日，连续',addTag:'是',reply:'',tags:'260504;赠品单'},
+{input:'好',addTag:'否',reply:'收到啦！那您这两天可以先备一支普通毛笔和墨汁，超市文具店都有卖的，不一定要专业的，能写就行。5 月 3 号晚上 6 点 50 分，陈墨院长会带大家体验毛笔书法的乐趣，咱们跟着节奏慢慢练，享受这份静心时光就好 🌼',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'口诀又是要收费的吧',addTag:'否',reply:'您放心，这次是纯粹的免费体验课，所有口诀和技法陈墨院长都会在直播里倾囊相授，绝不收费✌️。很多同学都担心过这点，结果发现不仅没套路，还学到了真东西。5 月 3 号晚上 6 点 50 分开课，您安心备好纸笔，来听这一节就知道值不值啦！',tags:'260503;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'老师，您早上好！谢谢！',addTag:'是',reply:'',tags:'260503'},
+{input:'上一白班八点下班',addTag:'否',reply:'🤗 您上白班八点下班确实挺辛苦的，特别理解！ 不过咱们课是晚上六点五十开始，您要是能协调出半小时，哪怕只听前半段，跟着陈墨院长学学用笔也是赚到的。很多同学都把这当成下班后的放松时光呢。您看三号那天尽量抽空来感受一下吗？',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LiHe_4_lihe04_1777584657064.jpg"}',addTag:'否',reply:'',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'上白班八点下班',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'从哪买？',addTag:'否',reply:'其实呀，附近文具店也能买，但往往工具不全还贵，好多同学跑几家才凑齐，挺折腾的。不如直接网购，像京东下单套装，明天就能送到家，省心又划算，也就四五十块。毕竟学国画得亲手练，工具齐了随时能画，多自在呀！我帮您找套合适的链接发您？🎨',tags:'260504;赠品单;已填地址'},
+{input:'好的',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'这是我老伴',addTag:'否',reply:'哇，叔叔看着真精神！有老伴陪着回家过节太幸福啦。那您先安心过节，等回来有空了，咱们再跟着小朵老师开心唱歌，把这份快乐唱出来好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'我没扣6能发用品吗',addTag:'否',reply:'没扣 6 也不影响您领取用品哈，您放心✏️只要咱们按时来上直播课，跟着陈墨院长认真练习，后续都有机会获得的。这两天您可以先准备下基础的毛笔和墨汁，5 月 3 号晚上 6 点 50 分，我准时发链接带您进直播间体验毛笔书法的魅力～',tags:'260503;有时间'},
+{input:'好',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;回复时段2'},
+{input:'课就是广告是吧',addTag:'否',reply:'🙌 您别误会，这可不是广告呀。这是陈墨院长特意安排的免费直播体验课，全程只讲毛笔书法的实打实技法，没有任何推销环节。很多学员起初也这么想，上完一节课发现光是一个执笔技巧就收获满满。5 月 3 号晚上 6 点 50 分，您有空可以来听听看，给自己一段静心的时光就好啦。',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'能',addTag:'否',reply:'太好了，收到您能准时来上课的消息真让人开心！\\n明天晚上七点咱们就正式开始了。对了同学，在开课之前，您之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'可以👌谢谢、',addTag:'否',reply:'您太客气啦！工具不着急准备，咱们这是毛笔书法体验课，刚开始用普通的毛笔和墨汁就行，家里现有的都能替代🖌️。5 月 3 号晚上 6 点 50 分，我会在群里发链接喊您上课，这两天您先安心忙您的，到时候来放松写两笔就好～',tags:'260503;有时间'},
+{input:'发我看看',addTag:'否',reply:'哎呀，真不巧，咱们课程不单独卖工具包呢。其实您不用急着买专业的，家里普通的毛笔、墨汁和宣纸就能跟着陈墨院长练，重点是先体验运笔的乐趣，静心又解压✏️。今晚 18:45 开播，您先用现有工具试试手，感受下氛围，说不定现有的就够用啦！',tags:'260504;赠品单;已填地址'},
+{input:'好的工具有的',addTag:'是',reply:'',tags:'260503;重要;没时间'},
+{input:'方便学习指导',addTag:'否',reply:'您放心，上课前我会把链接发给您，全程陪着您学！✏️咱们这是毛笔书法体验课，工具要求不高，家里有小毛笔就能跟着陈墨院长练。这两天您可以先准备下纸笔，到时候跟着节奏写，特别能静心呢～',tags:'260503;重要;有时间'},
+{input:'好的',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;回复时段2'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;回复时段1'},
+{input:'工具早就有了',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'好的',addTag:'否',reply:'太棒啦！收到您的确认，老师心里特别踏实🤗。那您先安心等工具包送达，这几天可以稍微活动下手腕。5 月 4 号晚上 6 点 45 分上课链接会发到群里，咱们跟着陈墨院长一起提笔静心，享受这段专属的国画时光吧！',tags:'260504;赠品单;已填地址'},
+{input:'平时也经常自己乱写一下。',addTag:'否',reply:'那太好了呀！平时爱动笔，手感肯定比零基础的同学更敏锐呢～👍这次跟着陈墨院长系统学，把您那些“乱写”的小习惯调整一下，用笔会更顺畅。期待看到您规范书写后的进步！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'[强][强][强]',addTag:'是',reply:'',tags:'260503'},
+{input:'0K',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'行。',addTag:'否',reply:'收到啦，那您就安心等着 3 号晚上开课就行。这两天您可以先把笔墨纸砚找出来放好，免得到时候手忙脚乱。咱们这是毛笔书法课，工具不用太专业，能写就行。到时候我会在群里发链接，您直接点进去就能跟着陈墨院长练字了🌼',tags:'260503;有时间;有工具;有工具'},
+{input:'他更爱唱歌，是我老师，我们在一起才半年吧！',addTag:'否',reply:'原来叔叔是您的声乐启蒙老师呀，有爱人相伴唱歌真幸福！\\n之后跟着小朵老师学新方法，您俩还能互相切磋，把歌唱得更动人呢。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'[抱拳][抱拳][抱拳]',addTag:'否',reply:'收到您的问候啦，心里暖暖的🤗。咱们 5 月 3 号晚上 6 点 50 分准时开课，这两天您可以先备一支普通毛笔和墨汁，超市文具店都有卖的。不用太专业，能写就行，主要是为了让您上课时跟着陈墨院长动手更顺畅。期待见到您！',tags:'260503;重要;有时间'},
+{input:'你的讲有免费字帖发放真有吗',addTag:'否',reply:'您放心，真有这好事！🎁陈墨院长特意为大家准备了免费字帖，上课时会告诉大家怎么领取。您跟着节奏走就能拿到，正好配合咱们这两天的练习，特别实用！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'好的',addTag:'否',reply:'收到啦！那您先忙，5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您。这是毛笔书法体验课，您提前备支毛笔就行，咱们跟着陈墨院长轻松练字，享受书写时光🌼',tags:'260503;有时间'},
+{input:'早上好！老师[抱拳][抱拳][抱拳]',addTag:'否',reply:'早上好呀！看到您这么有精神真开心 。\\n\\n咱们 5 月 3 号晚上 6 点 50 分就要正式开课啦，陈墨院长会带大家从零开始学毛笔书法。这两天您可以先准备下家里的毛笔和宣纸，没有专用的也没关系，普通工具也能跟着练。\\n\\n期待到时候在直播间见到您，一起静心写字哦 ✏️',tags:'260503;重要'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YuanLei_5_yuanlei04_1777585009107.jpg"}',addTag:'否',reply:'',tags:'260501;有时间'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'认识你很高兴',addTag:'否',reply:'认识您我也特别开心呀！🤗 咱们 5 月 3 号晚上 6 点 50 分就正式开课啦，陈墨院长会带大家体验毛笔书法的乐趣。这两天您可以先翻翻家里有没有现成的毛笔和纸，没有专用的也没关系，普通工具也能跟着练。',tags:'260503;重要;有时间'},
+{input:'领课',addTag:'否',reply:'收到啦，这就帮您登记领课！🎉咱们是 5 月 3 号周日晚 6 点 50 开课，连续 6 天由陈墨院长带大家学毛笔书法。您这两天先准备支毛笔就行，开课前我会把链接发给您，期待和您一起静心练字呀。',tags:'260503'},
+{input:'3号见[握手][握手][握手]',addTag:'否',reply:'好嘞，那就 5 月 3 号晚上见！👋 这两天您可以先备一支普通毛笔和墨汁，不用太专业，能写就行。陈墨院长会带着大家从基础练起，咱们主要是体验静心书写的乐趣。期待和您一起动笔，感受书法的魅力！',tags:'260503;重要;有时间'},
+{input:'我们现在很幸福，他84岁啦！',addTag:'否',reply:'84 岁还能一起唱歌太让人羡慕啦！有空跟着小朵老师放松唱，把这份甜蜜唱进歌里好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'不方便',addTag:'是',reply:'',tags:'260503'},
+{input:'好',addTag:'否',reply:'收到啦！那您先安心忙自己的事，等开课前我会把上课链接发给您。这两天要是翻到家里的毛笔或宣纸，可以先放手边，咱们轻松跟着陈墨院长体验就好 🌼',tags:'260503;重要;有时间'},
+{input:'我们每都学新歌',addTag:'否',reply:'那太棒啦！两位一起学新歌，日子肯定特别有滋味\\n有空跟着小朵老师试试新方法，您俩配合着唱，说不定更有默契呢！',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'怎么领',addTag:'否',reply:'您回复“方便”或者“上课”，我这就手动帮您开通权限哈～开通后，开课前我会直接把上课链接发到您微信上，您点进去就能跟着陈墨院长学毛笔书法了。咱们这次是零基础也能跟上的体验课，主要带大家感受下书写的静心乐趣✏️',tags:'260503'},
+{input:'怎样免费领字帖？',addTag:'否',reply:'您问的字帖呀，咱们开课后陈墨院长会在直播间直接分享电子版，大家跟着练就行，不用单独领呢。✏️\\n\\n现在最重要的是确认下，5 月 3 号晚 6 点 50 分的毛笔书法体验课，您时间协调好了吗？这可是院长亲授的难得机会，哪怕只听一节，对用笔手感都很有帮助，咱们尽量别错过呀。',tags:'260503;没时间'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'否',reply:'收到啦！这就帮您开通权限👌开课前我会把上课链接发到您微信上，您直接点进去就能跟着陈墨院长学毛笔书法了。咱们这次是零基础也能跟上的体验课，主要带大家感受下书写的静心乐趣，期待和您一起提笔练字呀～',tags:'260503;有时间'},
+{input:'有工具',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'有幸遇上你们，我们每天更开心啦！',addTag:'否',reply:'听到您这么说心里暖暖的！有空跟着小朵老师一起唱，把这份幸福融进歌声里好吗？',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'6',addTag:'否',reply:'收到啦！那老师就先帮您把名额锁定好～咱们是5月3号周日晚上6点50开课，连续6天都是这个时间。这两天您可以先准备一支毛笔和墨汁，不用太专业，能写就行✏️ 期待您准时来体验陈墨院长的直播课，一起静心练字！',tags:'260503'},
+{input:'[合十][合十][合十][爱心][爱心][爱心]',addTag:'否',reply:'收到您的心意啦，特别温暖！🤗 既然工具还没备齐，咱们 3 号晚上也可以先准时来听课，感受下陈墨院长的讲解。建议您这两天抽空去附近超市买支普通毛笔和墨汁，这样上课就能边听边练，手眼协调起来，静心效果会更好哦。期待您动笔的那一刻！',tags:'260503;重要;有时间'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YinJingTing_4_yinjingting_1777585242612.jpg"}',addTag:'否',reply:'您这工具准备得真齐全，看着就专业！👍 有了趁手的笔墨，跟着陈墨院长练字肯定更顺手。这两天您可以先试着握握笔找找感觉，期待一起静心享受书写时光～',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'课程收费吗',addTag:'否',reply:'您放心，这次是陈墨院长亲自带的免费体验课，完全不收费的！🤗 咱们就是希望能让您零基础也能轻松感受毛笔书法的乐趣。5 月 3 号晚上 6 点 50 分开课，您安心准备好纸笔，跟着院长静心练字就好啦～',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'可以，好的谢谢老师！',addTag:'否',reply:'太好了，听到您能准时来上课真让人开心！\\n开课前我会提醒您并发上课入口。对了同学，在正式见面之前，您之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'没有别的费用了',addTag:'否',reply:'对的，您放心，这次体验课全程免费，没有任何其他费用啦！👍 咱们就是纯粹想让您跟着陈墨院长轻松感受毛笔书法的魅力。5 月 3 号晚上 6 点 50 分准时开课，您安心准备好纸笔，到时候直接来听就行～',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'小月老师，课程有回放吗？我的时间来不了。',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'0K',addTag:'否',reply:'收到啦！您工具齐全又确认了免费，这下可以安心期待开课咯～5 月 3 号晚上 6 点 50 分，陈墨院长带大家零基础体验毛笔书法，咱们就当给自己留段静心时光 🌼 开课前我会把链接发您，留意消息就好啦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'是哪个老师的课程？',addTag:'否',reply:'咱们这次书法体验课是由及象书画院创始人陈墨院长亲自授课的哦！🎨 陈院长是知名的青年艺术家，在书法和国画领域都很有造诣。我作为班主任，会全程陪伴您，帮您解决学习中的小问题，确保您能顺利跟上陈院长的节奏，享受写字的乐趣～',tags:'260503;重要'},
+{input:'到时直播间里见[握手][握手][握手]',addTag:'否',reply:'',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'领取字帖和口诀',addTag:'否',reply:'您说的字帖和口诀呀，其实陈墨院长都会在直播课上带着大家练，边写边讲特别清楚！📚咱们这是毛笔书法体验课，工具简单准备下就行。5 月 3 号晚上 6 点 50 分开课，到时候我在群里发链接，您跟着院长写就能拿到啦，期待和您一起静心写字哦～',tags:'260503;重要'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'好啦，你忙吧！',addTag:'否',reply:'好嘞，那您先忙！提前祝您和叔叔五一快乐\\n明晚有空再跟着小朵老师开心唱歌。',tags:'260502;赠品单;已领取赠品;待介绍老师;激活;激活;退休'},
+{input:'这个老师的课程，我不需要',addTag:'否',reply:'完全理解您的顾虑，其实很多同学刚开始也觉得忙不过来呢。🤗但这次是陈墨院长难得的直播体验课，哪怕只听一节，对用笔和静心都很有帮助。咱们就当给自己留段放松时光，5 月 3 号晚上简单准备纸笔来听听看吗？',tags:'260503;重要'},
+{input:'领课程',addTag:'否',reply:'🎉 同学您好呀，收到您想领课啦！咱们免费书法体验课是5月3号晚6点50分准时开始，由陈墨院长亲自授课。这两天您可以先准备一支毛笔和毛边纸，不用太专业，能写字就行。开课前我会把上课链接发给您，到时候直接点开就能听，特别方便，期待和您一起静心练字哦！',tags:'260503;重要'},
+{input:'[OK]谢谢',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'老师早上好',addTag:'否',reply:'早上好呀！看到您这么有精神真开心 🌞。\\n\\n后天 5 月 3 号晚上 6 点 50 分，咱们的毛笔书法体验课就正式开始了。这两天您可以先提前把家里的毛笔、墨汁和宣纸找出来放好，不用太专业，能写字就行。\\n\\n跟着陈墨院长慢慢练，既能静心又能提升审美，特别享受。开课前我会把上课链接发给您，咱们一起期待吧！',tags:'260503;重要'},
+{input:'好的，谢谢你小月老师！我有书写工具。',addTag:'是',reply:'',tags:'260503;没时间'},
+{input:'可以看回放吗',addTag:'否',reply:'有回放的哈～不过需要您进直播间听满 10 分钟，系统才会自动生成回放，之后就能随时复习啦。这次是陈墨院长精心准备的毛笔书法体验课，机会很难得，建议您尽量抽空来感受下现场氛围，对理解笔法帮助更大呢✏️',tags:'260503'},
+{input:'{"messageType":"voice","messageTranscript":"谢老师，这个方法很好，这个我看着昨天晚上又练了两次，今天我在练习。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/bdfd1da4b51635f56113aeb39bde9fd1_c47f0cfa-',addTag:'是',reply:'',tags:'2;260428;赠品单;已领取赠品;有工具;有工具;回复时段3;出勤A;作业1;回复时段4;A;出勤B;作业2;回复时段8;B;回复时段10;出勤C;作业3'},
+{input:'{"messageType":"voice","messageTranscript":"谢谢老师，这个方法很好，这个发给我以后，我昨天晚上练了几次，今天准备再练几次，看来呃有希望提高一点。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/4839e999c2afeeb3df6cf7243',addTag:'是',reply:'',tags:'2;260428;赠品单;已领取赠品;有工具;有工具;回复时段3;出勤A;作业1;回复时段4;A;出勤B;作业2;回复时段8;B;回复时段10;出勤C;作业3'},
+{input:'收到',addTag:'是',reply:'',tags:'260501'},
+{input:'可以的',addTag:'是',reply:'',tags:'260503'},
+{input:'没基础能学吗？',addTag:'否',reply:'您放心，咱们这毛笔书法课就是专为零基础设计的！陈墨院长讲课特别细致，从怎么握笔教起。其实很多学员刚开始也担心手抖，但跟着练几天，不仅字有模样了，心也静下来了✏️。5 月 3 号晚上 6 点 50 分准时开课，您提前备好纸笔，跟着院长慢慢写就行！',tags:'260503;重要'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'否',reply:'您好呀！我是磊磊老师，终于加上您啦。今晚 6 点 50 分咱们就正式开课了，是由陈墨院长亲自带大家体验毛笔书法的魅力。第一次拿毛笔可能会有点手生，但这正是静心专注的好机会呢。您手头准备好纸笔了吗？🖌️',tags:'260501;有时间'},
+{input:'没有任何费用吗？',addTag:'否',reply:'您放心，这次 6 天的毛笔书法体验课完全免费，不收任何费用～这是陈墨院长特意为大家准备的。后续虽有正式课，但咱们先安心把这 6 天练好，零基础也能跟上，就当每天给自己留段静心写字的时光✏️',tags:'260503'},
+{input:'好',addTag:'是',reply:'',tags:'260503'},
+{input:'不方便也得抽时间出来上课呀',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师好',addTag:'否',reply:'您好呀！收到您的问候真开心～咱们5月3号周日晚上6点50就正式开课啦，这是毛笔书法体验课，零基础也能轻松跟上。您这两天方便提前准备一下纸笔墨吗？不用太专业，普通的就行，期待和您一起静心练字✏️',tags:'260503'},
+{input:'到时候看吧',addTag:'否',reply:'理解您平时比较忙，时间确实需要协调～不过这次是陈墨院长亲自带的直播体验课，互动感很强，很多同学反馈哪怕只听一节，对用笔的领悟都特别深。✨\\n\\n咱们5 月 3 号晚 6:50 开课，就当给自己留段静心放松的时间？您先备支毛笔就行，我开课前把链接发您，到时候来听听看？',tags:'260503'},
+{input:'什么时候领领字帖？',addTag:'否',reply:'字帖不用单独领哈，开课后陈墨院长会在直播里带着大家练，直接跟着写就行✏️ 您先把笔墨准备好，5 月 3 号晚上 6 点 50 来听课，到时候按老师节奏走，零基础也能轻松跟上～',tags:'260503;没时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'这是陈院长的班吗，已交了299元',addTag:'否',reply:'',tags:'260425;赠品单;有工具;有工具;出勤A;出勤B;作业2;已破冰;出勤C;作业3;出勤D;出勤E'},
+{input:'好的',addTag:'否',reply:'收到您的确认啦！那老师就先帮您把名额预留好。这两天您可以先备一支毛笔，不用太专业，能蘸墨书写就行。开课前我会把上课链接发给您，期待和您一起在笔墨中静心放松～✏️',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'我写了一年了',addTag:'否',reply:'哇，您已经坚持练了一年啦，这太棒了！👍 有基础的同学跟着陈墨院长学，往往进步更快呢。这次体验课正好帮您梳理一下用笔细节，让字更出彩。5 月 3 号晚上 6 点 50 分，期待看到您的作品哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'主播说了，有字帖、口诀都嘛',addTag:'否',reply:'您说得对，陈墨院长确实准备了字帖和口诀呢！不过这些资料开课后会在直播间里统一发给大家，方便咱们边听边练✏️ 您先安心准备好笔墨，5 月 3 号晚上 6 点 50 来听课，到时候跟着院长节奏走就行～',tags:'260503;没时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'好的',addTag:'否',reply:'收到啦！您能确认我就放心了。✏️ 既然您有一年的基础，这次跟着陈墨院长学，肯定能把用笔细节打磨得更漂亮。这两天您可以先暖暖手，5 月 3 号晚上 6 点 50 分，咱们一起静心写几笔！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'书法课我是不上的因岁数大了学习这个不敢兴趣不好意思',addTag:'否',reply:'完全理解您的顾虑，其实很多高龄学员刚开始也这么想，但后来都发现书法特别能静心，还能锻炼手眼协调呢。这次是陈墨院长亲自带的免费体验课，内容专为零基础设计，哪怕只听一节也是给自己一段放松的专注时光。您就当来感受下氛围，稍微准备支毛笔就行，试试看吗？🌼',tags:'260501;有时间'},
+{input:'不确定有没有时间',addTag:'否',reply:'理解您平时比较忙，很多学员开始前也担心时间问题。其实呀，每天只需半小时，跟着陈墨院长练练毛笔字，正好能静心放松，缓解一天的疲劳✏️。这次直播体验课机会很难得，建议您先协调下时间，5 月 3 号晚 6 点 50 分来听听看，当作给自己的一段休息时光，您觉得呢？',tags:'260503'},
+{input:'好',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'上课',addTag:'是',reply:'',tags:'260503;重要;2022Y11END'},
+{input:'口诀什么时候发',addTag:'否',reply:'口诀呀，会在 5 月 3 号晚上正式上课时，由陈墨院长在课堂里带着大家边写边记呢！到时候您跟着老师的节奏，边练边掌握，印象更深。这两天先安心准备下毛笔和墨汁，咱们一起轻松开启这段笔墨时光 ✏️',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'口诀字帖书，如何领取[愉快]',addTag:'否',reply:'您别急，口诀字帖是咱们上课时的专属资料✏️等 5 月 3 号晚上陈墨院长直播开课时，我会把领取方式发在群里，大家跟着节奏就能拿到。这两天您可以先备下毛笔和墨汁，安心等待就行啦～',tags:'260503;有时间'},
+{input:'我每天都写一会',addTag:'否',reply:'',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;2022Y11END;有时间'},
+{input:'每天没事就在学习二胡',addTag:'否',reply:'您真厉害，二胡和书法都是修身养性的好艺术呢！其实很多学乐器的同学发现，练字能帮您更好地沉淀心境，对手指灵活性也有好处。今晚陈墨院长会带大家体验毛笔书法，就当是拉完二胡后的放松时光，您方便来感受下吗？🎨',tags:'260501;有时间'},
+{input:'好👌',addTag:'否',reply:'收到啦！那您这两天可以提前准备下毛笔和墨汁，不用太专业，能写字就行✏️。5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您，咱们跟着陈墨院长一起体验毛笔书法的乐趣，期待和您见面哦！',tags:'260503;重要;有时间'},
+{input:'[OK][玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'收到您的祝福啦🌹那咱们就安心等待开课。这两天您可以先备支毛笔和墨汁，不用太专业，能写字就行。陈墨院长会从最基础的握笔教起，零基础也能轻松跟上，期待您静心书写的第一笔',tags:'260503;有时间'},
+{input:'五一节快乐！',addTag:'否',reply:'',tags:'260422;未破冰;待介绍老师;退休;待发上课链接;未出勤;出勤A;作业1;出勤B;作业2;出勤C;作业3;出勤D;作业4;90min以上;出勤E;作业5;60min以上;出勤F'},
+{input:'买字帧',addTag:'否',reply:'您说的“字帧”是指装裱好的书法作品吗？咱们这次是毛笔书法体验课，重点在跟着陈墨院长学用笔技法，暂时不涉及购买成品哦。不过等您练好了，自己写的作品装裱起来更有意义呢！5 月 3 号晚上 6 点 50 分准时开课，记得准备好纸笔，咱们一起动笔写起来✏️',tags:'260503;重要;2022Y11END;有时间;有工具;有工具'},
+{input:'不好意思不方便了',addTag:'否',reply:'完全理解，平时忙起来确实容易顾不上。今天正好是咱们第一天开课，陈墨院长会亲自带大家体验毛笔书法的静心乐趣，就当是忙碌生活中给自己留段放松时光。哪怕只听十几分钟，感受下笔墨韵味也是好的，您有空可以留意下群消息哦🌼',tags:'260501;有时间'},
+{input:'笔有，纸📄有少量的',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'{"messageType":"voice","messageTranscript":"讲话，对不起，老师，我不是钱的问题，我是时间的问题，我什么都有，我的笔一大桶，我的纸一大卷成卷成卷的买，对不起了，我什么都有，我就是没时间了，我就是现在没这个能力了，停下来四五年没画了，没有画了。所以我呢就哎跟以后我爱人身体好了以后，等以后我现在一个心里心心思就是把他的身体搞好。我已再说，年龄已经过到八十了，再',addTag:'否',reply:'',tags:'260421'},
+{input:'老师早上好',addTag:'否',reply:'早上好呀！今天就是咱们开课的日子啦，真期待和您见面🌼 今晚陈墨院长会亲自带大家体验毛笔书法的乐趣，零基础也能静心写几笔。开课前我会把链接发到您微信，您记得留意消息，顺便备支普通毛笔，咱们晚上见！',tags:'260501;有时间'},
+{input:'好',addTag:'否',reply:'收到啦！那您就安心等待，5 月 3 号周日晚上 6 点 50 分，我会准时在群里发上课链接给您。这两天您可以先把笔墨纸砚找出来放好，到时候跟着陈墨院长直接动笔，感受毛笔在纸上行走的乐趣，特别解压🌼',tags:'260503;重要;2022Y11END;有时间;有工具;有工具'},
+{input:'{"messageType":"voice","messageTranscript":"不完全是时间，不是钱。我在股市里已经挣了很多很多钱，不是钱的问题，主要是时间的问题。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/GaoZhiYuan_1_gaozhiyuan_177758669',addTag:'否',reply:'',tags:'260421'},
+{input:'{"messageType":"voice","messageTranscript":"认真的收看我们，谢谢你了，我真的什么什么也不想学，没时间非正式的，没有时间，就是时间的事情，我没有时间。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/GaoZhiYuan_1_gaozhiyuan',addTag:'否',reply:'',tags:'260421'},
+{input:'领书法口诀',addTag:'否',reply:'您说的书法口诀呀，其实都融在陈墨院长的课堂示范里啦！咱们5月3号开课，到时候院长会手把手教您怎么用笔，比死记硬背管用多了。这两天您可以先备支毛笔，跟着直播练，手稳了心也静，写出来自然有章法🖌️',tags:'260503;重要'},
+{input:'这些有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'准备好了',addTag:'否',reply:'太棒啦！工具备齐心里就踏实多了。其实呀，很多学员和您一样，准备好纸笔后，还没上课心就先静下来了，这就是书法的魅力呢🌼。那您这两天安心等待，开课前我会把链接发到群里，咱们跟着陈墨院长一起动笔体验！',tags:'260503;重要;2022Y11END;有时间;有工具;有工具'},
+{input:'字帖口诀',addTag:'否',reply:'您说的字帖口诀呀，其实都在陈墨院长的课堂示范里呢！死记硬背不如跟着直播练，5 月 3 号晚 6:50 开课，院长会手把手教您用笔规律。这两天您可以先备支毛笔，跟着写既能静心又能提升审美，到时候我发链接给您🖌️',tags:'260503;重要'},
+{input:'早上好！[玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'早上好呀！看到您的问候真开心🌼今天是咱们书法课第一天，今晚 6 点 50 分陈墨院长会带大家体验毛笔书法的魅力。您记得提前准备好纸笔墨，晚上来直播间，咱们一起静心练字，享受这段专注时光哦！',tags:'260501;有时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;2026Y3;有时间'},
+{input:'好的，可以',addTag:'是',reply:'',tags:'260501'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'方便',addTag:'否',reply:'',tags:'260501;回复时段2'},
+{input:'收到，问一下这课有回放吗？',addTag:'否',reply:'有回放的哈~不过老师更建议您来直播间，跟着陈墨院长同步练习，那种氛围和互动感是看回放体会不到的呢🌟您只要进教室听满 10 分钟，系统就会自动生成回放，之后随时都能复习。咱们一起提笔静心吧！',tags:'260501;有时间;有工具;有工具'},
+{input:'我只要柠檬书写的字帖口诀',addTag:'否',reply:'您想要的柠檬书写口诀呀，其实陈墨院长会在直播里，结合具体字帖手把手教给您，比单看文字更直观呢！咱们这是毛笔书法体验课，跟着院长练，既能静心又能掌握运笔规律。您先备支毛笔，开课前我会把链接发您🖌️',tags:'260503;重要'},
+{input:'想学习赵孟頫行楷',addTag:'否',reply:'您想学赵孟頫行楷，这眼光真不错！👍 今晚六点半五十的课，陈墨院长正好会讲行书笔法，这是打基础的关键，跟您想学的方向特别契合。很多零基础同学听完都觉得豁然开朗。今晚记得准时来听，咱们一起从用笔开始入门～',tags:'260501;回复时段2'},
+{input:'那个6节课已经上过',addTag:'否',reply:'原来您已经上过之前的课啦，那这次可以再来听听陈墨院长的新内容呀！很多老学员都说，每次听院长直播都有新感悟，既能静心又能提升审美。您备好纸笔，咱们一起再感受下笔墨的乐趣🖌️',tags:'260503;重要'},
+{input:'谢谢老师，最近有点忙，没有时间，就不报名了。',addTag:'否',reply:'',tags:'260422;核心;作业1;作业2;作业3'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'不用，我已经上过了，只要柠檬书法口诀',addTag:'否',reply:'明白您想要口诀，不过陈墨院长的直播课里，会结合具体字帖手把手教运笔规律，比单看文字更直观呢！很多老学员都说，跟着直播练既能静心又能提升审美。您备好纸笔，开课前我发链接给您，咱们再感受下笔墨的乐趣🖌️',tags:'260503;重要'},
+{input:'好的',addTag:'否',reply:'收到啦！那您就安心等着直播课吧✏️ 陈墨院长会带着大家从基础笔法练起，字帖和口诀课上都会发，跟着节奏写就行～这两天可以先活动活动手腕，保持好心情，期待和您一起静心写字！',tags:'260503;没时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;回复时段1'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'方便听课',addTag:'是',reply:'',tags:'260503'},
+{input:'只想要柠檬书法口诀',addTag:'否',reply:'理解您想找特定口诀的心情，不过陈墨院长的直播课里，会结合具体字帖手把手教运笔规律，比单看文字更直观呢！咱们这是毛笔书法体验课，跟着练既能静心又能提升审美。您备好纸笔，开课前我发链接给您🖌️',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'好',addTag:'否',reply:'收到啦！那您就安心等着，5 月 3 号周日晚上 6 点 50 分，我会准时在群里发上课链接给您。这两天您可以先试试手边的毛笔，找找感觉，咱们到时候跟着陈墨院长一起静心写几笔，特别放松🌼',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'方便，谢谢老师！',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'怎么领取',addTag:'否',reply:'您别急，领取很简单！只要确认您 5 月 3 号周日晚上 6 点 50 分方便来上这节毛笔书法体验课，回复我“方便”，我就手动帮您开通权限啦。开课前我会把上课链接发到咱们群里，零基础也能轻松跟上，主要是跟着陈墨院长感受书写的静心乐趣✏️',tags:'260503'},
+{input:'答非所问',addTag:'否',reply:'您别急，咱们这次是陈墨院长亲授的毛笔书法直播课，讲究的是手把手教您运笔规律，光看文字口诀反而容易练偏呢。很多老学员都说，跟着直播静心写两笔，比死记硬背强多啦！您备好纸笔，开课前我发链接给您🖌️',tags:'260503;重要'},
+{input:'老师好！上课时间与彩铅课重合，只能上回放了。',addTag:'否',reply:'完全理解您的安排，时间冲突确实挺让人头疼的。如果今晚方便的话，也可以来直播间待一会儿，陈墨院长现场带着运笔的感觉，是回放很难替代的，对咱们零基础入门帮助特别大呢！🌟',tags:'260501'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'好',addTag:'否',reply:'您放心，资料都在课程里呢！陈墨院长会在直播时详细讲解并演示，咱们先专注把体验课上好，跟着老师练笔最实在。开课前我会把链接和相关资料发群里，您安心准备纸笔，到时候一起来感受毛笔书写的乐趣就好啦🌼',tags:'260503'},
+{input:'拜拜',addTag:'否',reply:'别急着走呀～陈墨院长会手把手教您毛笔技法。这两天您先备支毛笔，跟着直播静心写两笔，比单看口诀收获大多啦！开课前我把链接发您🖌️',tags:'260503;重要'},
+{input:'早上好',addTag:'否',reply:'早上好呀！看到您这么有精神真开心 🌻。咱们后天 5 月 3 号晚上 6 点 50 分就要正式开课啦，陈墨院长会带大家体验毛笔书法的魅力。这两天您可以先准备一支毛笔和墨水，不用太专业，能写就行。期待和您一起在墨香中开启这段静心时光哦！',tags:'260503;重要'},
+{input:'那个学习资料怎么领啊？',addTag:'否',reply:'您别急，资料都在直播课里呢！陈墨院长会在课上直接演示并讲解用法，咱们先安心把体验课上好。开课前我会把链接和相关资料统一发到群里，您现在只需准备好纸笔，到时候跟着老师一起静心书写就好啦✏️',tags:'260503'},
+{input:'没有🙂‍↔️',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'我是去年十月初开始自学的什么都有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'没有好毛笔',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'[玫瑰]',addTag:'否',reply:'同学您好，我是陈小朵声乐体验课的班主任\\n咱们课程明天 5 月 2 号晚上 7 点准时开始，由陈小朵老师亲自授课。那这个上课时间您方便来上课吗？',tags:'260502;2026Y3'},
+{input:'老师，早上好！',addTag:'否',reply:'早上好呀！收到您的问候真开心🌼。咱们 5 月 3 号周日晚上 6 点 50 分就要正式开课啦，这是毛笔书法的体验课，陈墨院长会亲自带大家感受书写的乐趣。您这两天方便提前准备一下纸笔墨吗？不用太专业，能蘸墨书写就行，期待和您一起静心练字～',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;回复时段1'},
+{input:'收到，谢谢！',addTag:'是',reply:'',tags:'260501;没时间'},
+{input:'然后呢又说有什么送？',addTag:'否',reply:'您别急，咱们这是免费的体验课，主要就是为了让大家感受书法乐趣，不强制消费的🌼。陈墨院长偶尔会在直播里分享些练字小技巧或电子资料，具体以当晚课堂为准。您先把心放肚子里，5 月 3 号晚上 6 点 50 分准时来听就行，准备好纸笔，咱们一起静心写写字多好呀。',tags:'260503;有时间'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260503'},
+{input:'都有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'可以的',addTag:'是',reply:'',tags:'260503'},
+{input:'方便，',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'领资料',addTag:'否',reply:'您是想领书法学习资料吗？咱们5月3号开课当晚，陈墨院长会在直播里分享专属练习纸和笔法图解，直接发在直播间链接里～现在先安心准备一支毛笔、一张宣纸就行，零基础也能跟上！✨ 您手边有基础工具了吗？',tags:'260503'},
+{input:'不是要给资料的吗',addTag:'否',reply:'您别急，资料都在课程里呢！陈墨院长会在直播时逐步发放电子版字帖和技法图解，咱们5月3号开课当晚就能领到。现在先安心准备一支毛笔和墨水，跟着节奏走就行，保证您收获满满✏️',tags:'260503;重要;有时间'},
+{input:'888',addTag:'否',reply:'收到您的消息啦！咱们5 月3 号周日晚上6 点50 准时开课，是毛笔书法体验课，零基础也能轻松跟上。这两天您可以先准备一支毛笔和墨水，不用太专业，顺手就行～到时候我会在群里发链接提醒您进教室，期待和您一起静心练字呀✏️',tags:'260503'},
+{input:'谢谢！！',addTag:'否',reply:'不客气呀！您太礼貌啦🌼\\n\\n那您这两天可以先逛逛文具店，把毛笔和墨汁备齐。咱们这是毛笔书法课，工具准备好，5 月 3 号晚上跟着陈墨院长动笔时，手感会更好呢。\\n\\n有任何准备上的小问题，随时喊我，我一直都在',tags:'260503;重要;有时间;无工具;无工具'},
+{input:'888',addTag:'否',reply:'收到您的\\"888\\"啦，看来您准备好迎接好运了！🎉 5 月 3 号周日晚陈墨院长会带大家从零基础体验毛笔书法的魅力。这两天您可以先备支毛笔和宣纸，不用太专业，能写字就行。您手边有这些基础工具了吗？',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'笔墨纸砚都有',addTag:'是',reply:'',tags:'260503'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'是',reply:'',tags:'260503'},
+{input:'老师您好！[握手][微笑]',addTag:'否',reply:'您好呀！看到您的问候真开心🤗。咱们5月3号周日晚上6点50就正式开课啦，这是陈墨院长亲自带的毛笔书法体验课。您这两天可以提前备支毛笔，到时候跟着院长慢慢练，特别能静心。确认下那个时间您方便参加吗？',tags:'260503'},
+{input:'请发学习资料',addTag:'否',reply:'同学，咱们的学习资料和上课链接，都会在 5 月 3 号开课时，由我在群里统一发放给您哈📚。\\n\\n这次是陈墨院长亲自直播授课的毛笔书法体验课，资料配合着院长的示范看，理解会更透彻。您先安心准备一下纸笔墨，到时候跟着院长练就行，期待您准时来体验呀！',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具;国画'},
+{input:'能不能把老师的笔画资料先发一下',addTag:'否',reply:'同学，资料得配合陈墨院长的直播示范看才最有效呢，所以统一在 5 月 3 号上课时发给您📝。这两天您可以先备支毛笔，到时候跟着院长练，手感会更好！',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'是',reply:'',tags:'260503'},
+{input:'都有，平时正在练习',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'888',addTag:'否',reply:'收到您的\\"888\\"啦！看来您准备好迎接好运了🎉 咱们 5 月 3 号周日晚陈墨院长会带着大家从零基础开始体验毛笔书法的魅力。这两天您可以先备一支毛笔和几张纸，不用太专业，能写字就行～期待和您一起静心练字！',tags:'260503;有工具;有工具'},
+{input:'工具有[合十]',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'字帖在哪里领',addTag:'否',reply:'字帖资料会在开课后，我直接在群里发给大家的，您别着急✏️咱们 5 月 3 号晚上 6 点 50 第一节课开始时，我会把链接和资料都准备好。这两天您可以先备一支毛笔，不用太专业，能蘸墨书写就行，期待您跟着陈墨院长一起动笔呀！',tags:'260503;有时间'},
+{input:'什么是动笔',addTag:'否',reply:'您别误会，我说的“动笔”就是咱们拿起毛笔在纸上实际书写的意思哈。看您平时就在练习，那这次跟着陈墨院长的课学，肯定能纠正不少习惯，让字更漂亮。既然工具都齐了，那 5 月 3 号晚上咱们就准时见，期待看到您的进步！✏️',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'知道了[微笑]',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'可以',addTag:'否',reply:'太好了，收到您能准时来上课的消息真让人开心！\\n明天晚上七点咱们就正式开课啦。对了同学，在上课前想问问您，之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'我是零基础的，怕学不好',addTag:'否',reply:'您别担心，咱们课程就是专为零基础设计的✏️。陈墨院长会从握笔、坐姿这些最基础的教起，一步步带着您练。很多和您情况一样的同学，最后都写出了漂亮的作品呢。书法本来就能让人静心，您放松跟着学就好，5 月 3 号晚上见！',tags:'260503;有时间'},
+{input:'老师您好，方便感谢[爱心][合十][合十][咖啡][玫瑰][玫瑰]',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;没时间;有工具;有工具'},
+{input:'可以哦',addTag:'是',reply:'',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'方便',addTag:'否',reply:'收到啦！今晚 18:50 就是咱们第一节毛笔书法体验课，陈墨院长会亲自带大家感受笔墨的乐趣🎨。您提前备好纸笔，一会儿开课前我拉您进群发链接，咱们晚上见！',tags:'260501'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'非常感谢老师',addTag:'否',reply:'🥰 您太客气啦，能陪伴您一起学书法我也很开心。后天 5 月 3 号晚上 6 点 50 分咱们就正式开课了，这两天您可以先准备一支毛笔和墨汁，不用太专业，能写字就行。期待在直播间见到您，咱们一起静心练字，享受这段美好时光。',tags:'260503;重要;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'666',addTag:'否',reply:'收到您的 666 啦！看来您状态不错呢～咱们 5 月 3 号周日晚上 6 点 50 就正式开课了，这是毛笔书法体验课，零基础也能轻松跟上。这两天您可以先备支毛笔，到时候跟着陈墨院长一起静心练字，特别放松🌼',tags:'260503'},
+{input:'老师没问题！谢谢！',addTag:'否',reply:'您太客气啦，能帮到您我也很开心🥳。既然工具都齐备了，那咱们就安心等待 5 月 3 号晚上的开课。这两天您可以先放松心情，到时候跟着陈墨院长的节奏慢慢写，享受这段专注的书写时光就好。有任何小疑问随时找我哈。',tags:'260503;有时间'},
+{input:'[OK]',addTag:'否',reply:'太好了，收到您能准时来上课的消息真让人开心！\\n明天晚上七点咱们就正式开课啦。对了同学，在上课前想问问您，之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'好👌🏻',addTag:'是',reply:'',tags:'260503'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'早上好！',addTag:'否',reply:'🌞 早上好呀！看到您这么有精神真开心。咱们5月3号周日晚6点50分就要正式开课啦，这两天您可以先准备下毛笔和宣纸，不用太专业，家里有的先用着就行。期待在陈墨院长的课堂上见到您，一起感受毛笔书写的乐趣。',tags:'260503;重要'},
+{input:'666',addTag:'否',reply:'🤗 收到您的 666 啦！看来您心情不错呀。咱们 5 月 3 号晚 6 点 50 的毛笔书法体验课马上就开始咯，陈墨院长会带大家从零基础入门。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。期待在课堂上见到您，一起静心写写字吧',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'666',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'666',addTag:'否',reply:'收到您的 666 啦，看来您热情满满呀！咱们 5 月 3 号周日晚上 6 点 50 就正式开课了，这是毛笔书法体验课，零基础也能轻松跟上。这两天您可以先准备下纸笔墨，不用太专业，顺手就行。期待您在课堂上感受书写的静心与乐趣，到时候我发链接给您哈✏️',tags:'260503;有时间'},
+{input:'666',addTag:'否',reply:'🌟 收到您的信号啦！看来您已经准备好迎接书法之旅了。5 月 3 号周日晚上 6 点 50 分，咱们在直播间见，我会提前把上课链接发给您。这两天您可以先找支毛笔和墨汁，不用太专业，能写字就行，期待和您一起静心练字哦',tags:'260503;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便。',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'666',addTag:'否',reply:'🎉 收到您的信号啦！看来您已经准备好迎接书法之旅了 5 月 3 号周日晚上 6 点 50 分，陈墨院长会带大家体验毛笔书法的魅力。这两天您可以先找支毛笔试试手感，期待和您一起静心练字哦',tags:'260503;有时间'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'清禾老师：早上好。[呲牙][呲牙]',addTag:'否',reply:'',tags:'唱歌讲师号;251014;已报名;付费学员'},
+{input:'什么时候开始上课啊？老师',addTag:'否',reply:'',tags:'260414;有时间;有工具;有工具;出勤A;作业1;出勤B;出勤C;出勤D;出勤G;出勤E;出勤F'},
+{input:'老师早上好，谢谢您！辛苦了！',addTag:'否',reply:'早上好呀！收到您的问候心里暖暖的🌼。咱们后天 5 月 3 号晚上 6 点 50 分就要正式开课啦，这两天您可以先准备下毛笔和墨汁。跟着陈墨院长练字能让人心静下来，特别期待看到您提笔的样子，有任何问题随时找我哦！',tags:'260503;重要;有时间'},
+{input:'老师辛苦了。[玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰]',addTag:'否',reply:'',tags:'唱歌讲师号;251014;已报名;付费学员'},
+{input:'五一节快乐。[烟花][烟花][烟花][烟花][烟花][烟花][烟花][烟花][烟花][烟花][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][玫瑰][爆竹][爆竹][爆竹][爆竹][爆竹][爆竹][爆竹][爆竹][爆竹][爆竹][太阳][太阳][太阳][太阳][太阳][太阳][太阳][太阳][太阳][太阳]',addTag:'否',reply:'',tags:'唱歌讲师号;251014;已报名;付费学员'},
+{input:'666',addTag:'否',reply:'收到您的 666 啦，感受到您满满的热情！咱们 5 月 3 号周日晚上 6 点 50 就正式开课了，这是毛笔书法体验课，零基础也能轻松跟上。这两天您可以先准备下纸笔墨，不用太专业，顺手就行。期待您在课堂上感受书写的静心与乐趣，到时候我发链接给您哈✏️',tags:'260503;有时间'},
+{input:'好的谢谢',addTag:'是',reply:'',tags:'260503'},
+{input:'行！',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'好的老师，收到[抱拳][抱拳]',addTag:'否',reply:'收到啦！您太客气了🤗。那咱们就安心等到开课，跟着陈墨院长一起提笔练字。这两天您可以先备好文房四宝，哪怕是最基础的毛笔和墨汁也行。书法能让人心静，特别期待您在课堂上展现风采，有任何准备上的问题随时喊我哦！',tags:'260503;重要;有时间'},
+{input:'老师早上好，嗯，谢谢你的关心。我真的没有时间，家里外头孩子很多事情，所以说谢谢老师。',addTag:'否',reply:'',tags:'260422;赠品单;待填地址'},
+{input:'感谢老师收到[爱心][拥抱][咖啡][合十][合十][玫瑰][玫瑰]',addTag:'否',reply:'您太客气啦，看到您这么热情我也很开心！🌼 后天 5 月 3 号晚上 6 点 50 分咱们就正式开课了，这两天您可以先准备一支毛笔和墨汁，不用太专业，能写字就行。期待在直播间见到您，咱们一起静心练字，享受这段美好时光。',tags:'260503;重要;有时间'},
+{input:'老师好，我晚上不能坚持听课了，所以退群吧。顺祝五一节快乐！',addTag:'否',reply:'收到您的祝福，也祝您五一快乐呀！🌼 今晚是陈墨院长的直播首秀，很多原本犹豫的同学试了一节都觉得特别静心放松。您看要不先把工具备好，有空就来听一节体验一下？若实在来不了，记得在直播间停留 10 分钟以上，系统才能生成回放供您后续观看哦。',tags:'260501;有时间;有工具;有工具'},
+{input:'收到。谢谢🙏',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'笔墨纸砚都有，就是不会写字[呲牙][抱拳]',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'[OK]',addTag:'否',reply:'收到啦！那您就安心等着，5 月 3 号周日晚上 6 点 50 分，我会准时在群里发上课链接给您📝。这两天您可以先把笔墨纸砚找出来放好，到时候跟着陈墨院长直接动笔练，咱们一起轻松开启书法之旅～',tags:'260503;有时间;有工具;有工具'},
+{input:'已俱备齐全，期待老师讲课。',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'老师你好！',addTag:'否',reply:'您好呀！收到您的问候真开心～咱们5月3号周日晚6点50分准时开课，是陈墨院长亲自讲授的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。期待和您一起静心练字，感受笔墨乐趣✏️',tags:'260503;重要'},
+{input:'我已经退群了，今晚看看有没有时间吧，尽量听听课。谢谢老师！',addTag:'否',reply:'您太客气啦！能来听听就是给自己一段放松时光🌼 我稍后把入口发您。哪怕只听一会儿，对用笔也会有新感悟，期待在直播间见到您哦！',tags:'260501;有时间;有工具;有工具'},
+{input:'{"messageType":"voice","messageTranscript":"我现在上班了，哎呀，白天晚上都要上班，很忙的，不好意思，没时间看老师的衔接，还请老师多多包涵啊。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/e753b159d43658dbcf2791e843e',addTag:'否',reply:'',tags:'260424;作业1;作业2;作业3;完课8'},
+{input:'{"messageType":"voice","messageTranscript":"老师早上好，我看明白了。五月三日、六点五十分，我们不见不散。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YinJingTing_5_yinjingting_1777589061644.mp3"}',addTag:'否',reply:'早上好呀！看到您这么期待，我心里真高兴🌻。那咱们就约好 5 月 3 号晚上 6 点 50 分不见不散！这两天您可以先试着拿毛笔在纸上随意画几笔，找找手感，跟着陈墨院长学书法特别能静心。开课前我会把教室入口发给您，有任何小疑问随时喊我哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'没',addTag:'是',reply:'不认识没关系呀，小朵老师深耕歌唱行业 30 多年，是北京奥运会《我和你》原唱，也是中国歌剧舞剧院首席女高音和中国音乐学院博士，常受邀在央视演出。对了同学，您之前接触过唱歌吗？',tags:'260502'},
+{input:'5月3日6:50分，不见不散[抱拳][抱拳][呲牙][呲牙]',addTag:'否',reply:'收到您的约定啦！看到您这么准时，我特别放心👍。那咱们就 5 月 3 号晚上见！这两天您可以先用毛笔在纸上随意划划，找找手感，跟着陈墨院长学书法特别能让人静心。开课前我会把教室链接发给您，有任何小问题随时喊我哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'好的老师[抱拳][抱拳][抱拳]',addTag:'否',reply:'',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'好的',addTag:'否',reply:'收到啦！那您这两天可以先暖暖手，找找书写感觉～陈墨院长的课特别注重基础笔法，很多零基础同学第一节课就能写出漂亮的线条呢✏️ 5月3号晚上6点50分，咱们准时直播间见，期待看到您的第一幅作品哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'谢谢',addTag:'否',reply:'不客气呀，能帮到您我也很开心！🤗 还有两天咱们就正式开课啦，5 月 3 号晚上 6 点 50 分，记得预留出时间哦。这两天您可以先找找家里的毛笔和宣纸，没有的话普通白纸也能先练练手感，期待在课堂上见到您！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便开通。',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具;回复时段1'},
+{input:'谢谢老师的鼓励[玫瑰]',addTag:'否',reply:'🥰 您太客气啦！看到您这么认可，老师心里暖暖的。昨晚的猫咪线条练得顺手吗？有没有觉得哪里难下笔？今晚陈墨老师要教《桂林山水》的皴法了，特别精彩！咱们一起挑战新技法，期待您在直播间的大作哦！',tags:'260429;有时间;赠品单;已领取赠品;猫-毛画的黑不飘逸'},
+{input:'《月下独酌·其一》\n        唐·李白\n     🌸🌸🌸🌸\n     花间一壶酒，\n     独酌无相亲。\n     举杯邀明月，\n     对影成三人。\n     月既不解饮，\n     影徒随我身。\n     暂伴月将影，\n     行乐须及春。\n     我歌月徘徊，\n     我舞影零乱。\n     醒时同交欢，\n     醉后各分散。\n     永结无情游，\n     相期邈云汉。',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'直播课吗',addTag:'否',reply:'是的呢，咱们是连续 6 天的线上直播课，由陈墨院长亲自授课。每晚 6 点 50 开始，大概 90 分钟。直播互动氛围特别好，能跟着老师一起动笔，感受毛笔在纸上运行的乐趣，很解压的✏️开课前我会把入口发给您，您放心哈。',tags:'260503'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'否',reply:'同学早上好呀，我是陈小朵声乐体验课的班主任\\n明天 5 月 2 号开始，我们将连续六天在晚上 7 点带您学习发声和演唱技巧。那这个上课时间您方便来上课吗？',tags:'260502'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'你好！',addTag:'否',reply:'您好呀！看到您回复真开心～咱们毛笔书法体验课是 5 月 3 号周日晚上 6 点 50 分开课，连续 6 晚由陈墨院长亲自带大家入门。这两天您可以先准备支毛笔，不用太专业，能蘸墨就行。到时候我拉您进群发链接，您看这时间方便安排吗？🌼',tags:'260503'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;国画;回复时段2'},
+{input:'书法的群叫什么名儿？我找一下',addTag:'否',reply:'您别急，咱们正式的学习群我会在开课前拉您进去，到时候群里会有明确的名字和上课链接📍。这两天您先安心准备纸墨，等群建好了，我第一时间邀请您，保证您能顺利找到组织！',tags:'260503;有时间;有工具;有工具'},
+{input:'好的谢谢',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'好，谢谢老师[合十]',addTag:'否',reply:'您太客气啦！🤝 这两天您可以先试着用现有的工具随意写写，找找手感。陈墨院长的课特别注重基础笔法，哪怕零基础也能轻松跟上。咱们 5 月 3 号晚上见，期待看到您的第一幅作品哦！',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'好的！',addTag:'是',reply:'',tags:'260503'},
+{input:'谢谢老师',addTag:'否',reply:'不客气呀～这两天您可以先准备下毛笔和墨汁，不用太专业，能写字就行。5 月 3 号晚 6 点 50 分陈墨院长会带大家体验毛笔书法的魅力，练字特别能静心，期待和您一起提笔书写 🖌️',tags:'260503;重要;有时间'},
+{input:'[合十]',addTag:'是',reply:'',tags:'260503'},
+{input:'[合十][爱心][强]',addTag:'是',reply:'同学太客气啦，看到您这么支持真开心！\\n零基础完全不用担心，小朵老师会把音准、气息这些基础拆碎了教，只要跟着练，进步会比您想的快很多哈。对了，好奇问问您现在是上班还是退休呀？',tags:'260502;激活;激活;待介绍老师'},
+{input:'[OK]',addTag:'否',reply:'收到啦，看到您确认我就放心了✌️ 还有两天就开课，您可以先提前准备一支毛笔和墨汁，家里普通的宣纸或者旧报纸也能练。这两天有任何准备上的小问题随时找我，咱们一起轻松迎接陈墨院长的直播课！',tags:'260503;有时间'},
+{input:'嗯好的',addTag:'否',reply:'收到啦～那您先忙，工具不着急，简单的毛笔墨汁就行。5 月 3 号晚陈墨院长会带大家体验毛笔书法的静心乐趣，开课前我会把链接发给您，期待和您一起提笔 🖌️',tags:'260503;重要;有时间'},
+{input:'我去准备',addTag:'否',reply:'您太积极啦！其实工具不挑，超市或文具店买支普通毛笔、墨汁和书法纸就行，没有专用纸先用宣纸替代也完全没问题👍。哪怕工具没齐，5 月 3 号晚上先来听陈墨院长讲课，光看示范也能有所收获呢。准备好随时跟我说哈～',tags:'260503;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'[OK]',addTag:'否',reply:'收到啦，看到您确认我就放心了✌️ 开课前两天正好可以提前把家里的毛笔、墨汁和宣纸找出来备着，不用太专业，能写字就行。到时我会把直播链接发给您，咱们跟着陈墨院长一起静心练字，期待和您见面！',tags:'260503;有时间'},
+{input:'有的！',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'无特殊情况就会依时听课，谢谢',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260504;已填地址'},
+{input:'字写的太好了',addTag:'否',reply:'您过奖啦！其实呀，咱们这次体验课就是带您从零开始感受毛笔书法的魅力。陈墨院长讲课特别细致，很多零基础的同学上完第一节课都能写出漂亮的笔画呢。5 月 3 号晚上 6 点 50 分准时开课，您记得提前准备好纸笔，跟着院长慢慢练，也能写出一手好字的✏️',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'收到[玫瑰]',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'[好的]',addTag:'否',reply:'收到您的确认啦！那老师就放心帮您登记好名额了。这两天您可以先准备一支毛笔和一点墨汁，咱们是毛笔书法课，工具很简单，家里有的话直接用上就行👍',tags:'260503;有时间'},
+{input:'雯雯老师：方便，可以回放吗？谢谢你！',addTag:'否',reply:'有回放的哈~不过建议您今晚尽量来直播间，因为需要停留满 10 分钟系统才能自动生成回放。这是陈墨院长精心准备的毛笔书法体验课，现场跟着练笔感更好，也能更静心🌼 您今晚准备好纸笔，咱们准时见！',tags:'260501;2026Y2;国画'},
+{input:'有，毛笔、水写布',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'{"messageType":"voice","messageTranscript":"好的好的，谢谢老师。我今年七十多岁了，随便学习一点修修身心。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LuYingNan_3_luyingnan_1777589963358.mp3"}',addTag:'否',reply:'✌️ 您这心态特别好书法本来就是修身养性的，很多七十多岁的同学都在学，大家聚在一起写字特别静心。陈墨院长讲课通俗易懂，零基础也能跟上。您就放宽心，3 号晚上跟着节奏慢慢写，享受这段专注的时光就好啦',tags:'260503;有时间;有工具;有工具'},
+{input:'嗯。小乔老师，嗯。我是许玲。我早就想进这个班了，但是。哎',addTag:'否',reply:'',tags:'260424;2026Y2;完课5;完课6;完课8'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'{"messageType":"voice","messageTranscript":"好的，好的，谢谢老师。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LuYingNan_3_luyingnan_1777590033473.mp3"}',addTag:'否',reply:'✌️ 您太客气啦 能静下心来写字就是最大的收获。很多像您这个年纪的同学，刚开始也只想随便练练，结果发现手眼协调变好了，心情也更舒畅。咱们跟着陈墨院长的节奏，轻松享受这段专注时光就好，3 号晚上见哦',tags:'260503;有时间;有工具;有工具'},
+{input:'学楷字吗？',addTag:'否',reply:'学的哈，咱们这次体验课就是从楷书入门开始的✏️。陈墨院长会带大家从最基础的笔法学起，像颜体、欧体这些经典楷书都会涉及到。您正好趁这两天把毛笔和水写布准备好，5 月 3 号晚上跟着院长一起动笔试试，感受一下楷书的韵味～',tags:'260503;有时间;有工具;有工具'},
+{input:'老师好，请问你们一共有几位老师呀？',addTag:'否',reply:'🤗 同学好呀！咱们主讲是陈墨院长，还有玄墨、承古等几位老师共同教研呢。不过日常答疑和陪伴您学习的，主要是我雯雯老师哈。待会儿 6 点 50 分第一节课就要开始啦，准备好纸笔，跟着院长动笔写，享受这段静心时光哦',tags:'260501;有时间'},
+{input:'小乔老师：我可以和您私聊吗？',addTag:'否',reply:'',tags:'260424;2026Y2;完课5;完课6;完课8'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'是',reply:'',tags:'260503'},
+{input:'可以的',addTag:'否',reply:'太好了，收到您的确认啦！那 5 月 3 号周日晚上 6 点 50 分，我会准时把上课链接发给您。这是毛笔书法体验课，您提前准备一支毛笔和墨水就行，不用太专业，咱们跟着陈墨院长轻松入门就好🌼',tags:'260503;有时间'},
+{input:'好的，谢谢你！',addTag:'是',reply:'',tags:'260501;2026Y2;国画'},
+{input:'想学行楷、行草',addTag:'否',reply:'🌼 您想学的行楷和行草，其实都是在楷书基础上延伸的。陈墨院长这次课会先带大家把楷书笔法根基打牢，有了这个底子，后面学行书就特别顺手啦。5 月 3 号晚上您先来听听院长讲基础，感受一下毛笔在纸上的流动感',tags:'260503;有时间;有工具;有工具'},
+{input:'小月是老师吗？',addTag:'否',reply:'小月不是咱们的老师哦，您要注意辨别，别被陌生人误导啦。咱们主讲是陈墨院长，还有玄墨、承古等几位老师协助教学。今晚 6 点 50 分第一节课就要开始咯，准备好纸笔，跟着院长一起静心书写吧✏️',tags:'260501;有时间'},
+{input:'[强][强][强]',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'早上好',addTag:'否',reply:'早上好呀！看到您精神这么好真开心 🌞。咱们 5 月 3 号就要正式开课啦，这两天您可以先备一支毛笔，不用太专业，普通的就行。跟着陈墨院长练字特别能静心，期待和您一起感受笔墨的乐趣！',tags:'260503;重要'},
+{input:'我有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'老师，早上好',addTag:'否',reply:'早上好呀！看到您这么有精神真开心 🌞。\\n\\n咱们 5 月 3 号周日晚上的书法体验课马上要开始啦，这是陈墨院长亲自带的毛笔书法课，零基础也能轻松跟上。这两天您可以先准备一支毛笔和墨水，不用太专业，顺手就行。\\n\\n期待和您一起在墨香里静下心，享受书写的乐趣 。',tags:'260503;重要'},
+{input:'地址已经发给你了',addTag:'否',reply:'📦 收到啦！您的地址信息我已经登记好，工具包马上安排发货，预计两三天就能到您手中。您收到工具后先随便涂鸦试试手感，到时候跟着陈墨院长慢慢学，享受这段静心时光就好啦',tags:'260504;赠品单;已填地址'},
+{input:'学习 资料',addTag:'否',reply:'您是想提前准备学习资料吗？别急，咱们这是毛笔书法体验课，主要跟着陈墨院长直播练手。📚开课前我会把链接发给您，您只需备好纸笔墨，哪怕用普通毛毡垫着也能写。5 月 3 号晚上见，先放松心态来体验就好啦！',tags:'260503'},
+{input:'我先听一下直播间老师讲课',addTag:'否',reply:'没问题呀，咱们这次就是直播体验课，专门听陈墨院长讲课的 🎨。院长是及象书画院的创始人，很多零基础的同学听完都觉得特别受益，不仅能学到用笔技巧，还能静心放松呢。5 月 3 号晚上我会把入口发给您，提前准备好纸笔就能跟着练啦！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'山西省太原市迎泽区青年路东陵里6号院化验3号楼\n王伟\n电话13453105639',addTag:'否',reply:'收到啦王伟同学！您的收货地址信息我已经完整记录下来了📝。我们会尽快为您安排发货，请您耐心等待哦。这几天您可以先整理一下家里的笔墨纸砚，5 月 4 号晚上跟着陈墨院长体验国画的乐趣，期待看到您的作品！',tags:'260504;赠品单;已填地址'},
+{input:'收到谢谢[玫瑰][咖啡]',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'[握手]',addTag:'是',reply:'',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'{"messageType":"video","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/BiXue_3_bixue_1777590341705.mp4"}',addTag:'否',reply:'收到您的消息啦！陈墨院长会亲自带大家体验毛笔书法的魅力，哪怕零基础也能轻松跟上。您记得提前准备好毛笔和墨汁，咱们一起静心练字，享受这段美好时光🎨',tags:'260501;有时间'},
+{input:'怎么收费',addTag:'否',reply:'您放心，这次是陈墨院长亲授的免费体验课，全程不收取任何费用呢！👍\\n\\n很多同学都担心有隐形消费，其实咱们就是纯粹想带大家感受毛笔书法的魅力，静心又解压。您只要准备好纸笔墨，跟着院长轻松学就行。5 月 3 号晚上开课，我到时候把链接发给您哈。',tags:'260503;重要'},
+{input:'[握手]',addTag:'否',reply:'收到您的握手啦，心里暖暖的！🤝\\n\\n咱们5月3号晚上6点50的毛笔书法体验课马上就开始咯。这两天您可以先提前把家里的毛笔、墨汁和宣纸找出来备着，不用太专业，能写字就行。\\n\\n陈墨院长会亲自带大家从零基础入门，到时候我会在群里发链接提醒您，期待和您一起静心练字呀！',tags:'260503;有时间'},
+{input:'六天学什么',addTag:'否',reply:'这六天咱们主要跟着陈墨院长从楷书入门，一步步学到行草呢。每天会掌握一个核心技法，还能亲手写出《吉日》《天道》《福由心生》等六幅完整作品📝。\\n\\n不仅能学会正确的握笔运笔，更能让您在笔墨间静下心来，感受专注书写的乐趣。两天后正式开课，期待看到您的第一幅习作呀！',tags:'260503;重要'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LiuShuMin_liushumin02_1777590374225.jpg"}',addTag:'否',reply:'收到同学的作业啦！老师先仔细看看，稍后给您做详细的点评指导。画得很用心哦！\\r\\n{\\"messageType\\": \\"review\\", \\"messageDelay\\": \\"0\\", \\"messageContent\\": \\"同学您好，看到这幅《猫咪戏蝶》，老师心里真是乐开了花！您笔下的这只小猫太有灵气了，特别是那双圆溜溜的金黄色大眼睛，画得炯炯有神，仿佛真的在专注地盯着右上角的蝴蝶看呢。您在处理猫毛时，墨色的浓淡变化运用得很棒，笔触既有力度又很细腻，把猫咪那种毛茸茸、憨态可掬的感觉表现得淋漓尽致。旁边那只红色的蝴蝶点缀得恰到好处，色彩鲜艳，一下子就让画面生动了起来，充满了生活情趣。整幅作品构图饱满，意境温馨，能感受到您作画时的快乐心情。非常有天赋，请继续保持这份热情，期待您下一幅更精彩的作品！\\"}',tags:'260429;赠品单;已填地址;有时间;梅-树干上雪没有留下来;猫-毛画的黑不飘逸'},
+{input:'老师您好，相信科技，一点不假，这几天外面有很多打电话的，我也不知道什么原因，严重影响工作，请老师见谅，不要再废[爱心]思',addTag:'否',reply:'',tags:'260420;回复时段1;回复时段2;作业2;作业3'},
+{input:'[握手]',addTag:'是',reply:'',tags:'260503'},
+{input:'体验一下',addTag:'否',reply:'太好了！您愿意来体验，我就放心啦～🥳 这次是陈墨院长亲自带的毛笔书法课，从最基础的握笔开始教，零基础也能轻松跟上。5 月 3 号晚上开课，我到时候把链接发您，咱们一起静下心来写写字，就当给自己留段放松时光～',tags:'260503;重要'},
+{input:'可以',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[抱拳][抱拳][抱拳][OK]',addTag:'否',reply:'🤗 收到您的心意啦 看来工具都准备得差不多咯？其实普通毛笔和墨汁就能开始，不用太讲究。这两天您可以先试试手，感受下笔尖在纸上的触感，很解压的。5 月 3 号晚上 6 点 50 分，陈墨院长会带大家正式体验，到时候我发链接给您，咱们一起静心写两笔',tags:'260503;有时间'},
+{input:'{"messageType":"voice","messageTranscript":"老师早上好，这是我的那个书法课吗？嗯，我的那个书法课不知道什么时候开课，我看不到系统里面嗯，将我转刻了。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/YuanLei_5_yuanlei04_177',addTag:'否',reply:'🌼 早上好呀！今天是 5 月 1 号，咱们书法体验课就是今晚 6 点 50 分准时开始哦。系统显示可能有延迟，您别着急，今晚开课前我会直接把直播链接发给您，到时候点链接就能进教室跟着陈墨院长练毛笔字啦。您先把纸笔准备好，今晚咱们一起静心写两笔',tags:'260501;2026Y2;有时间'},
+{input:'有',addTag:'否',reply:'太好了，工具齐全咱们就能跟着陈墨院长动笔练啦✏️其实普通毛笔和墨汁就够用，不用特意买贵的。这两天您可以先试试手感，找找写字时静心专注的感觉。5 月 3 号晚上 6 点 50 分开课，到时候我发链接给您，咱们一起享受这段书写时光～',tags:'260503;有时间'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/749351ff3f26674863561b8343345f72_803a343b-c551-4fa5-acd4-ac570ad659d5.jpg"}',addTag:'否',reply:'',tags:'260424;有时间;回复时段2;二线城市;三线及其它城市;作业1;回复时段6;完课1;完课2;作业2;回复时段8;完课3;完课4;作业3;回复时段12;完课5;完课6;完课8;完课9;完课10;完课11;完课12'},
+{input:'{"messageType":"voice","messageTranscript":"哎，小强老师早上好。是的是的，就是在少工老师昨天晚上的课了。嗯，买的那个叫那个牌子叫什么联想吗？是什么？但我不知道，我就好在就来了，我就是说是这个地址。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501',addTag:'否',reply:'',tags:'赠品单;已领取赠品;回复时段11;2025Y11'},
+{input:'[抱拳]',addTag:'否',reply:'🤗 收到您的心意啦这两天您可以先准备一下毛笔和纸张，不用太专业，普通的就行。5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您，咱们跟着陈墨院长一起体验毛笔书法的魅力，期待和您见面哦',tags:'260503;有时间'},
+{input:'老师早上好',addTag:'否',reply:'早上好呀！今天就是咱们书法课第一天啦🌼。陈墨院长会带着大家从基础握笔教起，您手边备好毛笔和纸就行。白天忙您的，晚上有空随时进来体验这段静心时光哈～',tags:'260501;2026Y4;无工具;无工具;有时间'},
+{input:'有的',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'好的',addTag:'是',reply:'',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503'},
+{input:'{"messageType":"voice","messageTranscript":"小强老师，我谢谢你啊，谢谢你每次都给我发信息。现在因为有好多事情，有时候没有听听不上课在外地，所以这昨前天回来了，回来我们一共发的信息，我就能按时能我们争取按时听课。但是现在七点钟我们这个地方太早了，七点钟在外面外面活动的，我们到十点九点半才天黑。","messageContent":"http://dragn',addTag:'否',reply:'',tags:'赠品单;已领取赠品;回复时段11;2025Y11'},
+{input:'收到，谢谢老师[玫瑰][玫瑰][玫瑰]',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'🌺让快樂，天天出现。💐 让幸福，永远不变。🌼🌺🌿让惦记，每天不断。让健康，一生相伴。\n㊗️老师“五一“劳动节快乐！[微笑][咖啡][玫瑰][握手]',addTag:'否',reply:'',tags:'视频待回复;待介绍老师;未破冰;激活;待发上课链接'},
+{input:'{"messageType":"voice","messageTranscript":"所以我们的时间跟你们的时间有两个小时的时差。你们七点钟的话，相当于我们这儿五点钟讲课。有时候就不能按时参加。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/4fdb055389edbcb24c15e',addTag:'否',reply:'',tags:'赠品单;已领取赠品;回复时段11;2025Y11'},
+{input:'{"messageType":"voice","messageTranscript":"祝你五一劳动节，快乐工作顺利嗯，身体健康每天都开心快乐。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/3b7a9e2d275b3bfb6226e38235ded4c7_a02f5f1c-5069-',addTag:'否',reply:'',tags:'赠品单;已领取赠品;回复时段11;2025Y11'},
+{input:'老师好，我方便。谢谢您关照！',addTag:'是',reply:'',tags:'260503'},
+{input:'一次上多久',addTag:'否',reply:'咱们不是抖音直播哦，是在微信里发链接上课的。每晚大概 90 分钟，时间很充裕，能让您静下心来慢慢练。这样既能学透技法，又不会觉得太累，刚好够您沉浸在这段专注时光里🌼。',tags:'260503;重要;有时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'好的谢谢',addTag:'否',reply:'您太客气啦～那这两天您可以先准备下毛笔和墨汁，不用太专业，能写字就行。5 月 3 号晚上 6 点 50 开课，我会提前把链接发给您，咱们一起跟着陈墨院长体验毛笔书法的乐趣🌼',tags:'260503;有时间'},
+{input:'好！没问题',addTag:'否',reply:'收到您的回复啦！那您先忙，5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您。这两天您可以先找支毛笔备着，咱们是毛笔书法课，工具简单就好。期待和您一起静心练字🌼',tags:'260503;有时间'},
+{input:'有',addTag:'否',reply:'太好了！那您这两天可以提前准备一下：普通毛笔、墨汁和书法纸，超市文具店都能买到，不用太专业✏️\\n\\n5 月 3 号晚 6 点 50 开课，到时候我会在群里发链接，咱们跟着陈墨院长一起动笔体验，静心又放松～',tags:'260503;有时间'},
+{input:'都有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'好',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'老师好！',addTag:'否',reply:'同学好呀，我是您的班主任清禾老师\\n这次课程由陈小朵博士亲自授课，从发声、气息等五大维度带您掌握多种演唱技巧。那明天晚上 19 点开始的上课时间您方便来上课吗？',tags:'260502'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'好的',addTag:'否',reply:'太好了，知道您能准时来上课我真开心！明天晚上七点咱们就正式开课啦。对了同学，在上课前想问问您，之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'好的今去把工具置好，晚上见[咖啡]',addTag:'是',reply:'',tags:'260501;2026Y4;无工具;无工具;有时间'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'好好，有请您放心！',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'没有收到书法口决资料吗？',addTag:'否',reply:'您别急，书法口诀资料会在 5 月 3 号正式开课时，由陈墨院长在直播间统一发放并讲解呢 📚。这两天您可以先静心准备一下纸笔，跟着院长的节奏走。开课前我会把上课链接发给您，留意消息就好啦！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'方便学习',addTag:'是',reply:'',tags:'260503'},
+{input:'1',addTag:'否',reply:'您好呀！收到您的消息啦，咱们 5 月 3 号晚上 6 点 50 分准时开课，是毛笔书法体验课哦。这两天您可以先准备一支毛笔和墨水，不用太专业，能写字就行。很多零基础的同学都说，提笔那一刻心就静下来了，特别放松 🌼。您看这个时间方便参加吗？',tags:'260503;重要'},
+{input:'曾树文 13387389667 湖南省娄底市娄星区 长青街38号中国建设银行娄底市分行金库',addTag:'是',reply:'',tags:'260504;赠品单'},
+{input:'有，不多',addTag:'是',reply:'同学，知道您认识陈老师太开心啦！她深耕歌唱行业 30 多年\\n是北京奥运会《我和你》原唱，也是中国歌剧舞剧院首席女高音和中国音乐学院博士。那想问问您，之前自己接触过唱歌吗？',tags:'260502'},
+{input:'6',addTag:'否',reply:'收到啦！这就帮您登记好，确保您能顺利进班学习 📝。\\n\\n咱们是 5 月 3 号周日晚上 6 点 50 分开课，连续六天。这两天您可以先准备一支毛笔和墨水，不用太专业，顺手就行。开课前我会把上课链接发给您，到时候跟着陈墨院长一起体验毛笔书法的乐趣就好啦！',tags:'260503;重要'},
+{input:'可以的',addTag:'是',reply:'',tags:'260503'},
+{input:'好好，顺祝您万事如愿，事业腾飞！',addTag:'否',reply:'借您吉言，心里暖暖的🥰！那咱们就约定 5 月 3 号晚上 6 点 50 分见，到时候我发链接给您。这两天您安心忙您的，记得把毛笔备在桌边，咱们一起静心写写字，享受这段慢时光。',tags:'260503;有时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'能',addTag:'否',reply:'太好了，收到您能准时来上课的消息真让人开心！\\n明天晚上七点咱们就正式开启陈小朵老师的声乐体验课啦。对了同学，在开课之前，您之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'[抱拳][抱拳][抱拳]',addTag:'否',reply:'',tags:'260501;有时间;回复时段2'},
+{input:'接触过',addTag:'是',reply:'同学，有唱歌基础真的太棒了！很多人连开口都不敢，您能自信开唱就已经超过大部分学员了。那您目前有没有特别想解决的唱歌问题呢？比如跑调、高音上不去或者气息不足之类的？',tags:'260502;待介绍老师'},
+{input:'工具全',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'收货地址:河北省石家庄市晋州市时代新城南门对面菜鸟驿站\n亚平收\n13613119981',addTag:'是',reply:'地址收到啦同学！这就马不停蹄去安排发货，坐等快递飞奔到你手中吧！\\n\\n同学，有时间来上课吗？',tags:'260502;2024Y12END;赠品单;待介绍老师'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/LuYingNan_2_luyingnan_1777591014138.jpg"}',addTag:'否',reply:'🥳 收到您的图片啦，看您准备得这么充分，真让人放心。后天晚上六点五十，陈墨院长会亲自带大家从零基础开始体验毛笔书法的魅力。这两天您可以先试着握握笔找找感觉，到时候跟着院长的节奏慢慢写就行，咱们一起享受这段静心时光',tags:'260503;有时间;有工具;有工具'},
+{input:'想',addTag:'是',reply:'同学，您是想解决唱歌问题对吧？别担心～\\n咱们课上小朵老师会带着大家一步步把音准、气息这些基础练扎实，方向对了进步特别快。那想问问您，现在是上班还是退休呀？',tags:'260502;待介绍老师;待发文件'},
+{input:'有一点基础',addTag:'否',reply:'有点基础那您学起来会更轻松呢！很多同学刚开始也觉得自己会一点，但跟着陈墨院长系统学习后，才发现以前很多用笔细节都没注意到，进步特别快🌟。咱们这次是毛笔书法体验课，正好帮您把基础打得更扎实，5 月 3 号晚上六点五十开课，期待看到您的作品呀！',tags:'260503;有时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'谢谢',addTag:'否',reply:'不客气呀！时间灵活方便照顾生活，也能留点时间给自己\\n接下来的体验课，同学记得提前安排好时间，尽量按时来上课哦。',tags:'260502;待介绍老师;待发文件;未破冰;激活;待发上课链接'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'好啊！我有基础，我期待您！[握手]',addTag:'否',reply:'有基础那您学起来肯定更顺手呀！陈墨院长讲课深入浅出，很多有功底的同学都说能帮他突破瓶颈呢。咱们 5 月 3 号晚上见，期待看到您的作品🌟',tags:'260503;有时间;有工具;有工具'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'{"messageType":"voice","messageTranscript":"谢谢老师，谢谢老师。我最喜欢书法的，谢谢，我一定准时听课。您放心，节日快乐，一切开心。","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/BiXue_3_bixue_1777591136982.mp3"',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具;回复时段2'},
+{input:'谢谢',addTag:'否',reply:'🥰 不客气呀，能帮到您我也很开心 这两天您可以先准备下毛笔和宣纸，不用太专业，顺手就行。5 月 3 号晚上 6 点 50 分，我会准时在群里发上课链接，咱们跟着陈墨院长一起感受毛笔书法的魅力，期待您来哦',tags:'260503;有时间'},
+{input:'好，顺祝您家庭幸福，事业腾飞！',addTag:'否',reply:'',tags:'260503;有时间;有工具;有工具'},
+{input:'收到',addTag:'是',reply:'',tags:'260501'},
+{input:'小乔老师，早上好！五一节快乐！[玫瑰]',addTag:'否',reply:'',tags:'10到课;23到课;28到课;29到课;1到课;2025Y12'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'[破涕为笑][破涕为笑]',addTag:'否',reply:'看您笑得这么开心，是不是对今晚的课充满期待啦？😄今天是5月1号第一天开课，晚上6点50分陈墨院长会亲自直播带大家体验毛笔书法。工具简单准备下就行，主要是来感受书写的乐趣，放松一下心情。今晚记得留意群消息，我准时带您进教室哦！',tags:'260501;没时间'},
+{input:'及象书法-小刘老师早上好！ 本人下个月要到加拿大去一年所以没报名参加参加。请谅解。下次有机会一定来参加书法学习。',addTag:'否',reply:'',tags:'260418;已填地址;已领取赠品;有时间'},
+{input:'尽量，时间不定',addTag:'否',reply:'您说时间不定也没关系，很多同学刚开始都这样～咱们课是5月3号起连续6晚18:50直播，您尽量协调时间来听听陈墨院长的毛笔书法示范，哪怕只听一节，对静心专注都很有帮助✏️开课前我会拉您进群发链接，您看能提前备支毛笔试试吗？',tags:'260503'},
+{input:'老师好！',addTag:'否',reply:'同学好呀！看到您消息真开心 🤗。咱们 5 月 3 号晚 6 点 50 分就正式开课啦，陈墨院长会亲自带大家体验毛笔书法的魅力。这两天您可以先准备下纸笔，不用太专业，能写字就行。期待在课堂上见到您，一起静心练字吧！',tags:'260503;重要'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260501'},
+{input:'好',addTag:'否',reply:'收到啦！那老师就帮您登记好，准时开通听课权限 📝。这两天您可以先找支毛笔和旧报纸练练手，不用太讲究工具。陈墨院长讲课特别生动，很多零基础同学都能跟上。期待和您一起享受这段静心时光！',tags:'260503;重要;有时间'},
+{input:'上课几时分钟',addTag:'否',reply:'您问的是每节课时长吗？咱们每晚直播课大概一小时左右，时间刚刚好，既能学透技法又不会太累。很多学员反馈这个节奏特别舒服，边写边静心，不知不觉就练完了。您放心，工具准备简单的毛笔和纸就行，咱们5月3号晚6点50见，期待您来体验这段专注时光🌼',tags:'260503'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'[合十][玫瑰]',addTag:'否',reply:'🤗 收到您的问候啦，心里暖暖的咱们 5 月 3 号周日晚上 6 点 50 就正式开课了，是陈墨院长亲自带的毛笔书法体验课。这两天您可以先备支毛笔，到时候我拉您进群发链接，一起享受这段静心写字的时光',tags:'260503'},
+{input:'上班',addTag:'是',reply:'上班挺好的呀，说明您状态正年轻，心态也更有活力！那接下来的体验课，您可要提前把时间预留好，尽量按时来跟着老师开口练，咱们一起轻松唱起来。',tags:'260502;待介绍老师;待发文件;待发上课链接'},
+{input:'收到',addTag:'是',reply:'',tags:'260501'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间'},
+{input:'好的！',addTag:'是',reply:'好的同学！陈小朵老师深耕歌唱行业 30 多年，是北京奥运会《我和你》原唱、中国歌剧舞剧院首席女高音及中国音乐学院博士。对了，您之前有接触过唱歌吗？',tags:'260502;赠品单;三线及其它城市;已领取赠品;一线城市'},
+{input:'好',addTag:'是',reply:'',tags:'260430;有工具;有工具;待填地址;有时间;回复时段1'},
+{input:'谢谢你老师，我每日每夜陪护一个重病老伴，在家不能唱，说话都不敢大声，不然他骂神经病，唱什么歌，你那么好心情吗？我只敢在老年大学里唱几句。算了，我的悲伤的人生。',addTag:'否',reply:'',tags:'260422;已填地址;已领取赠品;退休'},
+{input:'上班呢',addTag:'是',reply:'上班挺好的呀，说明您状态正年轻，心态也更有活力！那接下来的体验课，您可要提前把时间预留好，尽量按时来跟着老师开口练，工作之余用歌声放松一下特别棒。',tags:'260502;激活;激活;待介绍老师;待发上课链接'},
+{input:'我不报名，让你失望了。',addTag:'否',reply:'',tags:'260422;已填地址;已领取赠品;退休'},
+{input:'老师早',addTag:'否',reply:'同学早呀！看到您这么有精神真开心 🌼。咱们 5 月 3 号晚上的书法体验课马上就开始啦，这两天您可以先准备一支毛笔和墨水，不用太专业，能写字就行。跟着陈墨院长慢慢练，既能静心又能修身养性，特别适合咱们日常放松呢。',tags:'260503;重要'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'不要千篇一律的群发，我这次一节课都没上。这样虚假的对话看得很反感',addTag:'否',reply:'',tags:'260425'},
+{input:'老师 楷书口诀发一下',addTag:'否',reply:'同学，楷书口诀咱们陈墨院长会在 5 月 3 号晚上的直播课里详细拆解示范呢，那是毛笔书法的核心精髓，光看文字可能不太好理解笔锋的运转。📝\\n\\n这两天您可以先准备好纸笔墨，哪怕用普通毛笔和旧报纸练手也行。跟着院长直播学，能更直观地掌握运笔技巧，让心静下来，写出的字才更有韵味。开课前我会把链接发给您，咱们准时见！',tags:'260503'},
+{input:'我出门了，可以看回放',addTag:'否',reply:'同学，小朵老师是著名女高音、国家一级演员，这次只教这一期机会太难得了，还是尽量准时来呀！您之前了解过她吗？老师不仅唱得好，教得也特别棒，方法通俗易懂，咱们争取别错过现场互动哦。',tags:'260502'},
+{input:'晚上见',addTag:'否',reply:'',tags:'260501;有时间;有工具;有工具;回复时段2'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/a173cf1f9e32e057db8729edc3e4f6de_0408683b-a55a-4c23-9dfc-0db388decec3.jpg"}',addTag:'是',reply:'',tags:'260430;回复时段1'},
+{input:'不一定尽量',addTag:'否',reply:'理解您时间不太固定呢~其实很多同学都这样，但咱们这六天直播课是陈墨院长亲自带练，现场互动氛围特别好，错过就太可惜啦🌼\\n\\n建议您尽量协调下时间，哪怕先听第一节，感受一下毛笔在纸上行走的静心过程也是好的。5 月 3 日晚 6:50 开课，我到时候发您链接，咱们试着给自己留段放松时光好吗？',tags:'260503'},
+{input:'我在学习啊',addTag:'否',reply:'太棒啦，看到您这么积极我也很开心！🌟 今晚陈墨院长会亲自带大家体验毛笔书法的魅力。您先把纸笔墨备在手边，跟着院长动笔写写，特别解压。上课前我会把入口发给您，期待见到您哦！',tags:'260501;有时间;有工具;有工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'请发来视频教学了',addTag:'否',reply:'同学别急哈，咱们正式的直播课是 5 月 3 号晚 18:50 由陈墨院长亲自讲授的毛笔书法体验课🎨。现在还没到开课时间，所以暂时没有教学视频哦。您先准备好纸笔墨，开课前我会把上课链接发到群里，到时候跟着院长一起练字静心就好啦！',tags:'260503;重要'},
+{input:'有回放吗？因为我不能确定每天都能上',addTag:'否',reply:'同学放心，每节课都有回放。只要按时听课，课后我会发您入口~\\n课程结束前都能随时复习。那这个上课时间您方便来上课吗？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'怎样领字帖',addTag:'否',reply:'字帖不用单独领哈，陈墨院长会在直播课上直接展示范字，大家跟着写就行✏️。到时候我会把上课链接发给您，您准备好纸笔墨，跟着院长动笔练习效果最好，期待您一起静心书写呀！',tags:'260503;有时间;有工具;有工具'},
+{input:'有',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'好嘞谢谢您',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'好吗。',addTag:'否',reply:'您太客气啦！🤝 今晚陈墨院长就会带大家正式开启第一节课。您是资深前辈，正好来直播间感受一下院长的新教法，顺便给同学们鼓鼓劲。备好纸笔，晚上见！',tags:'260501;没时间;有工具;有工具;回复时段1'},
+{input:'好的',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'我儿子说了，不学了',addTag:'否',reply:'完全理解您的心情，家里孩子有想法很正常。不过这次是陈墨院长亲授的免费体验课，机会特别难得🌟\\n\\n哪怕您自己先来听一节，跟着院长动动笔，也能让心静下来，当作给自己的一段放松时光呢。工具简单准备下就行，我稍后把入口发给您，咱们试着感受一下？',tags:'260501'},
+{input:'[OK][拳头][胜利][爱心][合十]',addTag:'否',reply:'同学早上好！看到您发的表情，感觉您今天心情不错呀 昨晚的《猫咪戏蝶》练习得怎么样啦？有没有试着用“丝毛法”给小猫添几笔？\\n\\n今晚 18:45 陈墨老师要带大家走进《桂林山水》，学习独家的水法和皴法，领略水墨山水的魅力，非常精彩！期待您今天的进步哦✏️',tags:'260429;赠品单;已填地址;有时间;梅-树干上雪没有留下来;猫-毛画的黑不飘逸'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'是',reply:'',tags:'260503'},
+{input:'求家乡变故乡简谱老师！',addTag:'否',reply:'同学好的，咱们这 6 天的课程里暂时还没有《家乡变故乡》这首歌曲的简谱哦。\\n\\n目前陈小朵老师 6 节课的简谱资料包含以下歌曲：\\n第一天《天边》\\n第二天《祝福祖国》\\n第三天《画你》\\n第四天《珊瑚颂》\\n第五天《万疆》\\n第六天《我和你》\\n\\n如果您需要全部课程的简谱，可以点击这里下载打印，方便课上学习：\\nhttps://www.kdocs.cn/l/cbLGu0nZ6wFM\\n\\n如果有其他指定的课程歌曲需要简谱，随时告诉我哈！',tags:'260502'},
+{input:'[OK]',addTag:'是',reply:'',tags:'260501'},
+{input:'可以的，明晚见吧！',addTag:'否',reply:'太好了，听到您能准时来上课真让人开心！明晚 7 点咱们准时见\\n对了同学，在正式开课前想问问，您之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'可以',addTag:'否',reply:'太好了，听到您能准时来上课真让人开心！顺便问下，您之前有了解过陈小朵老师吗？明天晚上七点咱们准时见哦。',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'老师好',addTag:'否',reply:'您好呀！收到您的问候真开心～咱们毛笔书法体验课是 5 月 3 号周日晚上 6 点 50 分开课，连续 6 晚。这两天您可以先准备下基础的毛笔和纸墨，不用太专业，顺手就行。到时候我会在群里发链接带您进教室，跟着陈墨院长一起静心练字，期待和您见面哦🌼',tags:'260503'},
+{input:'[微笑][OK]',addTag:'否',reply:'收到您的回复啦！那老师就默认您会来咯~5 月 3 号周日晚上 6:50，我准时发链接给您。咱们这是毛笔书法体验课，工具不用太专业，家里有基础笔墨就能跟着陈墨院长练，主打一个静心放松🌼',tags:'260503'},
+{input:'只要有时间，没有特殊情况是可以的',addTag:'否',reply:'太好了，听到您确认能来上课真让人开心！\\n咱们就从明天 5 月 2 号开始，连续六晚七点相约。顺便问下同学，您之前有了解过陈小朵老师吗？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/2e3ee5e8021e52a95f2652e12a0b8db4_3eeea50e-cd67-48c7-b08b-0de108c01d90.jpg"}',addTag:'是',reply:'',tags:'260430;回复时段1;回复时段2'},
+{input:'好，谢谢！',addTag:'否',reply:'您太客气啦～工具都齐了，咱们就安心等开课。5 月 3 号我会准时在群里发链接，跟着陈墨院长体验毛笔书法的静心乐趣，期待和您一起动笔哦🌼',tags:'260503;有时间;有工具;有工具'},
+{input:'老师，你们和及象陈墨老师是一家吗？',addTag:'否',reply:'🌟 您放心，我们是一家的哈~我是及象书画院的班主任雯雯老师，专门负责咱们班级的服务。今晚 6 点 50 分的直播课，就是由陈墨院长亲自讲授的，他可是咱们书画院的创始人呢。我会全程陪着您学习，有任何问题随时找我就好，今晚记得准时来听课哦',tags:'260501;有时间'},
+{input:'知道了',addTag:'否',reply:'好的同学，那咱们就约定好从 5 月 2 号开始\\n连续六天每晚 19:00 准时上课啦，这个时间您方便来上课吗？',tags:'260502'},
+{input:'没有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'否',reply:'好的，那咱们 5 月 2 号晚上 7 点准时见！知道您能按时来上课，我心里特别高兴\\n对了同学，在正式开课前，想问问您之前有了解过陈小朵老师吗？',tags:'260502'},
+{input:'你好吵',addTag:'否',reply:'哎呀，抱歉打扰到您啦！🤗 主要是今晚陈墨院长带大家上第一节毛笔书法体验课，怕您错过这么难得的静心时光。您先忙您的，有空记得来写写字放松一下就好，链接开课前我会发给您。',tags:'260501;有时间'},
+{input:'老师早上好！五一出游在外，可能要耽误学习时间，能推持时间吗？',addTag:'否',reply:'早上好呀！五一出游挺好的，放松心情对写字也有帮助呢🌼。今晚 6 点 50 是陈墨院长亲自带的直播体验课，机会很难得，如果您方便的话，找个安静角落参与一下就好，哪怕只听前半段，对用笔手感也会有新启发。',tags:'260501;没时间'},
+{input:'可以的[玫瑰][玫瑰][玫瑰]',addTag:'是',reply:'',tags:'260503'},
+{input:'昨天学了猫',addTag:'否',reply:'同学早呀！昨天学的《猫咪戏蝶》练习得怎么样啦？有没有觉得哪里比较难下笔？🤔\\n\\n国画本身就是循序渐进的过程，刚开始手抖、调色不准很正常。只要跟着陈墨老师多看多画，有不懂的及时问老师，肯定会一遍比一遍好。\\n\\n今晚 18:45 我们要学《桂林山水》咯，记得带上画具准时来，期待看到你更大的进步！',tags:'260429;赠品单;已填地址;有时间'},
+{input:'没有，好的，明晚见',addTag:'否',reply:'好的，明晚七点准时见，期待与您一起开启音乐之旅！听到您确认能来上课真让人开心。顺便问下同学，您之前有了解过陈小朵老师吗？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'谢谢老师指点',addTag:'是',reply:'',tags:'260430;回复时段1;回复时段2;作业1'},
+{input:'{"messageType":"image","messageContent":"http://dragnet-sunlands.oss-accelerate.aliyuncs.com/20260501/2a238982a36f5f498fbae04e3c26564f_4f7c3d85-31ec-4e02-92f3-0853fc124134.jpg"}',addTag:'否',reply:'',tags:'2024Y12END;241107;付费学员;251230'},
+{input:'有',addTag:'是',reply:'',tags:'260503;重要;有时间'},
+{input:'没有',addTag:'是',reply:'不认识没关系呀！陈小朵老师深耕歌唱行业 30 多年，是北京奥运会《我和你》原唱\\n她是中国歌剧舞剧院首席女高音、中国音乐学院博士，常受邀在央视和重要晚会演出。顺便问问同学，您之前接触过唱歌吗？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'好嘞',addTag:'否',reply:'好嘞，收到您的确认啦！这两天您可以先放松心态，不用有压力。5 月 3 号我会准时在群里发链接，咱们跟着陈墨院长一起体验毛笔书法的静心时刻，期待和您云端相见🌼',tags:'260503;有时间;有工具;有工具'},
+{input:'[强][OK]',addTag:'否',reply:'同学早呀！看到您的表情感觉元气满满呢 昨晚的《猫咪戏蝶》练习得怎么样？有没有试着用“丝毛法”给小猫添几笔？\\n\\n今晚 18:45 陈墨老师会带大家走进《桂林山水》，学习独家的水法和皴法，领略水墨山水的魅力，有空记得来听听哦✏️',tags:'260429;赠品单;已填地址;有时间;梅-树干上雪没有留下来;猫-毛画的黑不飘逸'},
+{input:'没有，没写过',addTag:'否',reply:'👍 没写过完全没关系呀，咱们陈墨院长就是专门带零基础的同学入门的。工具暂时没备齐也不耽误，5 月 3 号晚上您可以先专心听院长讲解，感受下毛笔书法的魅力。等听完课心里有底了，再去附近超市买支普通毛笔和墨汁跟着练，效果会更好呢。',tags:'260503;重要;有时间;无工具;无工具'},
+{input:'老师已添加',addTag:'否',reply:'收到啦，同学！您已成功添加我，接下来就由我全程陪伴您学习。🥳\\n\\n咱们 5 月 3 号周日晚上 6 点 50 分准时开课，是陈墨院长亲授的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨书写就行。期待在课堂上见到您，一起感受笔墨的乐趣！',tags:'260503;重要'},
+{input:'没有',addTag:'是',reply:'收到啦，那这次正好从零开始系统学！顺便问问同学，您平时唱歌有没有想解决的问题呀？比如跑调、高音上不去或者气息不足之类的？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品'},
+{input:'能给发一个第一节课的竹孑吗',addTag:'否',reply:'同学，咱们前三天的课程分别是《梅花飞雪》、《猫咪戏蝶》和今晚的《桂林山水》，暂时还没有安排画竹子哦。🎨\\n\\n不过别急，跟着陈墨老师系统学完这几天的山水花鸟，掌握了核心的用笔和墨法，以后您画竹子也能举一反三！今晚的《桂林山水》很精彩，有空记得来听，把基础打牢最重要！',tags:'260429;赠品单;已填地址;有时间'},
+{input:'知道了',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'我通过了你的联系人验证请求，现在我们可以开始聊天了',addTag:'否',reply:'您好呀，我是小月老师，终于加上您啦！🤗 咱们的书法体验课 5 月 3 号晚 6 点 50 分准时开始，连续 6 天。这是陈墨院长亲自带的毛笔书法课，零基础也能轻松跟上。开课前我会拉您进群发链接，您先安心准备一支毛笔就行，期待和您一起静心练字！',tags:'260503'},
+{input:'可以',addTag:'是',reply:'',tags:'260503'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'收到，按时参加！',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'没有',addTag:'是',reply:'没学过反而是好事，没有错误方法干扰，能直接跟小朵老师学科学唱法\\n您目前有没有想解决的唱歌问题呀，比如跑调、高音上不去或者气息不足？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品;待发文件'},
+{input:'我出门昨晚才回第二节课听了一半',addTag:'否',reply:'同学早呀！昨晚刚回来辛苦啦，漏掉的课程别担心，老师把《猫咪戏蝶》的回放链接发您，空了补上就行✌️\\n\\n今晚 18:45 咱们要学《桂林山水》了，陈墨老师会教独家水法和皴法，特别精彩！您方便的话就来跟着老师一步步画，肯定能画出大气的山水作品，期待看到您的进步哦！',tags:'260429;赠品单;已填地址;有时间'},
+{input:'好',addTag:'否',reply:'收到啦！那您先安心忙自己的事，5 月 3 号周日晚我会把上课链接发给您。这两天要是看到合适的毛笔和墨汁可以顺手备着，没有也不影响先听课，陈墨院长讲得特别细致，零基础也能听得懂，期待和您一起开启书法之旅呀🌼',tags:'260503;重要;有时间;无工具;无工具'},
+{input:'方便',addTag:'是',reply:'',tags:'260503;重要'},
+{input:'辛苦老师在发我一个第一节课的连接',addTag:'否',reply:'同学，第一节课《梅花飞雪》的回放链接我这就发给您！🌸\\n\\n不过老师更关心您昨晚《猫咪戏蝶》听得怎么样啦？有没有试着动笔画几笔？刚开始手生很正常，只要跟着陈墨老师多练，肯定能画好。今晚也有精彩的《桂林山水》，有空可以来听听，期待看到您的进步！',tags:'260429;赠品单;已填地址;有时间'},
+{input:'是的，都有',addTag:'是',reply:'同学别急，这些问题其实都是方法没对上，不是您条件不好。接下来小朵老师会带着大家从基础练起，帮您把音准、气息和高音一个个攻克掉，跟着练肯定有进步！对了，顺便问问您现在是上班还是退休呀？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品;待发文件'},
+{input:'好的，谢谢老师',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'收到了，谢谢',addTag:'是',reply:'',tags:'260501;有时间;无工具;无工具'},
+{input:'对的，都有',addTag:'是',reply:'同学别急，这些问题都是方法没对上，不是您条件不好\\n接下来的课，小朵老师会带您从基础练起，逐个攻克音准、气息和高音，跟着练肯定能改善！对了，顺便问问您，现在是上班还是退休呀？',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品;待发文件;待发上课链接'},
+{input:'好吧，有书写工具',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'[握手]',addTag:'否',reply:'收到您的握手啦，心里暖暖的！🤝 后天晚上陈墨院长会带大家走进毛笔书法的世界。这两天您可以先找支顺手的毛笔备着，不用太讲究，能蘸墨就行。期待和您一起在笔墨中静心放松！',tags:'260503;重要;有时间'},
+{input:'梅花课发我一下',addTag:'否',reply:'同学早呀！您是想找第一节《梅花飞雪》的回放对吧？\\n\\n国画本身就是循序渐进的过程，刚开始手抖、调色不准很正常。只要跟着陈墨老师多看多画，有不懂的及时问老师，肯定会一遍比一遍好。\\n\\n另外今晚 18:45 我们要学《桂林山水》咯，您有空也可以来听听，期待看到你更大的进步！',tags:'260429;赠品单;已填地址;有时间'},
+{input:'老师早上好。我已付款了',addTag:'否',reply:'早上好呀！收到您的消息啦，欢迎加入我们的国画大家庭🎨。昨晚陈墨老师讲的山水技法您跟练了吗？感觉怎么样？有没有觉得哪里比较难下笔？别担心，刚开始手生很正常，今晚 18:45 继续跟着老师学《桂林山水》，咱们一步步来，肯定越画越好！',tags:'260429;赠品单'},
+{input:'老师好',addTag:'否',reply:'同学早上好呀！今天就是咱们第一天上课的日子啦，今晚 6 点 50 分陈墨院长会带大家体验毛笔书法的魅力。🌼\\n\\n您记得提前准备好毛笔和纸（旧报纸也能用），晚上我会把直播链接发给您。期待看到您动笔的样子！',tags:'260501'},
+{input:'[强][强]',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具;回复时段2'},
+{input:'我要了个朋友',addTag:'否',reply:'您是想说约了朋友一起练字吗？那太棒啦，有个伴儿互相鼓励，学书法更容易坚持呢！🌼今晚陈墨院长会带大家体验毛笔书法的魅力，记得准备好纸笔，咱们课上见！',tags:'260501'},
+{input:'[合十][合十][合十][呲牙]',addTag:'否',reply:'🤗 收到您的心意啦！工具都备齐了，那咱们就安心等开课。5 月 3 号晚上 6 点 50 分，我会准时把上课链接发给您。这两天您可以先试着用毛笔随意写写，找找手感，期待在陈墨院长的课堂上见到您动笔的样子',tags:'260503;有时间;有工具;有工具'},
+{input:'你通过一下',addTag:'否',reply:'您别急，我这边已经通过啦！今晚陈墨院长会亲自带大家体验毛笔书法。🌟 您提前把毛笔和纸准备好，开课前我会把上课链接发给您~',tags:'260501'},
+{input:'没有',addTag:'是',reply:'不认识没关系呀！陈老师深耕歌唱行业 30 多年，是北京奥运会《我和你》原唱，也是中国歌剧舞剧院首席女高音、中国音乐学院博士，常在央视演出。对了同学，您之前接触过唱歌吗？',tags:'260502'},
+{input:'[强][强]',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具;回复时段2'},
+{input:'有的老师[咖啡]',addTag:'是',reply:'',tags:'260503;有时间'},
+{input:'谢谢！',addTag:'是',reply:'',tags:'260501'},
+{input:'知道啦老师',addTag:'是',reply:'',tags:'260501;有时间;回复时段1'},
+{input:'我已经添加了你，现在我们可以开始聊天了。',addTag:'否',reply:'您好呀，收到您的消息真开心！🤗 咱们 5 月 3 号晚 6 点 50 分准时开课，是陈墨院长亲授的毛笔书法体验课。这两天您可以先备支毛笔，不用太专业，能蘸墨就行。期待和您一起静心练字，感受笔墨乐趣，您看时间方便吗？',tags:'260503'},
+{input:'在家带孩子，两个孩子，小的刚10个月',addTag:'否',reply:'在家带俩娃辛苦啦，不过小宝贝 10 个月大，现在时间相对灵活也挺好的，正好能借唱歌留点时间给自己放松。接下来的体验课您提前把时间安排好，尽量按时来，跟着老师一起开口练习，咱们边学边解压！',tags:'260502;2024Y12END;赠品单;待介绍老师;三线及其它城市;已领取赠品;待发文件;待发上课链接'},
+{input:'好',addTag:'否',reply:'',tags:'260501;有时间;无工具;无工具;回复时段2'},
+{input:'今晚小兰老师那边还有一课需要上',addTag:'否',reply:'同学您好，今晚 6 点 50 咱们陈墨院长的书法直播课也会开始。两边时间若冲突，您可以按需安排。建议您方便时来体验下这节毛笔书法课，直播互动感很强。您可以先备好文房四宝，给自己留一段静心写字的时光，我晚点把入口发给您🌼',tags:'260501'},
+{input:'收到',addTag:'是',reply:'',tags:'260501;有时间;有工具;有工具'},
+{input:'好的！',addTag:'否',reply:'',tags:'260503;有时间;有工具;有工具'},
+{input:'我是个音乐爱好者，很想跟老师学一学声乐，提高一下自己的唱歌水平',addTag:'是',reply:'太棒了，有这份热情一定能学好！没基础反而像张白纸，能更直接地吸收小朵老师的科学方法\\n对了同学，您目前最想解决的唱歌问题是什么呢？比如跑调、高音上不去或者气息不足？',tags:'260502;待介绍老师'}
+];
+
+
+function loadBuiltinCSV() {
+  csvRecords = BUILTIN_CSV.map(function(r) { return {input:r.input, addTag:r.addTag, reply:r.reply, tags:r.tags}; });
+  renderCsvList();
+}
+
+function parseCSVRow(row) {
+  var parts = [], inQuote = false, buf = '';
+  for (var i = 0; i < row.length; i++) {
+    var ch = row[i];
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (ch === ',' && !inQuote) { parts.push(buf); buf = ''; continue; }
+    buf += ch;
+  }
+  parts.push(buf);
+  return parts;
+}
+
+function importCSV(inputEl) {
+  var file = inputEl.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    csvRecords = [];
+    e.target.result.split('\n').slice(1).forEach(function(row) {
+      if (!row.trim()) return;
+      var parts = parseCSVRow(row);
+      var inputText = (parts[0] || '').trim();
+      if (!inputText) return;
+      var addTag = (parts[1] || '').trim();
+      var reply = (parts[2] || '').trim();
+      var tagStr = (parts[3] || '').trim();
+      csvRecords.push({
+        input: inputText,
+        addTag: addTag,
+        reply: reply,
+        tags: tagStr
+      });
+    });
+    renderCsvList();
+    renderCsvList();
+  };
+  reader.readAsText(file, 'UTF-8');
+  inputEl.value = '';
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.toggle('active', b.textContent.includes(name === 'input' ? 'Input' : '实际')); });
+  document.getElementById('tabInput').classList.toggle('active', name === 'input');
+  document.getElementById('tabData').classList.toggle('active', name === 'data');
+}
+
+function renderCsvList() {
+  var list = document.getElementById('csvList');
+  if (csvRecords.length === 0) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--dim)">点击导入CSV加载真实对话数据</div>';
+    return;
+  }
+  list.innerHTML = csvRecords.map(function(r, i) {
+    var isOpen = (i === csvDetailIdx);
+    var subHtml = '';
+    if (!isOpen) {
+      var lines = [];
+      if (r.tags) lines.push('<div>标签: ' + escapeHTML(r.tags.slice(0, 30)) + '</div>');
+      if (r.reply) lines.push('<div>回复: ' + escapeHTML(r.reply.slice(0, 40)) + '</div>');
+      if (lines.length) subHtml = '<div class="csv-sub">' + lines.join('') + '</div>';
+    }
+    var detailHtml = '';
+    if (isOpen) {
+      detailHtml = '<div class="csv-detail">' +
+        '<div class="detail-field"><div class="detail-label">Input</div><div class="detail-value">' + escapeHTML(r.input) + '</div><button class="btn-sm" onclick="event.stopPropagation();applyCsvField(\'input\')">应用</button></div>' +
+        '<div class="detail-field"><div class="detail-label">TagList</div><div class="detail-value">' + escapeHTML(r.tags || '(无)') + '</div><button class="btn-sm" onclick="event.stopPropagation();applyCsvField(\'tags\')">应用</button></div>' +
+        (r.addTag ? '<div class="detail-field"><div class="detail-label">add_tag</div><div class="detail-value">' + escapeHTML(r.addTag) + '</div></div>' : '') +
+        (r.reply ? '<div class="detail-field"><div class="detail-label">finalReply</div><div class="detail-value">' + escapeHTML(r.reply) + '</div></div>' : '') +
+        '</div>';
+    }
+    return '<div class="csv-item" onclick="showCsvDetail(' + i + ')">' +
+      '<div class="csv-main">' + escapeHTML(r.input.slice(0, 60)) + '</div>' + subHtml + detailHtml + '</div>';
+  }).join('');
+}
+
+function showCsvDetail(idx) {
+  if (csvDetailIdx === idx) { csvDetailIdx = -1; }
+  else { csvDetailIdx = idx; }
+  renderCsvList();
+}
+
+function applyCsvField(field) {
+  if (csvDetailIdx < 0 || !currentMessage) return;
+  var r = csvRecords[csvDetailIdx];
+  if (field === 'input') {
+    var val = r.input;
+    if (val.startsWith('{')) {
+      try { val = JSON.parse(val); } catch(e) {}
+    }
+    currentMessage.input = [val];
+    syncTogglesFromInput(currentMessage.input);
+    updateInputDisplay();
+  } else if (field === 'tags') {
+    currentMessage.tagList = r.tags ? r.tags.split(';').filter(Boolean) : [];
+    syncTogglesFromInput(currentMessage.input);
+  }
+  updateJsonEditor(currentMessage);
+}
+
+let dragIdx = -1;
+function onDragStart(e, i) { dragIdx = i; e.target.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
+function onDragOver(e) { e.preventDefault(); e.target.closest('.case-item')?.classList.add('drag-over'); }
+function onDragLeave(e) { e.target.closest('.case-item')?.classList.remove('drag-over'); }
+function onDragEnd(e) { e.target.classList.remove('dragging'); document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over')); }
+function onDrop(e, i) {
+  e.preventDefault();
+  onDragEnd(e);
+  if (dragIdx < 0 || dragIdx === i) return;
+  const [item] = importedCases.splice(dragIdx, 1);
+  importedCases.splice(i, 0, item);
+  if (activeCaseIdx === dragIdx) activeCaseIdx = i;
+  else if (dragIdx < activeCaseIdx && i >= activeCaseIdx) activeCaseIdx--;
+  else if (dragIdx > activeCaseIdx && i <= activeCaseIdx) activeCaseIdx++;
+  dragIdx = -1;
+  renderCaseList();
+}
+
+function renderCaseList() {
+  const list = document.getElementById('caseList');
+  if (importedCases.length === 0) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--dim)">尚未导入测试用例</div>';
+    return;
+  }
+  list.innerHTML = importedCases.map((c, i) =>
+    '<div class="case-item' + (i === activeCaseIdx ? ' active' : '') + '" draggable="true"' +
+    ' onclick="selectCase(' + i + ')"' +
+    ' ondragstart="onDragStart(event,' + i + ')"' +
+    ' ondragover="onDragOver(event)"' +
+    ' ondragleave="onDragLeave(event)"' +
+    ' ondrop="onDrop(event,' + i + ')"' +
+    ' ondragend="onDragEnd(event)">' +
+    '<span class="idx">#' + (i + 1) + '</span>' +
+    '<span class="info"><span class="name">' + escapeHTML(c.name) + '</span>' +
+    (c.expectedResult ? '<span class="expect">' + escapeHTML(c.expectedResult.slice(0, 30)) + '</span>' : '') + '</span>' +
+    '<span class="del" onclick="event.stopPropagation();deleteCase(' + i + ')">✕</span>' +
+    '</div>'
+  ).join('');
+}
+
+function selectCase(idx) {
+  if (idx < 0 || idx >= importedCases.length) return;
+  activeCaseIdx = idx;
+  document.getElementById('caseNameInput').value = importedCases[idx].name;
+  document.getElementById('expectedResultInput').value = importedCases[idx].expectedResult || '';
+  const c = importedCases[idx];
+  // 深拷贝数据到 currentMessage
+  currentMessage = JSON.parse(JSON.stringify(c.data));
+  // 同步显示
+  document.getElementById('f1').textContent = currentMessage.weworkAccount || '';
+  document.getElementById('f1sub').textContent = currentMessage.weworkCorpId || '';
+  document.getElementById('f2').textContent = currentMessage.requestId || '';
+  document.getElementById('f3').textContent = currentMessage.friendExternalId || '';
+  document.getElementById('f3sub').textContent = currentMessage.friendNick || '';
+  document.getElementById('agentIdInput').value = currentMessage.agentId || 'msg01';
+  document.getElementById('aliasInput').value = currentMessage.weworkAccountAlias || '汪洋老师';
+  syncTogglesFromInput(currentMessage.input || []);
+  updateInputDisplay();
+  updateJsonEditor(currentMessage);
+  renderCaseList();
+  // 滚动到选中项
+  setTimeout(function() {
+    var el = document.querySelector('.case-item.active');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 50);
+}
+
+function onJsonEditorInput() {
+  if (!currentMessage) return;
+  try {
+    const obj = JSON.parse(document.getElementById('jsonEditor').value);
+    currentMessage = obj;
+    // 同步左侧显示
+    document.getElementById('f1').textContent = currentMessage.weworkAccount || '';
+    document.getElementById('f1sub').textContent = currentMessage.weworkCorpId || '';
+    document.getElementById('f2').textContent = currentMessage.requestId || '';
+    document.getElementById('f3').textContent = currentMessage.friendExternalId || '';
+    document.getElementById('f3sub').textContent = currentMessage.friendNick || '';
+    document.getElementById('agentIdInput').value = currentMessage.agentId || 'msg01';
+    document.getElementById('aliasInput').value = currentMessage.weworkAccountAlias || '';
+    syncTogglesFromInput(currentMessage.input || []);
+    updateInputDisplay();
+  } catch(e) {
+    // JSON 解析失败时不更新，等待用户继续编辑
+  }
+}
+
+function addNewCase() {
+  const n = importedCases.length + 1;
+  const name = '新测试用例' + n;
+  const data = {
+    input: [],
+    inputList: [],
+    tagList: ['260710'],
+    weworkAccount: randomWeworkAccount(),
+    weworkCorpId: 'ww' + randHex(8),
+    requestId: randomRequestId(),
+    friendExternalId: randomFriendExternalId(),
+    friendRemoteId: randomFriendRemoteId(),
+    friendNick: NICKS[Math.floor(Math.random() * NICKS.length)],
+    agentId: 'msg01',
+    weworkAccountAlias: '汪洋老师',
+  };
+  importedCases.push({ name, data: data, expectedResult: '' });
+  activeCaseIdx = importedCases.length - 1;
+  renderCaseList();
+  document.querySelector('.left .section-label').textContent =
+    '测试用例管理（' + importedCases.length + ' 条）';
+  selectCase(activeCaseIdx);
+}
+
+function deleteCase(idx) {
+  if (idx < 0 || idx >= importedCases.length) return;
+  importedCases.splice(idx, 1);
+  if (activeCaseIdx === idx) activeCaseIdx = -1;
+  else if (activeCaseIdx > idx) activeCaseIdx--;
+  renderCaseList();
+  document.querySelector('.left .section-label').textContent =
+    '测试用例管理（' + importedCases.length + ' 条）';
+}
+
+function exportMarkdown() {
+  if (importedCases.length === 0) { alert('没有可导出的测试用例'); return; }
+  const now = new Date();
+  const ts = now.getFullYear() + ('0'+(now.getMonth()+1)).slice(-2) + ('0'+now.getDate()).slice(-2) +
+    '_' + ('0'+now.getHours()).slice(-2) + ('0'+now.getMinutes()).slice(-2) + ('0'+now.getSeconds()).slice(-2);
+  let md = '';
+  importedCases.forEach(c => {
+    md += '# ' + c.name + '\n';
+    var er = c.expectedResult || '';
+    if (er) md += '<!-- expected: ' + er.replace(/-->/g, '') + ' -->\n';
+    md += JSON.stringify(c.data, null, 2) + '\n\n';
+  });
+  const blob = new Blob([md.trim()], { type: 'text/markdown;charset=UTF-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '测试用例_' + ts + '.md';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 将预置 SCENARIOS 加载为初始测试用例
+function resetCases() {
+  if (!confirm('确定要重置测试用例吗？所有修改将丢失，恢复为系统内置用例。')) return;
+  loadPresetCases();
+  activeCaseIdx = -1;
+  document.getElementById('caseNameInput').value = '';
+  document.getElementById('expectedResultInput').value = '';
+}
+
+function loadPresetCases() {
+  importedCases = SCENARIOS.map(s => ({
+    name: s.name,
+    expectedResult: s.expected || '',
+    data: s.data
+  }));
+  activeCaseIdx = -1;
+  renderCaseList();
+  document.querySelector('.left .section-label').textContent =
+    '测试用例管理（' + importedCases.length + ' 条）';
+}
+
+function initScenarioSelect() {
+  const sel = document.getElementById('scenarioSelect');
+  sel.innerHTML = '<option value="-1">— 选择场景 —</option>' +
+    SCENARIOS.map((s, i) => '<option value="' + i + '">' + s.name + '</option>').join('');
+}
+
+buildToggles('intentToggles', INTENT_KEYS, INTENT_LABELS);
+buildToggles('addressToggles', ADDRESS_KEYS, ADDRESS_LABELS);
+buildToggles('tagToggles', TAG_KEYS, TAG_LABELS, 'onTagToggle');
+loadPresetCases();
+loadBuiltinCSV();
+initDefaultMessage();
+</script>
+</body>
+</html>

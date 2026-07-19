@@ -2,6 +2,7 @@ const state = {
   config: null,
   fields: [],
   cases: [],
+  casesLoading: true,
   records: [],
   activeCaseId: null,
   activeRecord: null,
@@ -17,13 +18,15 @@ const state = {
   mqConfigs: [],
   mqSettingsOpen: false,
   mqSettingsSelectedId: null,
-  updateStatus: { currentVersion: '', sources: [], backups: [] },
+  updateStatus: { currentVersion: '', sources: [] },
   updateCheck: null,
   updateDialogOpen: false,
+  updateApplying: false,
   casePage: 'list',
   recordPage: 'list',
   caseSearch: '',
   caseScenarioFilter: '',
+  caseTagFilters: [],
   caseSort: { field: '', order: null },
   recordSearch: '',
   recordTriggerMessage: '',
@@ -401,14 +404,17 @@ function renderListToolbars() {
       items: [],
       search: state.caseSearch,
       scenario: state.caseScenarioFilter,
+      tagFilters: state.caseTagFilters,
       scenarios: labelNames('businessScenarios'),
+      tags: labelNames('userTags'),
       allCount: state.cases.length,
       selected: state.selectedCases.size,
       selectedIds: [],
       sort: state.caseSort,
       pageNo: state.casePageNo,
       pageSize: state.casePageSize,
-      total: 0
+      total: 0,
+      loading: state.casesLoading
     },
     records: state.recordListData || {
       items: [],
@@ -427,16 +433,8 @@ function renderListToolbars() {
 function renderCaseList() {
   const query = state.caseSearch.trim().toLowerCase();
   const scenarioFilter = state.caseScenarioFilter;
-  const filtered = state.cases.filter(c => {
-    const hay = [
-      c.meta.name,
-      c.meta.businessScenario,
-      `${messageBatchCount(c)} 批`,
-      ...(c.message.tagList || []),
-      c.message.input?.[0] || ''
-    ].join(' ').toLowerCase();
-    return (!query || hay.includes(query)) && (!scenarioFilter || c.meta.businessScenario === scenarioFilter);
-  });
+  const tagFilters = state.caseTagFilters;
+  const filtered = state.cases.filter(c => window.caseListFilter.matchesCaseFilters(c, { query, scenario: scenarioFilter, tags: tagFilters }));
   const { field, order } = state.caseSort;
   const sorted = !field || !order ? filtered : [...filtered].sort((left, right) => {
     const leftValue = field === 'name' ? left.meta.name : field === 'createdAt' ? left.meta.createdAt : left.meta.updatedAt;
@@ -463,7 +461,9 @@ function renderCaseList() {
     })),
     search: state.caseSearch,
     scenario: state.caseScenarioFilter,
+    tagFilters,
     scenarios: labelNames('businessScenarios'),
+    tags: labelNames('userTags'),
     allCount: state.cases.length,
     selected: state.selectedCases.size,
     selectedIds: [...state.selectedCases],
@@ -901,16 +901,31 @@ function quickConfigHtml() {
 }
 
 async function loadInitial() {
-  state.config = normalizeConfigLabels(await api('/api/config'));
-  state.fields = (await api('/api/meta')).sessionAttributeFields || [];
-  await loadUpdateStatus().catch(error => console.warn('无法读取在线更新状态：', error));
+  const [config, meta] = await Promise.all([api('/api/config'), api('/api/meta')]);
+  state.config = normalizeConfigLabels(config);
+  state.fields = meta.sessionAttributeFields || [];
   renderQuickTools();
+  void (async () => {
+    try {
+      await loadUpdateStatus();
+      await checkForUpdate();
+    } catch (error) {
+      console.warn('无法检查在线更新：', error);
+    }
+  })();
   await loadCases();
   showCaseList();
 }
 
 async function loadCases() {
-  state.cases = (await api('/api/cases')).map(normalizeCase);
+  try {
+    state.cases = (await api('/api/cases')).map(normalizeCase);
+  } catch (error) {
+    state.casesLoading = false;
+    renderListToolbars();
+    throw error;
+  }
+  state.casesLoading = false;
   if (!state.activeCaseId && state.cases[0]) state.activeCaseId = state.cases[0].id;
   renderCaseList();
   renderEditor();
@@ -1006,6 +1021,17 @@ async function deleteSelectedLabelItems(labelType, names) {
   toast(`已删除 ${selectedNames.length} 个${typeLabel}`);
 }
 
+async function deleteUnusedLabelItems(labelType) {
+  const typeLabel = labelType === 'userTags' ? '用户标签' : '业务场景';
+  const result = await api('/api/label-management/delete-unused', {
+    method: 'POST',
+    body: JSON.stringify({ type: labelType })
+  });
+  state.config = normalizeConfigLabels(result.config);
+  await loadCases();
+  toast(`已删除 ${result.deletedCount} 个未使用${typeLabel}`);
+}
+
 function availableAgentIds() {
   return [...new Set([
     state.config?.lastSelectedAgentId,
@@ -1063,7 +1089,8 @@ function renderOnlineUpdateDialog() {
   window.renderUpdateDialog?.({
     open: state.updateDialogOpen,
     status: state.updateStatus,
-    check: state.updateCheck
+    check: state.updateCheck,
+    applying: state.updateApplying
   });
 }
 
@@ -1083,26 +1110,50 @@ function closeUpdateDialog() {
   renderOnlineUpdateDialog();
 }
 
-async function checkForUpdate() {
+async function checkForUpdate(options = {}) {
   state.updateCheck = await api('/api/update/check', { method: 'POST' });
   renderOnlineUpdateDialog();
   renderListToolbars();
-  if (!state.updateCheck.updateAvailable) {
+  if (options.openWhenAvailable && state.updateCheck.updateAvailable) {
+    state.updateDialogOpen = true;
+    renderOnlineUpdateDialog();
+    return;
+  }
+  if (options.notify && !state.updateCheck.updateAvailable) {
     const available = (state.updateCheck.sources || []).some(source => source.ok);
-    toast(available ? '当前已是最新版本' : '两个更新源均不可用', available ? 'success' : 'warning');
+    const version = state.updateCheck.currentVersion || state.updateStatus.currentVersion || '-';
+    toast(available ? `当前已是最新版本（v${version}）` : '两个更新源均不可用', available ? 'success' : 'warning');
   }
 }
 
-async function applyOnlineUpdate() {
-  const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ restart: true }) });
-  toast(`已更新至 ${result.version}，正在重启服务`);
-  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
+async function waitForBackendAndReload() {
+  const deadline = Date.now() + 90 * 1000;
+  await new Promise(resolve => setTimeout(resolve, 3500));
+  while (Date.now() < deadline) {
+    try {
+      await api('/api/update/status');
+      window.location.reload();
+      return;
+    } catch (error) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+  toast('服务重启超时，请手动刷新页面', 'warning');
 }
 
-async function rollbackOnlineUpdate(backupId) {
-  const result = await api('/api/update/rollback', { method: 'POST', body: JSON.stringify({ backupId, restart: true }) });
-  toast(`已回滚 ${result.restored.length} 个文件，正在重启服务`);
-  setTimeout(() => window.location.reload(), result.restartScheduled ? 2600 : 800);
+async function applyOnlineUpdate(sourceKey) {
+  state.updateApplying = true;
+  renderOnlineUpdateDialog();
+  try {
+    const result = await api('/api/update/apply', { method: 'POST', body: JSON.stringify({ sourceKey, restart: true }) });
+    const sourceHint = result.fallbackFrom ? `，已自动切换至${result.sourceLabel}` : '';
+    toast(`已更新至 ${result.version}${sourceHint}，正在重启服务`);
+    if (result.restartScheduled) waitForBackendAndReload();
+    else window.location.reload();
+  } finally {
+    state.updateApplying = false;
+    renderOnlineUpdateDialog();
+  }
 }
 
 async function openSendDialog(target) {
@@ -1230,7 +1281,10 @@ async function batchEditSelectedCases() {
     userTags: labelNames('userTags'),
     archivedUserTags: labelNames('userTags', 'archived')
   });
-  if (!changes || (!changes.changeScenario && !changes.changeTags)) return;
+  const fieldChanges = changes?.fieldChanges || {};
+  const fieldValues = changes?.fieldValues || {};
+  const hasSessionFieldChanges = Object.values(fieldChanges).some(Boolean);
+  if (!changes || (!changes.changeScenario && !changes.changeTags && !hasSessionFieldChanges)) return;
 
   const businessScenario = String(changes.businessScenario || '').trim();
   const tags = (changes.tags || []).map(value => String(value || '').trim()).filter(Boolean);
@@ -1248,6 +1302,9 @@ async function batchEditSelectedCases() {
     const next = copyCaseData(current);
     if (changes.changeScenario) next.meta.businessScenario = businessScenario;
     if (changes.changeTags) next.message.tagList = tags;
+    Object.entries(fieldChanges).forEach(([field, changed]) => {
+      if (changed) next.message[field] = String(fieldValues[field] || '').trim();
+    });
     return api(`/api/cases/${encodeURIComponent(caseId)}`, {
       method: 'PUT',
       body: JSON.stringify(next)
@@ -1373,6 +1430,10 @@ function renderRecordList() {
 
 async function showRecord(date, fileName) {
   const r = await api(`/api/records/detail?date=${encodeURIComponent(date)}&file=${encodeURIComponent(fileName)}`);
+  const firstPayload = r.snapshots?.[0]?.payload || {};
+  r.conversationId ||= firstPayload.weworkAccount && firstPayload.friendExternalId
+    ? `${firstPayload.weworkAccount}_${firstPayload.friendExternalId}`
+    : '';
   r.date = date;
   r.fileName = fileName;
   state.activeRecord = r;
@@ -1402,6 +1463,7 @@ async function showRecord(date, fileName) {
       <section class="panel">
         <div class="panel-title">${escapeHtml(r.caseName)}</div>
         <div class="item-sub">${escapeHtml(r.executedAt)} · ${escapeHtml(r.status)} · ${escapeHtml(r.agentId)}</div>
+        <div class="item-sub">Conversation_id：${escapeHtml(r.conversationId || '-')}</div>
         <div class="item-sub">${mqMessageCount} 条 MQ 消息 · ${userMessageCount} 条用户消息</div>
         <div class="timeline">${requests}</div>
         <div class="record-append-action"><button id="appendRecordMessageBtn" class="secondary">追加消息</button></div>
@@ -1805,12 +1867,14 @@ function bindEvents() {
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
     if (type === 'close-update-dialog') closeUpdateDialog();
-    if (type === 'check-update') checkForUpdate().catch(showError);
-    if (type === 'apply-online-update') applyOnlineUpdate().catch(showError);
-    if (type === 'rollback-online-update') rollbackOnlineUpdate(backupId).catch(showError);
+    if (type === 'check-update') checkForUpdate({ notify: true }).catch(showError);
+    if (type === 'check-update-from-version') checkForUpdate({ notify: true, openWhenAvailable: true }).catch(showError);
+    if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
+    if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
+    if (type === 'delete-unused-label-items') deleteUnusedLabelItems(labelType).catch(showError);
     if (type === 'set-case-selection') {
       (pageIds || []).forEach(caseId => state.selectedCases.delete(caseId));
       (ids || []).forEach(caseId => state.selectedCases.add(caseId));
@@ -1843,6 +1907,11 @@ function bindEvents() {
     }
     if (type === 'case-scenario') {
       state.caseScenarioFilter = value || '';
+      state.casePageNo = 1;
+      renderCaseList();
+    }
+    if (type === 'case-tags') {
+      state.caseTagFilters = Array.isArray(value) ? value : [];
       state.casePageNo = 1;
       renderCaseList();
     }

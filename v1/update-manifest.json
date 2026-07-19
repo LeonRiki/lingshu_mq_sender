@@ -1,63 +1,35 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.4",
+  "version": "1.2.6",
   "notes": [],
   "files": [
-    {
-      "path": ".env.example",
-      "sha256": "16769a07dd2736e1f2fa6f8f461d304f959f1b19bbfb4b7609f458cd14567fa8"
-    },
-    {
-      "path": "README.md",
-      "sha256": "df0839c211089ae57f18cb14cbeaadea5540940d6ab7f8e9e39721d3e8a25983"
-    },
-    {
-      "path": "docs/消息流可视化构建需求.md",
-      "sha256": "f857005f32dd132a5bf25bc8e4f0c2ae547c6482783604059a3770074026a255"
-    },
-    {
-      "path": "mac-修复权限.command",
-      "sha256": "81bae8909e70742e256cae0dfc28cb4ed84251c694baf38a9d1b3e0818e7d9ab"
-    },
     {
       "path": "mac-启动服务.command",
       "sha256": "ead4d578c5c7c0d3651480fdd6ae551524c7730bacfa04ad58a7afe4d19c922f"
     },
     {
-      "path": "package-lock.json",
-      "sha256": "b88e49fe7e1719696c1d91ac8102fc44c6e75767a7f77194f775988707f81f1e"
-    },
-    {
-      "path": "package.json",
-      "sha256": "01dc73a14de0e6a9381d7ee195af0ac0206dcdb995a6ad5c8e8d2b09ce09e0b3"
-    },
-    {
-      "path": "scripts/generate-update-manifest.js",
-      "sha256": "062bdfa249bff94334c094dd042a05697fd7f39254910f869bc3007c849a5187"
-    },
-    {
       "path": "server.js",
-      "sha256": "9eddcae487893ebd2ba2f8b40af2cb8af968603c1fdec390792efdccdd0349d5"
+      "sha256": "cfb7e61012f8d3d0c209d921b5e37e60df690e906a31a02093bfd8f3f709714f"
     },
     {
       "path": "version.json",
-      "sha256": "372335e533407f0009b082361510057de1a2e407483e777015183305cb913e7f"
+      "sha256": "ffd5a36acacb428a73ee55272c9fc9018482038c5fe0163fe504330ca597955d"
     },
     {
       "path": "web/app.js",
-      "sha256": "a0dd42a40c7f216a00390d5e74315858cfe1cde709f82bacfbec899a716061ea"
+      "sha256": "6eb1fbefeea2dd639836dcf6db3bdd2035b6388ef1b61375da995368eba7b9a2"
+    },
+    {
+      "path": "web/assets/github.png",
+      "sha256": "a37ff7967038b4512a3c1623cccca7110946fd92508fc25cbc0e9beff3aa217d"
+    },
+    {
+      "path": "web/assets/modelscope.png",
+      "sha256": "f8d164d1861e5fd44ee5dde09541d8264e14ebc714238119b896f96b8cefeee1"
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "ab56b41ffd20c44f5c94ec132bb182ea5602790230d081a9d3e19578fad6865a"
-    },
-    {
-      "path": "web/detail-ui.jsx",
-      "sha256": "d82ccf203ca5d834cd4508ad80e4c94d971fe383daa64ff4893b44745022d6c8"
-    },
-    {
-      "path": "web/editor-ui.jsx",
-      "sha256": "d729fcc7dbb414fdfbacbd6aeb34928e9fed8c393ba5b2a70bbd677a6a678764"
+      "sha256": "4a2e669ac60aad3578e1421f807628f66390c3eb5999ecdb51b9b9251edd2e3f"
     },
     {
       "path": "web/favicon.ico",
@@ -69,11 +41,11 @@
     },
     {
       "path": "web/index.html",
-      "sha256": "a91726d87b7af8e12a35da86e5dc44ea62d94ad92c0fec18b997845c7cf3025e"
+      "sha256": "7615656cc33abbbde21a891dd53920ba65be95925cb3e4bfc305866f66f4de27"
     },
     {
       "path": "web/styles.css",
-      "sha256": "9d8189d0e3cf97d4582e43822fbf55ff0f6533e0ab8723472584f14367e42f20"
+      "sha256": "fbf33786de04361b817fd48c00570c6dd4f9ed88be0a90ea6b3c7fb87df7304b"
     },
     {
       "path": "win-启动服务.bat",

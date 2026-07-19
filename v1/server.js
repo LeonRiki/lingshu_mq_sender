@@ -15,14 +15,14 @@ const UPDATE_DIR = path.join(CACHE_DIR, 'updates');
 const UPDATE_BACKUPS_DIR = path.join(UPDATE_DIR, 'backups');
 const UPDATE_STAGING_DIR = path.join(UPDATE_DIR, 'staging');
 const VERSION_FILE = path.join(ROOT, 'version.json');
-const UPDATE_MANIFEST_ASSET = 'v1-update-manifest.json';
 const UPDATE_SOURCES = [
   {
     key: 'github',
     label: 'GitHub',
     repository: 'LeonRiki/lingshu_mq_sender',
-    contentRoot: 'v1',
-    type: 'github-release'
+    contentRoot: '',
+    revision: 'main',
+    type: 'github-repository'
   },
   {
     key: 'modelscope',
@@ -34,18 +34,23 @@ const UPDATE_SOURCES = [
   }
 ];
 const UPDATE_ROOT_FILES = new Set([
-  '.env.example',
-  'README.md',
-  'mac-修复权限.command',
   'mac-启动服务.command',
-  'package-lock.json',
-  'package.json',
   'server.js',
   'version.json',
   'win-启动服务.bat'
 ]);
-const UPDATE_PREFIXES = ['docs/', 'scripts/', 'web/'];
+const UPDATE_WEB_FILES = new Set([
+  'web/app.js',
+  'web/case-list-filter.js',
+  'web/detail-ui.js',
+  'web/favicon.ico',
+  'web/favicon.png',
+  'web/index.html',
+  'web/styles.css'
+]);
+const UPDATE_ASSETS_PREFIX = 'web/assets/';
 let updateInProgress = false;
+let restartScheduled = false;
 const PROTOCOL_MESSAGE_FIELDS = [
   'requestId', 'input', 'latestMsgTime', 'weworkCorpId', 'agentId', 'addTime',
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
@@ -157,7 +162,7 @@ function versionGreater(left, right) {
 function isUpdateAllowedPath(value) {
   const rel = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!rel || rel.split('/').some(part => !part || part === '.' || part === '..')) return false;
-  return UPDATE_ROOT_FILES.has(rel) || UPDATE_PREFIXES.some(prefix => rel.startsWith(prefix));
+  return UPDATE_ROOT_FILES.has(rel) || UPDATE_WEB_FILES.has(rel) || rel.startsWith(UPDATE_ASSETS_PREFIX);
 }
 
 function safeUpdatePath(baseDir, value) {
@@ -226,18 +231,6 @@ async function fetchRemoteBuffer(url, options = {}) {
   }
 }
 
-async function fetchGitHubJson(url) {
-  const data = await fetchRemoteBuffer(url, {
-    headers: { Accept: 'application/vnd.github+json' },
-    maxBytes: 1024 * 1024
-  });
-  try {
-    return JSON.parse(data.toString('utf8'));
-  } catch (err) {
-    throw updateError('GitHub 返回了无效的 JSON', 502);
-  }
-}
-
 function parseRemoteVersion(buffer, sourceLabel) {
   const text = buffer.toString('utf8').trim();
   let version = '';
@@ -250,43 +243,44 @@ function parseRemoteVersion(buffer, sourceLabel) {
   return version;
 }
 
+function sourceFilePath(source, rel) {
+  const root = String(source.contentRoot || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  return root ? `${root}/${rel}` : rel;
+}
+
+function githubFileUrl(source, rel) {
+  const filePath = sourceFilePath(source, rel).split('/').map(encodeURIComponent).join('/');
+  return `https://raw.githubusercontent.com/${source.repository}/${encodeURIComponent(source.revision)}/${filePath}`;
+}
+
 function modelscopeFileUrl(source, rel) {
   const params = new URLSearchParams({
     Revision: source.revision,
-    FilePath: `${source.contentRoot}/${rel}`
+    FilePath: sourceFilePath(source, rel)
   });
   return `https://www.modelscope.cn/api/v1/models/${source.repository}/repo?${params}`;
 }
 
-async function getGitHubRelease(source) {
-  const release = await fetchGitHubJson(`https://api.github.com/repos/${source.repository}/releases/latest`);
-  const tag = String(release.tag_name || '').trim();
-  if (!/^[A-Za-z0-9._-]+$/.test(tag)) throw updateError('GitHub Release 标签格式不受支持', 502);
-  const asset = (Array.isArray(release.assets) ? release.assets : []).find(item => item?.name === UPDATE_MANIFEST_ASSET);
-  const expectedAssetUrl = `https://api.github.com/repos/${source.repository}/releases/assets/`;
-  if (!asset || !String(asset.url || '').startsWith(expectedAssetUrl)) {
-    throw updateError(`Release 缺少 ${UPDATE_MANIFEST_ASSET} 附件`, 502);
-  }
-  const manifestBuffer = await fetchRemoteBuffer(asset.url, {
-    headers: { Accept: 'application/octet-stream' },
-    maxBytes: 512 * 1024
-  });
+async function getGitHubRepositoryRelease(source) {
+  const version = parseRemoteVersion(await fetchRemoteBuffer(githubFileUrl(source, 'version.json'), { maxBytes: 16 * 1024 }), source.label);
   let manifest;
   try {
+    const manifestBuffer = await fetchRemoteBuffer(githubFileUrl(source, 'update-manifest.json'), { maxBytes: 512 * 1024 });
     manifest = validateUpdateManifest(JSON.parse(manifestBuffer.toString('utf8')));
   } catch (err) {
     if (err.statusCode) throw err;
-    throw updateError('更新清单不是有效 JSON', 502);
+    throw updateError('GitHub 更新清单不是有效 JSON', 502);
   }
+  if (manifest.version !== version) throw updateError('GitHub 版本文件与更新清单版本不一致', 502);
   return {
     ...source,
-    ref: tag,
-    version: manifest.version,
+    ref: source.revision,
+    version,
     files: manifest.files,
     notes: manifest.notes,
-    publishedAt: String(release.published_at || ''),
-    releaseName: String(release.name || release.tag_name || ''),
-    fileUrl: rel => `https://raw.githubusercontent.com/${source.repository}/${tag}/${source.contentRoot}/${rel.split('/').map(encodeURIComponent).join('/')}`
+    publishedAt: '',
+    releaseName: `${source.repository}@${source.revision}`,
+    fileUrl: rel => githubFileUrl(source, rel)
   };
 }
 
@@ -314,9 +308,14 @@ async function getModelScopeRelease(source) {
 }
 
 async function getLatestRelease(source) {
-  if (source.type === 'github-release') return getGitHubRelease(source);
+  if (source.type === 'github-repository') return getGitHubRepositoryRelease(source);
   if (source.type === 'modelscope-repository') return getModelScopeRelease(source);
   throw updateError(`未知更新源：${source.key}`, 500);
+}
+
+function getFallbackUpdateSource(source) {
+  if (source?.key !== 'github') return null;
+  return UPDATE_SOURCES.find(item => item.key === 'modelscope') || null;
 }
 
 async function checkForUpdate() {
@@ -350,8 +349,7 @@ async function checkForUpdate() {
     currentVersion,
     sources: sources.map(({ release, ...source }) => source),
     updateAvailable: Boolean(latest && versionGreater(latest.version, currentVersion)),
-    release: latest,
-    backups: listUpdateBackups()
+    release: latest
   };
 }
 
@@ -379,6 +377,10 @@ function createUpdateBackup(files) {
   return { id, root };
 }
 
+function ensureUpdateFilePermissions(target, rel) {
+  if (process.platform !== 'win32' && String(rel || '').endsWith('.command')) fs.chmodSync(target, 0o755);
+}
+
 function restoreUpdateBackup(id) {
   if (!/^[0-9_]+_[a-f0-9]{6}$/.test(String(id || ''))) throw updateError('备份标识无效');
   const root = path.resolve(UPDATE_BACKUPS_DIR, id);
@@ -399,42 +401,30 @@ function restoreUpdateBackup(id) {
     const temp = `${target}.rollback-${process.pid}-${Date.now()}.tmp`;
     fs.copyFileSync(source, temp);
     fs.renameSync(temp, target);
+    ensureUpdateFilePermissions(target, item.path);
     restored.push(item.path);
   });
   return { restored, previousVersion: String(metadata.previousVersion || '') };
 }
 
-function listUpdateBackups() {
-  if (!fs.existsSync(UPDATE_BACKUPS_DIR)) return [];
-  return fs.readdirSync(UPDATE_BACKUPS_DIR, { withFileTypes: true })
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
-      const metadata = readJson(path.join(UPDATE_BACKUPS_DIR, entry.name, 'metadata.json'), {});
-      return {
-        id: entry.name,
-        createdAt: String(metadata.createdAt || ''),
-        previousVersion: String(metadata.previousVersion || ''),
-        fileCount: Array.isArray(metadata.files) ? metadata.files.length : 0
-      };
-    })
-    .sort((left, right) => right.id.localeCompare(left.id));
-}
-
 function scheduleSelfRestart() {
+  if (restartScheduled) return false;
+  restartScheduled = true;
   const restartFile = path.join(UPDATE_DIR, `restart-${process.pid}-${Date.now()}.${process.platform === 'win32' ? 'bat' : 'sh'}`);
   const pid = process.pid;
+  const port = Number(process.env.PORT || loadConfig().preferredPort || 32880);
+  const nodeBinary = process.execPath;
+  const serverFile = path.join(ROOT, 'server.js');
   try {
     if (process.platform === 'win32') {
-      const launcher = path.join(ROOT, 'win-启动服务.bat');
-      const script = `@echo off\r\ntimeout /t 2 /nobreak >nul\r\ntaskkill /F /PID ${pid} >nul 2>&1\r\ntimeout /t 1 /nobreak >nul\r\nstart \"\" /D \"${ROOT}\" cmd /c call \"${launcher}\"\r\ndel \"%~f0\"\r\n`;
+      const script = `@echo off\r\ntimeout /t 2 /nobreak >nul\r\ntaskkill /F /PID ${pid} >nul 2>&1\r\ntimeout /t 1 /nobreak >nul\r\nset \"PORT=${port}\"\r\nstart \"\" /D \"${ROOT}\" \"${nodeBinary}\" \"${serverFile}\" --no-open\r\ndel \"%~f0\"\r\n`;
       fs.writeFileSync(restartFile, script, 'utf8');
       const child = spawn('cmd', ['/c', restartFile], { detached: true, stdio: 'ignore' });
       child.unref();
     } else {
-      const launcher = path.join(ROOT, 'mac-启动服务.command');
       const logFile = path.join(CACHE_DIR, 'server.log');
       const quote = value => `'${String(value).replace(/'/g, "'\\\"'\\\"'")}'`;
-      const script = `#!/bin/sh\nsleep 2\nkill -TERM ${pid} 2>/dev/null\nsleep 1\ncd ${quote(ROOT)}\nnohup /bin/sh ${quote(launcher)} > ${quote(logFile)} 2>&1 &\nrm -- \"$0\"\n`;
+      const script = `#!/bin/sh\nsleep 2\nkill -TERM ${pid} 2>/dev/null\nsleep 1\ncd ${quote(ROOT)}\nPORT=${quote(port)} nohup ${quote(nodeBinary)} ${quote(serverFile)} --no-open > ${quote(logFile)} 2>&1 &\nrm -- \"$0\"\n`;
       fs.writeFileSync(restartFile, script, { encoding: 'utf8', mode: 0o700 });
       fs.chmodSync(restartFile, 0o700);
       const child = spawn('/bin/sh', [restartFile], { detached: true, stdio: 'ignore' });
@@ -442,32 +432,55 @@ function scheduleSelfRestart() {
     }
     return true;
   } catch (err) {
+    restartScheduled = false;
     console.error('安排更新后重启失败：', err);
     return false;
   }
 }
 
-async function applyRemoteUpdate() {
+async function applyRemoteUpdate(sourceKey) {
   if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
   updateInProgress = true;
   let staging = '';
   let backup;
   try {
-    const checked = await checkForUpdate();
-    if (!checked.release) {
-      const errors = checked.sources.filter(source => !source.ok).map(source => `${source.label}：${source.error}`);
-      throw updateError(errors.length ? `没有可用更新源：${errors.join('；')}` : '没有可用更新源', 502);
+    const source = UPDATE_SOURCES.find(item => item.key === String(sourceKey || ''));
+    if (!source) throw updateError('请选择有效的更新源');
+    const stageRemoteUpdate = async updateSource => {
+      let stageRoot = '';
+      try {
+        const release = await getLatestRelease(updateSource);
+        if (!versionGreater(release.version, currentAppVersion())) throw updateError('所选更新源未提供更高版本', 409);
+        stageRoot = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
+        for (const file of release.files) {
+          const target = safeUpdatePath(stageRoot, file.path);
+          const buffer = await fetchRemoteBuffer(release.fileUrl(file.path), { maxBytes: 20 * 1024 * 1024 });
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          fs.writeFileSync(target, buffer, { mode: 0o644 });
+          if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
+        }
+        return { release, source: updateSource, staging: stageRoot };
+      } catch (err) {
+        if (stageRoot) fs.rmSync(stageRoot, { recursive: true, force: true });
+        throw err;
+      }
+    };
+    let staged;
+    let fallbackFrom = '';
+    try {
+      staged = await stageRemoteUpdate(source);
+    } catch (err) {
+      const fallbackSource = getFallbackUpdateSource(source);
+      if (!fallbackSource || ![502, 504].includes(err.statusCode)) throw err;
+      try {
+        staged = await stageRemoteUpdate(fallbackSource);
+        fallbackFrom = source.key;
+      } catch (fallbackError) {
+        throw updateError(`GitHub 下载失败，魔搭备用源也不可用：${fallbackError.message}`, fallbackError.statusCode || 502);
+      }
     }
-    if (!checked.updateAvailable) throw updateError('当前已是最新版本', 409);
-    const release = checked.release;
-    staging = path.join(UPDATE_STAGING_DIR, `${compactTime()}_${crypto.randomBytes(3).toString('hex')}`);
-    for (const file of release.files) {
-      const target = safeUpdatePath(staging, file.path);
-      const buffer = await fetchRemoteBuffer(release.fileUrl(file.path), { maxBytes: 20 * 1024 * 1024 });
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, buffer, { mode: 0o644 });
-      if (sha256File(target) !== file.sha256) throw updateError(`文件校验失败：${file.path}`, 502);
-    }
+    const { release } = staged;
+    staging = staged.staging;
     backup = createUpdateBackup(release.files);
     const applied = [];
     try {
@@ -478,6 +491,7 @@ async function applyRemoteUpdate() {
         const temp = `${target}.update-${process.pid}-${Date.now()}.tmp`;
         fs.copyFileSync(source, temp);
         fs.renameSync(temp, target);
+        ensureUpdateFilePermissions(target, file.path);
         applied.push(file.path);
       });
     } catch (err) {
@@ -489,7 +503,10 @@ async function applyRemoteUpdate() {
       backupId: backup.id,
       version: release.version,
       releaseName: release.releaseName,
-      notes: release.notes
+      notes: release.notes,
+      sourceKey: staged.source.key,
+      sourceLabel: staged.source.label,
+      fallbackFrom
     };
   } finally {
     if (staging) fs.rmSync(staging, { recursive: true, force: true });
@@ -891,6 +908,21 @@ function deleteLabelManagementItems(body) {
   const nextConfig = normalizeConfig(cfg);
   writeJson(CONFIG_FILE, nextConfig);
   return { config: nextConfig, management: labelManagementData() };
+}
+
+function deleteUnusedLabelManagementItems(body) {
+  const type = body.type === 'businessScenarios' ? 'businessScenarios' : body.type === 'userTags' ? 'userTags' : '';
+  if (!type) {
+    const err = new Error('标签或业务场景类型不完整');
+    err.statusCode = 400;
+    throw err;
+  }
+  const cfg = loadConfig();
+  const unusedNames = cfg[type].filter(item => !labelUsage(type, item.name).length).map(item => item.name);
+  cfg[type] = cfg[type].filter(item => !unusedNames.includes(item.name));
+  const nextConfig = normalizeConfig(cfg);
+  writeJson(CONFIG_FILE, nextConfig);
+  return { config: nextConfig, management: labelManagementData(), deletedCount: unusedNames.length };
 }
 
 function parseTags(value) {
@@ -1560,8 +1592,7 @@ async function handleApi(req, res, pathname, url) {
     if (req.method === 'GET' && pathname === '/api/update/status') {
       return json(res, 200, {
         currentVersion: currentAppVersion(),
-        sources: UPDATE_SOURCES.map(({ key, label, repository }) => ({ key, label, repository })),
-        backups: listUpdateBackups()
+        sources: UPDATE_SOURCES.map(({ key, label, repository }) => ({ key, label, repository }))
       });
     }
     if (req.method === 'POST' && pathname === '/api/update/check') {
@@ -1569,21 +1600,9 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/update/apply') {
       const body = await parseBody(req);
-      const result = await applyRemoteUpdate();
+      const result = await applyRemoteUpdate(body.sourceKey);
       const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
       return json(res, 200, { ok: true, ...result, restartScheduled });
-    }
-    if (req.method === 'POST' && pathname === '/api/update/rollback') {
-      const body = await parseBody(req);
-      if (updateInProgress) throw updateError('正在更新中，请稍后再试', 409);
-      updateInProgress = true;
-      try {
-        const result = restoreUpdateBackup(body.backupId);
-        const restartScheduled = body.restart !== false ? scheduleSelfRestart() : false;
-        return json(res, 200, { ok: true, ...result, restartScheduled });
-      } finally {
-        updateInProgress = false;
-      }
     }
     if (req.method === 'GET' && pathname === '/api/label-management') {
       return json(res, 200, labelManagementData());
@@ -1593,6 +1612,9 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/label-management/batch-delete') {
       return json(res, 200, deleteLabelManagementItems(await parseBody(req)));
+    }
+    if (req.method === 'POST' && pathname === '/api/label-management/delete-unused') {
+      return json(res, 200, deleteUnusedLabelManagementItems(await parseBody(req)));
     }
     if (req.method === 'GET' && pathname === '/api/meta') {
       return json(res, 200, {
@@ -1751,6 +1773,8 @@ module.exports = {
   casesFromCsvText,
   checkMqGatewayReady,
   currentAppVersion,
+  ensureUpdateFilePermissions,
+  getFallbackUpdateSource,
   isUpdateAllowedPath,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
