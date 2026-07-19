@@ -58,7 +58,8 @@ function CaseListToolbar({ data }) {
       </Space>
       <Space className="list-page-filters" size={8}>
         <Select aria-label="按业务场景筛选" value={data.scenario} onChange={value => emitListToolbarChange('case-scenario', value)} options={[{ value: '', label: '全部业务场景' }, ...data.scenarios.map(value => ({ value, label: value }))]} style={{ width: 180 }} />
-        <Input value={data.search} onChange={event => emitListToolbarChange('case-search', event.target.value)} placeholder="搜索名称 / Tag / 类型" style={{ width: 300 }} />
+        <Select aria-label="按标签筛选" mode="multiple" allowClear value={data.tagFilters} onChange={values => emitListToolbarChange('case-tags', values)} options={data.tags.map(value => ({ value, label: value }))} placeholder="筛选标签" style={{ width: 220 }} />
+        <Input value={data.search} onChange={event => emitListToolbarChange('case-search', event.target.value)} placeholder="搜索测试场景名称 / 触发消息" style={{ width: 300 }} />
       </Space>
     </Flex>
   );

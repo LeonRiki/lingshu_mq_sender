@@ -136,6 +136,11 @@ button:disabled {
   opacity: 1;
 }
 
+.case-detail-open .app-version,
+.record-detail-open .app-version {
+  display: none;
+}
+
 .new-version-trigger.ant-btn {
   height: auto;
   padding: 0;

@@ -26,6 +26,7 @@ const state = {
   recordPage: 'list',
   caseSearch: '',
   caseScenarioFilter: '',
+  caseTagFilters: [],
   caseSort: { field: '', order: null },
   recordSearch: '',
   recordTriggerMessage: '',
@@ -403,7 +404,9 @@ function renderListToolbars() {
       items: [],
       search: state.caseSearch,
       scenario: state.caseScenarioFilter,
+      tagFilters: state.caseTagFilters,
       scenarios: labelNames('businessScenarios'),
+      tags: labelNames('userTags'),
       allCount: state.cases.length,
       selected: state.selectedCases.size,
       selectedIds: [],
@@ -430,16 +433,8 @@ function renderListToolbars() {
 function renderCaseList() {
   const query = state.caseSearch.trim().toLowerCase();
   const scenarioFilter = state.caseScenarioFilter;
-  const filtered = state.cases.filter(c => {
-    const hay = [
-      c.meta.name,
-      c.meta.businessScenario,
-      `${messageBatchCount(c)} 批`,
-      ...(c.message.tagList || []),
-      c.message.input?.[0] || ''
-    ].join(' ').toLowerCase();
-    return (!query || hay.includes(query)) && (!scenarioFilter || c.meta.businessScenario === scenarioFilter);
-  });
+  const tagFilters = state.caseTagFilters;
+  const filtered = state.cases.filter(c => window.caseListFilter.matchesCaseFilters(c, { query, scenario: scenarioFilter, tags: tagFilters }));
   const { field, order } = state.caseSort;
   const sorted = !field || !order ? filtered : [...filtered].sort((left, right) => {
     const leftValue = field === 'name' ? left.meta.name : field === 'createdAt' ? left.meta.createdAt : left.meta.updatedAt;
@@ -466,7 +461,9 @@ function renderCaseList() {
     })),
     search: state.caseSearch,
     scenario: state.caseScenarioFilter,
+    tagFilters,
     scenarios: labelNames('businessScenarios'),
+    tags: labelNames('userTags'),
     allCount: state.cases.length,
     selected: state.selectedCases.size,
     selectedIds: [...state.selectedCases],
@@ -1904,6 +1901,11 @@ function bindEvents() {
     }
     if (type === 'case-scenario') {
       state.caseScenarioFilter = value || '';
+      state.casePageNo = 1;
+      renderCaseList();
+    }
+    if (type === 'case-tags') {
+      state.caseTagFilters = Array.isArray(value) ? value : [];
       state.casePageNo = 1;
       renderCaseList();
     }

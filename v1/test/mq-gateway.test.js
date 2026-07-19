@@ -18,6 +18,7 @@ const {
 test('更新包只包含运行所需文件与静态资源', () => {
   assert.equal(isUpdateAllowedPath('server.js'), true);
   assert.equal(isUpdateAllowedPath('web/detail-ui.js'), true);
+  assert.equal(isUpdateAllowedPath('web/case-list-filter.js'), true);
   assert.equal(isUpdateAllowedPath('web/assets/github.png'), true);
   assert.equal(isUpdateAllowedPath('docs/消息流可视化构建需求.md'), false);
   assert.equal(isUpdateAllowedPath('test/mq-gateway.test.js'), false);

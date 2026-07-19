@@ -41,6 +41,7 @@ const UPDATE_ROOT_FILES = new Set([
 ]);
 const UPDATE_WEB_FILES = new Set([
   'web/app.js',
+  'web/case-list-filter.js',
   'web/detail-ui.js',
   'web/favicon.ico',
   'web/favicon.png',
