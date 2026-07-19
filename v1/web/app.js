@@ -1430,6 +1430,10 @@ function renderRecordList() {
 
 async function showRecord(date, fileName) {
   const r = await api(`/api/records/detail?date=${encodeURIComponent(date)}&file=${encodeURIComponent(fileName)}`);
+  const firstPayload = r.snapshots?.[0]?.payload || {};
+  r.conversationId ||= firstPayload.weworkAccount && firstPayload.friendExternalId
+    ? `${firstPayload.weworkAccount}_${firstPayload.friendExternalId}`
+    : '';
   r.date = date;
   r.fileName = fileName;
   state.activeRecord = r;
@@ -1459,6 +1463,7 @@ async function showRecord(date, fileName) {
       <section class="panel">
         <div class="panel-title">${escapeHtml(r.caseName)}</div>
         <div class="item-sub">${escapeHtml(r.executedAt)} · ${escapeHtml(r.status)} · ${escapeHtml(r.agentId)}</div>
+        <div class="item-sub">Conversation_id：${escapeHtml(r.conversationId || '-')}</div>
         <div class="item-sub">${mqMessageCount} 条 MQ 消息 · ${userMessageCount} 条用户消息</div>
         <div class="timeline">${requests}</div>
         <div class="record-append-action"><button id="appendRecordMessageBtn" class="secondary">追加消息</button></div>
@@ -1866,6 +1871,7 @@ function bindEvents() {
     if (type === 'check-update-from-version') checkForUpdate({ notify: true, openWhenAvailable: true }).catch(showError);
     if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
+    if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
     if (type === 'delete-unused-label-items') deleteUnusedLabelItems(labelType).catch(showError);

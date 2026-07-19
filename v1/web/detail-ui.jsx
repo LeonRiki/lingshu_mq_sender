@@ -133,7 +133,13 @@ function CaseListPage({ data }) {
 
 function RecordListPage({ data }) {
   const columns = [
-    { title: 'Conversation_id', dataIndex: 'conversationId', width: 180, ellipsis: true, render: value => <Text className="list-table-input">{value || '-'}</Text> },
+    {
+      title: 'Conversation_id',
+      dataIndex: 'conversationId',
+      width: 210,
+      ellipsis: true,
+      render: value => value ? <Flex align="center" gap={4} style={{ minWidth: 0 }}><Text className="list-table-input" ellipsis={{ tooltip: value }} style={{ minWidth: 0, flex: 1 }}>{value}</Text><Tooltip title="复制 Conversation_id"><Button type="text" size="small" shape="circle" icon={<CopyOutlined />} aria-label="复制 Conversation_id" onClick={event => { event.stopPropagation(); emitListToolbar('copy-conversation-id', { value }); }} /></Tooltip></Flex> : <Text type="secondary">-</Text>
+    },
     { title: 'Agent ID', dataIndex: 'agentId', width: 104 },
     { title: '测试场景名称', dataIndex: 'caseName', width: 180, render: (_, record) => <div className={`case-name-cell ${record.note ? '' : 'no-note'}`}><div className="table-title">{record.caseName}</div>{record.note ? <Text type="secondary" className="list-table-note">{record.note}</Text> : null}</div> },
     { title: '触发消息', dataIndex: 'triggerMessages', ellipsis: true, render: renderTriggerMessages },
