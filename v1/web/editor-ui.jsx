@@ -138,6 +138,7 @@ function hasSessionConfiguration(caseData, config) {
   if (caseData.session?.enabled !== undefined) return caseData.session.enabled;
   return ['friendNick', 'latestMsgTime', 'addTime'].some(field => Boolean(caseData.message?.[field])) ||
     (Boolean(caseData.message?.weworkAccountAlias) && caseData.message?.weworkAccountAlias !== config?.defaultAlias) ||
+    (Boolean(caseData.message?.lingxiAccount) && caseData.message?.lingxiAccount !== 'mqSender') ||
     Object.keys(caseData.session?.attributes || {}).length > 0;
 }
 
@@ -194,7 +195,8 @@ function buildProtocol(caseData, config) {
       tagList: protocolTags(attributes.tagList ?? message.tagList),
       inputList: [...inputList],
       weworkAccountAlias: value('weworkAccountAlias', config?.defaultAlias || '汪洋老师'),
-      friendRemoteId: shared.friendRemoteId
+      friendRemoteId: shared.friendRemoteId,
+      lingxiAccount: value('lingxiAccount', 'mqSender')
     };
     if (!aliasesByCorp.has(payload.weworkCorpId)) aliasesByCorp.set(payload.weworkCorpId, payload.weworkAccountAlias);
     payload.weworkAccountAlias = aliasesByCorp.get(payload.weworkCorpId);
@@ -612,7 +614,7 @@ function CaseEditor({ caseData, cases, scenarios, archivedScenarios = [], userTa
     return [...new Set([...scenarios, model.meta.businessScenario].filter(Boolean))].filter(value => !search || value.includes(search)).map(value => ({ value, label: value }));
   }, [model.meta.businessScenario, scenarioSearch, scenarios]);
   const canCreateScenario = scenarioSearch.trim() && ![...scenarios, ...archivedScenarios, model.meta.businessScenario].filter(Boolean).includes(scenarioSearch.trim());
-  const sessionFields = [['friendNick', '好友昵称', 'text'], ['weworkAccountAlias', '企微账号别名', 'text'], ['latestMsgTime', '最新消息时间', 'datetime'], ['addTime', '添加时间', 'datetime']];
+  const sessionFields = [['friendNick', '好友昵称', 'text'], ['weworkAccountAlias', '企微账号别名', 'text'], ['lingxiAccount', '灵犀后台账号名', 'text'], ['latestMsgTime', '最新消息时间', 'datetime'], ['addTime', '添加时间', 'datetime']];
   const jsonGroups = groupsFromFlow(flow);
   const jsonPayloadBlocks = currentModel => {
     const payload = buildProtocol(currentModel, config);

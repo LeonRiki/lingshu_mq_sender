@@ -434,8 +434,8 @@ function ImportCaseDialog({ data, onCancel, onConfirm }) {
 function BatchEditDialog({ data, onCancel, onConfirm }) {
   const [changeScenario, setChangeScenario] = useState(false);
   const [changeTags, setChangeTags] = useState(false);
-  const [fieldChanges, setFieldChanges] = useState({ latestMsgTime: false, friendNick: false, weworkAccountAlias: false, addTime: false });
-  const [fieldValues, setFieldValues] = useState({ latestMsgTime: '', friendNick: '', weworkAccountAlias: '', addTime: '' });
+  const [fieldChanges, setFieldChanges] = useState({ latestMsgTime: false, friendNick: false, weworkAccountAlias: false, lingxiAccount: false, addTime: false });
+  const [fieldValues, setFieldValues] = useState({ latestMsgTime: '', friendNick: '', weworkAccountAlias: '', lingxiAccount: 'mqSender', addTime: '' });
   const [businessScenario, setBusinessScenario] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
   const [tags, setTags] = useState([]);
@@ -455,6 +455,7 @@ function BatchEditDialog({ data, onCancel, onConfirm }) {
     { key: 'latestMsgTime', label: '最新消息时间', type: 'datetime' },
     { key: 'friendNick', label: '好友昵称', type: 'text' },
     { key: 'weworkAccountAlias', label: '企微账号别名', type: 'text' },
+    { key: 'lingxiAccount', label: '灵犀后台账号名', type: 'text' },
     { key: 'addTime', label: '添加时间', type: 'datetime' }
   ];
   const hasSessionFieldChanges = Object.values(fieldChanges).some(Boolean);

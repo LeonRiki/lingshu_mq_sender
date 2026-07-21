@@ -219,6 +219,7 @@ function normalizeCase(c) {
   c.message.inputList = Array.isArray(c.message.inputList) ? c.message.inputList : [];
   c.message.tagList = Array.isArray(c.message.tagList) ? c.message.tagList : [];
   c.message.agentId ||= state.config?.defaultAgentId || 'testId';
+  c.message.lingxiAccount ||= 'mqSender';
   c.session.mode ||= c.meta.mode === 'multi' ? 'system' : 'system';
   c.session.attributes ||= {};
   c.conversation.messages = Array.isArray(c.conversation.messages)
@@ -558,7 +559,7 @@ function readSingleInputs() {
 const PROTOCOL_FIELDS = [
   'requestId', 'input', 'latestMsgTime', 'weworkCorpId', 'agentId', 'addTime',
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
-  'weworkAccountAlias', 'friendRemoteId'
+  'weworkAccountAlias', 'friendRemoteId', 'lingxiAccount'
 ];
 
 function protocolPayload(c, input, inputList, attrs = {}) {
@@ -567,7 +568,7 @@ function protocolPayload(c, input, inputList, attrs = {}) {
     if (key === 'input') payload.input = [...input];
     else if (key === 'inputList') payload.inputList = [...inputList];
     else if (key === 'tagList') payload.tagList = [...(c.message.tagList || [])];
-    else payload[key] = c.message[key] ?? '';
+    else payload[key] = key === 'lingxiAccount' ? (c.message[key] || 'mqSender') : (c.message[key] ?? '');
   });
   Object.entries(attrs).forEach(([key, value]) => {
     if (PROTOCOL_FIELDS.includes(key)) payload[key] = value;

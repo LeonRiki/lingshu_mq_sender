@@ -66,6 +66,27 @@ test('CSV 导入提取 history 与 tagList', () => {
   assert.deepEqual(caseData.message.tagList, ['标签一', '标签二']);
 });
 
+test('CSV 导入保留灵犀后台账号名', () => {
+  const [caseData] = casesFromCsvText('input,lingxiAccount\n测试消息,lingxi-admin');
+  assert.equal(caseData.message.lingxiAccount, 'lingxi-admin');
+});
+
+test('未设置灵犀后台账号名时使用默认值', () => {
+  const [caseData] = casesFromCsvText('input\n测试消息');
+  const [snapshot] = buildSnapshots(caseData, { agentId: 'testId' });
+  assert.equal(caseData.message.lingxiAccount, 'mqSender');
+  assert.equal(snapshot.payload.lingxiAccount, 'mqSender');
+});
+
+test('历史用例缺少灵犀后台账号名时发送快照使用默认值', () => {
+  const [snapshot] = buildSnapshots({
+    message: { input: ['测试消息'], inputList: [], tagList: [] },
+    session: { mode: 'system', attributes: {} },
+    conversation: { flow: [] }
+  }, { agentId: 'testId' });
+  assert.equal(snapshot.payload.lingxiAccount, 'mqSender');
+});
+
 test('CSV 导入忽略线上身份与请求 ID 字段', () => {
   const [caseData] = casesFromCsvText('input,skip_reason,modelName,requestId,weworkCorpId,weworkAccount,externalId,friendNick\n测试消息,备注,模型,online-request,online-corp,online-account,online-friend,线上昵称');
   assert.equal(caseData.message.requestId, '');
@@ -78,7 +99,7 @@ test('CSV 导入忽略线上身份与请求 ID 字段', () => {
 
 test('同一次多轮发送复用会话身份并为每条消息生成唯一 requestId', () => {
   const snapshots = buildSnapshots({
-    message: { inputList: [], tagList: [] },
+    message: { inputList: [], tagList: [], lingxiAccount: 'lingxi-admin' },
     session: { mode: 'perMessage', enabled: true, attributes: {} },
     conversation: {
       flow: [
@@ -101,6 +122,8 @@ test('同一次多轮发送复用会话身份并为每条消息生成唯一 requ
   assert.equal(snapshots[0].payload.weworkAccountAlias, 'alias-first');
   assert.equal(snapshots[0].payload.friendNick, snapshots[1].payload.friendNick);
   assert.equal(snapshots[0].payload.friendNick, 'nick-first');
+  assert.equal(snapshots[0].payload.lingxiAccount, 'lingxi-admin');
+  assert.equal(snapshots[1].payload.lingxiAccount, 'lingxi-admin');
 });
 
 function readBody(req) {
