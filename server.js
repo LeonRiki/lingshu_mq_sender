@@ -41,6 +41,7 @@ const UPDATE_ROOT_FILES = new Set([
 ]);
 const UPDATE_WEB_FILES = new Set([
   'web/app.js',
+  'web/case-list-filter.js',
   'web/detail-ui.js',
   'web/favicon.ico',
   'web/favicon.png',
@@ -53,7 +54,7 @@ let restartScheduled = false;
 const PROTOCOL_MESSAGE_FIELDS = [
   'requestId', 'input', 'latestMsgTime', 'weworkCorpId', 'agentId', 'addTime',
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
-  'weworkAccountAlias', 'friendRemoteId'
+  'weworkAccountAlias', 'friendRemoteId', 'lingxiAccount'
 ];
 const CSV_CASE_FIELD_SOURCES = {
   id: ['id'],
@@ -62,7 +63,8 @@ const CSV_CASE_FIELD_SOURCES = {
   skip_reason: ['skip_reason'],
   modelName: ['modelName'],
   inputList: ['inputList', 'history'],
-  tagList: ['tagList']
+  tagList: ['tagList'],
+  lingxiAccount: ['lingxiAccount']
 };
 const IMPORT_IGNORED_ID_FIELDS = ['requestId', 'weworkCorpId', 'weworkAccount', 'friendExternalId', 'friendRemoteId'];
 const MQ_REQUIRED_ENV = ['MQ_GATEWAY_URL', 'MQ_APP_ID', 'MQ_TOPIC', 'MQ_PRODUCER_GROUP', 'MQ_SECRET_KEY', 'MQ_NAME_SERVER', 'MQ_MESSAGE_TYPE'];
@@ -79,7 +81,8 @@ const DEFAULT_CONFIG = {
     { key: 'addTime', label: '添加时间', type: 'datetime-local' },
     { key: 'latestMsgTime', label: '最新消息时间', type: 'datetime-local' },
     { key: 'friendNick', label: '好友昵称', type: 'text' },
-    { key: 'weworkAccountAlias', label: '企微账号别名', type: 'text' }
+    { key: 'weworkAccountAlias', label: '企微账号别名', type: 'text' },
+    { key: 'lingxiAccount', label: '灵犀后台账号名', type: 'text' }
   ]
 };
 
@@ -675,7 +678,8 @@ function normalizeCase(data) {
       enabled: session.enabled === true || (session.enabled !== false && (
         Object.keys(session.attributes || {}).length > 0 ||
         ['friendNick', 'latestMsgTime', 'addTime'].some(key => Boolean(message[key])) ||
-        (Boolean(message.weworkAccountAlias) && message.weworkAccountAlias !== cfg.defaultAlias)
+        (Boolean(message.weworkAccountAlias) && message.weworkAccountAlias !== cfg.defaultAlias) ||
+        (Boolean(message.lingxiAccount) && message.lingxiAccount !== 'mqSender')
       ))
     },
     message: {
@@ -691,7 +695,8 @@ function normalizeCase(data) {
       friendExternalId: message.friendExternalId || '',
       tagList: Array.isArray(message.tagList) ? message.tagList : [],
       weworkAccountAlias: message.weworkAccountAlias || cfg.defaultAlias,
-      friendRemoteId: message.friendRemoteId || ''
+      friendRemoteId: message.friendRemoteId || '',
+      lingxiAccount: String(message.lingxiAccount || 'mqSender')
     },
     conversation: {
       flow,
@@ -909,6 +914,21 @@ function deleteLabelManagementItems(body) {
   return { config: nextConfig, management: labelManagementData() };
 }
 
+function deleteUnusedLabelManagementItems(body) {
+  const type = body.type === 'businessScenarios' ? 'businessScenarios' : body.type === 'userTags' ? 'userTags' : '';
+  if (!type) {
+    const err = new Error('标签或业务场景类型不完整');
+    err.statusCode = 400;
+    throw err;
+  }
+  const cfg = loadConfig();
+  const unusedNames = cfg[type].filter(item => !labelUsage(type, item.name).length).map(item => item.name);
+  cfg[type] = cfg[type].filter(item => !unusedNames.includes(item.name));
+  const nextConfig = normalizeConfig(cfg);
+  writeJson(CONFIG_FILE, nextConfig);
+  return { config: nextConfig, management: labelManagementData(), deletedCount: unusedNames.length };
+}
+
 function parseTags(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   if (!value) return [];
@@ -957,7 +977,8 @@ function basePayload(c, session, agentId) {
     tagList: Array.isArray(msg.tagList) ? [...msg.tagList] : [],
     inputList: [],
     weworkAccountAlias: msg.weworkAccountAlias || cfg.defaultAlias,
-    friendRemoteId: session.friendRemoteId
+    friendRemoteId: session.friendRemoteId,
+    lingxiAccount: String(msg.lingxiAccount || 'mqSender')
   };
 }
 
@@ -1465,6 +1486,7 @@ function casesFromCsvText(text) {
       c.message.input = [row.input];
       c.message.inputList = parseCsvInputList(row.inputList);
       c.message.tagList = parseCsvTagList(row.tagList);
+      c.message.lingxiAccount = row.lingxiAccount || c.message.lingxiAccount;
       c.conversation.flow = [{ type: 'message', content: row.input, attributes: {} }];
       return c;
     });
@@ -1596,6 +1618,9 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/label-management/batch-delete') {
       return json(res, 200, deleteLabelManagementItems(await parseBody(req)));
+    }
+    if (req.method === 'POST' && pathname === '/api/label-management/delete-unused') {
+      return json(res, 200, deleteUnusedLabelManagementItems(await parseBody(req)));
     }
     if (req.method === 'GET' && pathname === '/api/meta') {
       return json(res, 200, {

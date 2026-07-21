@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, ConfigProvider, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, ConfigProvider, DatePicker, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Spin, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleFilled,
@@ -57,7 +58,8 @@ function CaseListToolbar({ data }) {
       </Space>
       <Space className="list-page-filters" size={8}>
         <Select aria-label="按业务场景筛选" value={data.scenario} onChange={value => emitListToolbarChange('case-scenario', value)} options={[{ value: '', label: '全部业务场景' }, ...data.scenarios.map(value => ({ value, label: value }))]} style={{ width: 180 }} />
-        <Input value={data.search} onChange={event => emitListToolbarChange('case-search', event.target.value)} placeholder="搜索名称 / Tag / 类型" style={{ width: 300 }} />
+        <Select aria-label="按标签筛选" mode="multiple" allowClear value={data.tagFilters} onChange={values => emitListToolbarChange('case-tags', values)} options={data.tags.map(value => ({ value, label: value }))} placeholder="筛选标签" style={{ width: 220 }} />
+        <Input value={data.search} onChange={event => emitListToolbarChange('case-search', event.target.value)} placeholder="搜索测试场景名称 / 触发消息" style={{ width: 300 }} />
       </Space>
     </Flex>
   );
@@ -88,6 +90,7 @@ function RecordListToolbar({ data }) {
 }
 
 function CaseListPage({ data }) {
+  if (data.loading) return <div className="ant-list-page list-page-loading"><Spin description="正在加载测试用例" /></div>;
   const bulkHeaderActive = data.selected > 0;
   const bulkHeader = <Flex className="list-bulk-header" justify="space-between" align="center">
     <Text>{data.selected} selected</Text>
@@ -130,7 +133,13 @@ function CaseListPage({ data }) {
 
 function RecordListPage({ data }) {
   const columns = [
-    { title: 'Conversation_id', dataIndex: 'conversationId', width: 180, ellipsis: true, render: value => <Text className="list-table-input">{value || '-'}</Text> },
+    {
+      title: 'Conversation_id',
+      dataIndex: 'conversationId',
+      width: 210,
+      ellipsis: true,
+      render: value => value ? <Flex align="center" gap={4} style={{ minWidth: 0 }}><Text className="list-table-input" ellipsis={{ tooltip: value }} style={{ minWidth: 0, flex: 1 }}>{value}</Text><Tooltip title="复制 Conversation_id"><Button type="link" size="small" shape="circle" icon={<CopyOutlined />} aria-label="复制 Conversation_id" onClick={event => { event.stopPropagation(); emitListToolbar('copy-conversation-id', { value }); }} /></Tooltip></Flex> : <Text type="secondary">-</Text>
+    },
     { title: 'Agent ID', dataIndex: 'agentId', width: 104 },
     { title: '测试场景名称', dataIndex: 'caseName', width: 180, render: (_, record) => <div className={`case-name-cell ${record.note ? '' : 'no-note'}`}><div className="table-title">{record.caseName}</div>{record.note ? <Text type="secondary" className="list-table-note">{record.note}</Text> : null}</div> },
     { title: '触发消息', dataIndex: 'triggerMessages', ellipsis: true, render: renderTriggerMessages },
@@ -157,12 +166,14 @@ function LabelManagementPage({ data }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [target, setTarget] = useState(null);
+  const [unusedDeleteOpen, setUnusedDeleteOpen] = useState(false);
   const [action, setAction] = useState('archive');
   const [replacement, setReplacement] = useState('');
   const isTag = activeKey === 'userTags';
   const label = isTag ? '用户标签' : '业务场景';
   const items = (data?.[activeKey] || []).filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()));
   const activeItems = (data?.[activeKey] || []).filter(item => item.status === 'active' && item.name !== target?.name);
+  const unusedCount = (data?.[activeKey] || []).filter(item => !item.usageCount).length;
   useEffect(() => {
     const availableNames = new Set((data?.[activeKey] || []).map(item => item.name));
     setSelectedNames(names => names.filter(name => availableNames.has(name)));
@@ -181,7 +192,7 @@ function LabelManagementPage({ data }) {
     { title: '名称', dataIndex: 'name', render: value => <Text>{value}</Text> },
     { title: '使用用例数', dataIndex: 'usageCount', width: 120, align: 'center' },
     { title: '状态', dataIndex: 'status', width: 112, render: value => <Tag color={value === 'active' ? 'green' : 'default'} variant="outlined">{value === 'active' ? '启用' : '已归档'}</Tag> },
-    { title: '操作', key: 'actions', width: 220, onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, item) => <Space size={4}>{item.status === 'active' ? <Button type="link" size="small" onClick={() => emitListToolbar('manage-label-item', { labelType: activeKey, action: 'archive', name: item.name })}>归档</Button> : <Button type="link" size="small" onClick={() => emitListToolbar('manage-label-item', { labelType: activeKey, action: 'restore', name: item.name })}>恢复</Button>}{item.usageCount ? <Button type="link" size="small" onClick={() => { setTarget(item); setAction('replace'); }}>替换</Button> : null}<Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => { setTarget(item); setAction(item.usageCount ? 'archive' : 'delete'); }}>删除</Button></Space> }
+    { title: '操作', key: 'actions', width: 220, onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, item) => <Space size={4}>{item.status === 'active' ? <Button type="link" size="small" onClick={() => emitListToolbar('manage-label-item', { labelType: activeKey, action: 'archive', name: item.name })}>归档</Button> : <Button type="link" size="small" onClick={() => emitListToolbar('manage-label-item', { labelType: activeKey, action: 'restore', name: item.name })}>恢复</Button>}{item.usageCount ? <Button type="link" size="small" onClick={() => { setTarget(item); setAction('replace'); }}>替换</Button> : null}<Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => { if (item.usageCount) { setTarget(item); setAction('archive'); } else emitListToolbar('manage-label-item', { labelType: activeKey, action: 'delete', name: item.name }); }}>删除</Button></Space> }
   ];
   const create = () => {
     const name = newName.trim();
@@ -192,6 +203,7 @@ function LabelManagementPage({ data }) {
   };
   const replacementAction = isTag ? 'remove' : 'clear';
   const replacementLabel = isTag ? '移除' : '清空';
+  const unusedDeleteLabel = `删除未使用${label}`;
   const targetInUse = Boolean(target?.usageCount);
   const bulkHeaderActive = selectedNames.length > 0;
   const bulkHeader = <Flex align="center" justify="space-between" gap={16}>
@@ -204,20 +216,26 @@ function LabelManagementPage({ data }) {
       : { ...column, title: null, onHeaderCell: () => ({ colSpan: 0 }) })
     : columns;
   return <div className="ant-list-page label-management-page">
-    <Flex justify="space-between" align="center" gap={16} wrap>
-      <Input value={search} onChange={event => setSearch(event.target.value)} placeholder={`搜索${label}`} style={{ width: 300 }} />
-      <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增{label}</Button>
-    </Flex>
-    <Tabs activeKey={activeKey} onChange={key => { setActiveKey(key); setSearch(''); setSelectedNames([]); }} items={[
+    <Tabs activeKey={activeKey} onChange={key => { setActiveKey(key); setSearch(''); setSelectedNames([]); setUnusedDeleteOpen(false); }} items={[
       { key: 'userTags', label: '用户标签' },
       { key: 'businessScenarios', label: '业务场景' }
     ]} />
+    <Flex justify="space-between" align="center" gap={16} wrap>
+      <Input value={search} onChange={event => setSearch(event.target.value)} placeholder={`搜索${label}`} style={{ width: 300 }} />
+      <Space size={8}>
+        <Button danger icon={<DeleteOutlined />} disabled={!unusedCount} onClick={() => setUnusedDeleteOpen(true)}>{unusedDeleteLabel}</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增{label}</Button>
+      </Space>
+    </Flex>
     <Table className="ant-list-table" size="middle" rowKey="name" columns={tableColumns} dataSource={items} tableLayout="auto" rowSelection={{ selectedRowKeys: selectedNames, onChange: setSelectedNames }} pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} />
     <Modal open={createOpen} centered title={`新增${label}`} onCancel={() => setCreateOpen(false)} footer={<Space><Button onClick={() => setCreateOpen(false)}>取消</Button><Button type="primary" disabled={!newName.trim()} onClick={create}>新增</Button></Space>}>
       <Input value={newName} onChange={event => setNewName(event.target.value)} placeholder={`输入${label}名称`} />
     </Modal>
     <Modal open={Boolean(target)} centered title={targetInUse ? `处理“${target?.name || ''}”` : `确认删除“${target?.name || ''}”`} onCancel={resetAction} footer={<Space><Button onClick={resetAction}>取消</Button>{targetInUse ? <Button type="primary" disabled={action === 'replace' && !replacement} onClick={() => requestAction(action)}>{action === 'archive' ? '归档' : action === 'replace' ? '替换' : replacementLabel}</Button> : <Button type="primary" danger onClick={() => requestAction('delete')}>删除</Button>}</Space>}>
       {targetInUse ? <Flex vertical gap={16}><Text>该项当前被 {target?.usageCount} 个测试用例使用。</Text><Radio.Group value={action} onChange={event => setAction(event.target.value)}><Flex vertical gap={12}><Radio value="archive">归档</Radio><Radio value="replace">替换为其他{label}</Radio><Radio value={replacementAction}>{replacementLabel}</Radio></Flex></Radio.Group>{action === 'replace' ? <Select value={replacement || undefined} onChange={setReplacement} options={activeItems.map(item => ({ value: item.name, label: item.name }))} placeholder={`选择替换后的${label}`} style={{ width: '100%' }} /> : null}</Flex> : <Text>确认删除“{target?.name}”吗？该项当前未被测试用例使用。</Text>}
+    </Modal>
+    <Modal open={unusedDeleteOpen} centered title={`确认${unusedDeleteLabel}`} onCancel={() => setUnusedDeleteOpen(false)} footer={<Space><Button onClick={() => setUnusedDeleteOpen(false)}>取消</Button><Button type="primary" danger onClick={() => { emitListToolbar('delete-unused-label-items', { labelType: activeKey }); setUnusedDeleteOpen(false); }}>删除</Button></Space>}>
+      <Text>将删除 {unusedCount} 个未被测试用例使用的{label}，删除后不可恢复。确认继续吗？</Text>
     </Modal>
   </div>;
 }
@@ -416,6 +434,8 @@ function ImportCaseDialog({ data, onCancel, onConfirm }) {
 function BatchEditDialog({ data, onCancel, onConfirm }) {
   const [changeScenario, setChangeScenario] = useState(false);
   const [changeTags, setChangeTags] = useState(false);
+  const [fieldChanges, setFieldChanges] = useState({ latestMsgTime: false, friendNick: false, weworkAccountAlias: false, lingxiAccount: false, addTime: false });
+  const [fieldValues, setFieldValues] = useState({ latestMsgTime: '', friendNick: '', weworkAccountAlias: '', lingxiAccount: 'mqSender', addTime: '' });
   const [businessScenario, setBusinessScenario] = useState('');
   const [scenarioSearch, setScenarioSearch] = useState('');
   const [tags, setTags] = useState([]);
@@ -431,7 +451,17 @@ function BatchEditDialog({ data, onCancel, onConfirm }) {
     setBusinessScenario(value);
     setScenarioSearch('');
   };
-  return <Modal open centered title="批量修改测试用例" onCancel={onCancel} footer={<Space><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!changeScenario && !changeTags} onClick={() => onConfirm({ changeScenario, businessScenario, changeTags, tags })}>确定</Button></Space>}>
+  const sessionFields = [
+    { key: 'latestMsgTime', label: '最新消息时间', type: 'datetime' },
+    { key: 'friendNick', label: '好友昵称', type: 'text' },
+    { key: 'weworkAccountAlias', label: '企微账号别名', type: 'text' },
+    { key: 'lingxiAccount', label: '灵犀后台账号名', type: 'text' },
+    { key: 'addTime', label: '添加时间', type: 'datetime' }
+  ];
+  const hasSessionFieldChanges = Object.values(fieldChanges).some(Boolean);
+  const setFieldChange = (key, checked) => setFieldChanges(current => ({ ...current, [key]: checked }));
+  const setFieldValue = (key, value) => setFieldValues(current => ({ ...current, [key]: value }));
+  return <Modal open centered title="批量修改测试用例" onCancel={onCancel} footer={<Space><Button onClick={onCancel}>取消</Button><Button type="primary" disabled={!changeScenario && !changeTags && !hasSessionFieldChanges} onClick={() => onConfirm({ changeScenario, businessScenario, changeTags, tags, fieldChanges, fieldValues })}>确定</Button></Space>}>
     <Flex vertical gap={16}>
       <Text type="secondary">已选择 {data.count} 个测试用例</Text>
       <Flex vertical gap={8}>
@@ -442,6 +472,13 @@ function BatchEditDialog({ data, onCancel, onConfirm }) {
         <Checkbox checked={changeTags} onChange={event => setChangeTags(event.target.checked)}>TagList</Checkbox>
         {changeTags ? <Select mode="tags" value={tags} options={(data.userTags || []).map(value => ({ value, label: value }))} tokenSeparators={[',', '，', ';']} onChange={values => setTags(values.filter(value => !(data.archivedUserTags || []).includes(value)))} placeholder="选择或输入 TagList" style={{ width: '100%' }} /> : null}
       </Flex>
+      {sessionFields.map(field => <Flex key={field.key} vertical gap={8}>
+        <Checkbox checked={fieldChanges[field.key]} onChange={event => setFieldChange(field.key, event.target.checked)}>{field.label}（{field.key}）</Checkbox>
+        {fieldChanges[field.key] ? field.type === 'datetime'
+          ? <DatePicker showTime allowClear value={fieldValues[field.key] ? dayjs(fieldValues[field.key]) : null} onChange={(_, value) => setFieldValue(field.key, value || '')} format="YYYY-MM-DD HH:mm:ss" placeholder={`选择${field.label}`} style={{ width: '100%' }} />
+          : <Input value={fieldValues[field.key]} onChange={event => setFieldValue(field.key, event.target.value)} placeholder={`输入${field.label}`} />
+          : null}
+      </Flex>)}
     </Flex>
   </Modal>;
 }
@@ -481,9 +518,9 @@ function RecordDetailHeader() {
 
 function DetailActions() {
   return (
-    <Space wrap size={8}>
-      <Button icon={<SaveOutlined />} onClick={() => emit('save')}>保存用例</Button>
-      <Button type="primary" icon={<SendOutlined />} onClick={() => emit('send')}>通过MQ发送</Button>
+    <Space wrap size={16}>
+      <Button icon={<SendOutlined />} onClick={() => emit('send')}>通过MQ发送</Button>
+      <Button type="primary" icon={<SaveOutlined />} onClick={() => emit('save')}>保存用例</Button>
     </Space>
   );
 }

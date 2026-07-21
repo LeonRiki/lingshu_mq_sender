@@ -136,6 +136,11 @@ button:disabled {
   opacity: 1;
 }
 
+.case-detail-open .app-version,
+.record-detail-open .app-version {
+  display: none;
+}
+
 .new-version-trigger.ant-btn {
   height: auto;
   padding: 0;
@@ -471,6 +476,11 @@ main {
   gap: 16px;
 }
 
+.ant-list-page.list-page-loading {
+  align-items: center;
+  justify-content: center;
+}
+
 .ant-list-page .ant-list-table {
   flex: 1;
   min-height: 0;
@@ -589,13 +599,14 @@ main {
 .ant-list-table .case-name-cell {
   display: flex;
   min-height: 42px;
+  min-width: 0;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
 }
 
 .ant-list-table .case-name-cell.no-note {
-  align-items: flex-start;
+  align-items: stretch;
   text-align: left;
 }
 
@@ -942,6 +953,10 @@ pre {
   padding-bottom: 24px;
 }
 
+.case-detail-open.visual-editor-ready .editor {
+  padding-bottom: 86px;
+}
+
 .visual-editor-ready .editor-body {
   min-height: auto;
 }
@@ -1274,21 +1289,43 @@ pre {
   padding: 12px;
   border-left: 1px solid var(--border);
   background: #fff;
-  overflow-y: auto;
+  contain: size;
+  overflow: hidden;
 }
 
 .message-quick-tabs {
+  display: flex;
   min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
 .message-quick-tabs .ant-tabs-nav {
   margin-bottom: 10px;
 }
 
+.message-quick-tabs .ant-tabs-body-holder,
+.message-quick-tabs .ant-tabs-body,
+.message-quick-tabs .ant-tabs-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+.message-quick-tabs .ant-tabs-body-holder,
+.message-quick-tabs .ant-tabs-body,
+.message-quick-tabs .ant-tabs-content-active {
+  display: flex;
+}
+
 .message-quick-tab-content {
   display: flex;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
 }
 
 .message-quick-group {
@@ -1305,24 +1342,73 @@ pre {
 .message-quick-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .message-quick-options .ant-btn {
   min-width: 68px;
 }
 
+.message-case-scroll-area {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
 .message-case-options {
   display: flex;
-  max-height: 420px;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 8px;
+  box-sizing: border-box;
+  overflow-x: hidden;
   overflow-y: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.message-case-options::-webkit-scrollbar {
+  display: none;
+}
+
+.message-case-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  width: 6px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.message-case-scroll-area:hover .message-case-scrollbar {
+  opacity: 1;
+}
+
+.message-case-scrollbar-thumb {
+  width: 100%;
+  min-height: 24px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: grab;
+}
+
+.message-case-scrollbar-thumb:active {
+  cursor: grabbing;
 }
 
 .message-case-option.ant-btn {
+  align-self: stretch;
+  width: auto;
+  max-width: 100%;
   height: auto;
+  min-width: 0;
   min-height: 54px;
+  box-sizing: border-box;
   justify-content: flex-start;
   overflow: hidden;
   padding: 7px 10px;
