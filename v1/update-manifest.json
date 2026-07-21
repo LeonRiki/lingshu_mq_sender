@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.2.6",
+  "version": "1.2.7",
   "notes": [],
   "files": [
     {
@@ -9,15 +9,15 @@
     },
     {
       "path": "server.js",
-      "sha256": "cfb7e61012f8d3d0c209d921b5e37e60df690e906a31a02093bfd8f3f709714f"
+      "sha256": "981b98158a077f0dea2e6bc2ace15aba4ad2037ed2d24779b0b267ecf2fcb64a"
     },
     {
       "path": "version.json",
-      "sha256": "ffd5a36acacb428a73ee55272c9fc9018482038c5fe0163fe504330ca597955d"
+      "sha256": "55d9727e11746690cd37499c2e2b6aa2e67f04c8abe8946cc2eede74818f13f7"
     },
     {
       "path": "web/app.js",
-      "sha256": "6eb1fbefeea2dd639836dcf6db3bdd2035b6388ef1b61375da995368eba7b9a2"
+      "sha256": "ba2d313cd80bc31aab212d7b99759095f0f82230380895e3c7693305930522fa"
     },
     {
       "path": "web/assets/github.png",
@@ -28,8 +28,12 @@
       "sha256": "f8d164d1861e5fd44ee5dde09541d8264e14ebc714238119b896f96b8cefeee1"
     },
     {
+      "path": "web/case-list-filter.js",
+      "sha256": "5c1553a77dd415b5e689bc1afdccb32fefde0faa50b5db2fb39e3d2d6b1062ba"
+    },
+    {
       "path": "web/detail-ui.js",
-      "sha256": "4a2e669ac60aad3578e1421f807628f66390c3eb5999ecdb51b9b9251edd2e3f"
+      "sha256": "7f99ecd3fc4dba90829d025134e639eab9e5980c05b075b03b7ed60a3122dbda"
     },
     {
       "path": "web/favicon.ico",
@@ -41,11 +45,11 @@
     },
     {
       "path": "web/index.html",
-      "sha256": "7615656cc33abbbde21a891dd53920ba65be95925cb3e4bfc305866f66f4de27"
+      "sha256": "53efc8ef09a45411762fb9b2bab733d970070de59749f51a099a41526c8ba721"
     },
     {
       "path": "web/styles.css",
-      "sha256": "fbf33786de04361b817fd48c00570c6dd4f9ed88be0a90ea6b3c7fb87df7304b"
+      "sha256": "e9e00e7d67492387f1f4799fd0b5e1c841db1b47283ea2bf447e2c674891915d"
     },
     {
       "path": "win-启动服务.bat",
