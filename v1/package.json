@@ -9,7 +9,8 @@
     "dev": "node --watch server.js --no-open",
     "build": "esbuild web/detail-ui.jsx --bundle --minify --format=iife --global-name=CaseDetailUi --outfile=web/detail-ui.js",
     "build:web": "npm run build",
-    "release:manifest": "node scripts/generate-update-manifest.js"
+    "release:manifest": "node scripts/generate-update-manifest.js",
+    "release:prepare": "node scripts/prepare-release-package.js"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
