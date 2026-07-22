@@ -5,11 +5,11 @@
   "files": [
     {
       "path": "mac-启动服务.command",
-      "sha256": "ead4d578c5c7c0d3651480fdd6ae551524c7730bacfa04ad58a7afe4d19c922f"
+      "sha256": "c0f223b1214434f59f618ccb1d050932beb86882f16d4ca1a2a23713aa2c0359"
     },
     {
       "path": "server.js",
-      "sha256": "789b5ea3f9b575d596ea9e504d6945e8664d174427c360bf25af1c61b4a7ba24"
+      "sha256": "c00b2e0ac5f9525255bc4fe28931f8ba788b3fb1d37df1e919b2c7e9e98401b7"
     },
     {
       "path": "version.json",
@@ -53,7 +53,7 @@
     },
     {
       "path": "win-启动服务.bat",
-      "sha256": "1255b345e322d176f951c273784ea30b4cd89a940462af9b1a0e66e53b20ad83"
+      "sha256": "d5518d7e9714d9a9b310ca92053fc03cbce82152616b723caa3607d383b4ed75"
     }
   ]
 }

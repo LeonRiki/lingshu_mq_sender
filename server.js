@@ -1313,7 +1313,7 @@ function requirePg() {
   try {
     return require('pg');
   } catch (err) {
-    const error = new Error('缺少 pg 依赖，请使用完整安装包并执行 npm install');
+    const error = new Error('缺少 pg 依赖，请重新启动应用以自动安装；若仍失败请检查网络');
     error.statusCode = 500;
     throw error;
   }
