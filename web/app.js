@@ -1,9 +1,50 @@
+function padDatePart(value) {
+  return String(value).padStart(2, '0');
+}
+
+function formatDbFilterDate(date) {
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
+}
+
+function defaultDbTimeRange() {
+  const today = new Date();
+  return [formatDbFilterDate(today), formatDbFilterDate(today)];
+}
+
+function dbQueryDateBoundary(value, endOfDay = false) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/\d{1,2}:\d{2}/.test(text)) return text;
+  return `${text} ${endOfDay ? '23:59:59' : '00:00:00'}`;
+}
+
+const initialDbTimeRange = defaultDbTimeRange();
+const APP_ACTIVE_VIEW_STORAGE_KEY = 'lingxi-mq-active-view';
+const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'labels']);
+
 const state = {
   config: null,
   fields: [],
   cases: [],
   casesLoading: true,
   records: [],
+  dbConfigs: [],
+  dbSavedFilters: [],
+  dbConversationItems: [],
+  dbConversationQueried: false,
+  dbConversationLoading: false,
+  dbConversationDetail: null,
+  dbConversationDetailLoading: false,
+  dbConversationVariablesOpen: false,
+  dbConversationVariablesLoading: false,
+  dbConversationVariables: [],
+  dbActiveWorkflowId: '',
+  dbActiveConversationId: '',
+  dbRecordPage: 'list',
+  dbSettingsOpen: false,
+  dbSettingsSelectedId: null,
+  dbSettingsTesting: false,
+  dbSelectedTriggerMessageId: '',
   activeCaseId: null,
   activeRecord: null,
   selectedCases: new Set(),
@@ -32,10 +73,19 @@ const state = {
   recordTriggerMessage: '',
   recordWeworkCorpId: '',
   recordFriendNick: '',
+  dbWorkflowId: '',
+  dbConversationId: '',
+  dbFriendNick: '',
+  dbKeyword: '',
+  dbHasError: '',
+  dbStartTime: initialDbTimeRange[0],
+  dbEndTime: initialDbTimeRange[1],
   casePageNo: 1,
   recordPageNo: 1,
+  dbPageNo: 1,
   casePageSize: 20,
   recordPageSize: 15,
+  dbPageSize: 20,
   actualRecords: [
     { input: '老师，领资料怎么领？', tags: '260501', reply: '' },
     { input: '快递到了吗？怎么还没收到', tags: '260501;已填地址', reply: '回复物流查询地址' },
@@ -268,15 +318,29 @@ function updateCaseFromForm() {
 }
 
 function setView(name) {
+  const nextView = APP_VIEW_NAMES.has(name) ? name : 'cases';
+  try {
+    window.localStorage.setItem(APP_ACTIVE_VIEW_STORAGE_KEY, nextView);
+  } catch {
+    // 本地存储不可用时仍可正常切换页面。
+  }
+  name = nextView;
   $('casesView').classList.toggle('active', name === 'cases');
   $('recordsView').classList.toggle('active', name === 'records');
+  $('dbRecordsView').classList.toggle('active', name === 'dbRecords');
   $('labelsView').classList.toggle('active', name === 'labels');
   if (name !== 'cases') document.body.classList.remove('case-detail-open');
   if (name !== 'records') document.body.classList.remove('record-detail-open');
+  if (name !== 'dbRecords') document.body.classList.remove('db-record-detail-open');
   if (name === 'cases') showCaseList(false);
   if (name === 'records') {
     showRecordList(false);
     loadRecords();
+  }
+  if (name === 'dbRecords') {
+    showDbConversationList(false);
+    loadDbConfigs().catch(showError);
+    loadDbSavedFilters().catch(showError);
   }
   renderListToolbars();
 }
@@ -394,13 +458,27 @@ function showRecordDetailPage() {
   $('backToRecordsBtn').classList.add('hidden');
 }
 
+function showDbConversationList(render = true) {
+  state.dbRecordPage = 'list';
+  document.body.classList.remove('db-record-detail-open');
+  window.renderDbConversationDetailChrome?.(null);
+  if (render) renderDbRecordsPage();
+}
+
+function showDbConversationDetailPage() {
+  state.dbRecordPage = 'detail';
+  document.body.classList.add('db-record-detail-open');
+  window.renderMqSettingsButton?.({ visible: false });
+  renderDbRecordsPage();
+}
+
 function renderListToolbars() {
-  const visible = !document.body.classList.contains('case-detail-open') && !document.body.classList.contains('record-detail-open');
+  const visible = !document.body.classList.contains('case-detail-open') && !document.body.classList.contains('record-detail-open') && !document.body.classList.contains('db-record-detail-open');
   window.renderMqSettingsButton?.({ visible });
   window.renderUpdateManagerButton?.({ visible, currentVersion: state.updateStatus.currentVersion, updateAvailable: state.updateCheck?.updateAvailable });
   if (!window.renderAntListPages) return;
   window.renderAntListPages({
-    activeView: $('labelsView').classList.contains('active') ? 'labels' : $('recordsView').classList.contains('active') ? 'records' : 'cases',
+    activeView: $('labelsView').classList.contains('active') ? 'labels' : $('dbRecordsView').classList.contains('active') ? 'dbRecords' : $('recordsView').classList.contains('active') ? 'records' : 'cases',
     cases: state.caseListData || {
       items: [],
       search: state.caseSearch,
@@ -427,6 +505,7 @@ function renderListToolbars() {
       pageSize: state.recordPageSize,
       total: 0
     },
+    dbRecords: dbRecordPageData(),
     management: labelManagementData()
   });
 }
@@ -915,7 +994,14 @@ async function loadInitial() {
     }
   })();
   await loadCases();
-  showCaseList();
+  let savedView = 'cases';
+  try {
+    const storedView = window.localStorage.getItem(APP_ACTIVE_VIEW_STORAGE_KEY);
+    if (APP_VIEW_NAMES.has(storedView)) savedView = storedView;
+  } catch {
+    // 本地存储不可用时使用默认页。
+  }
+  setView(savedView);
 }
 
 async function loadCases() {
@@ -1429,6 +1515,232 @@ function renderRecordList() {
   renderListToolbars();
 }
 
+function dbRecordPageData() {
+  return {
+    page: state.dbRecordPage,
+    configs: state.dbConfigs,
+    savedFilters: state.dbSavedFilters,
+    settingsOpen: state.dbSettingsOpen,
+    selectedConfigId: state.dbSettingsSelectedId,
+    testing: state.dbSettingsTesting,
+    filters: {
+      workflowId: state.dbWorkflowId,
+      conversationId: state.dbConversationId,
+      friendNick: state.dbFriendNick,
+      keyword: state.dbKeyword,
+      hasError: state.dbHasError,
+      startTime: state.dbStartTime,
+      endTime: state.dbEndTime
+    },
+    loading: state.dbConversationLoading,
+    queried: state.dbConversationQueried,
+    items: state.dbConversationItems,
+    pageNo: state.dbPageNo,
+    pageSize: state.dbPageSize,
+    total: state.dbConversationTotal || 0,
+    detail: state.dbConversationDetail,
+    detailLoading: state.dbConversationDetailLoading,
+    variablesOpen: state.dbConversationVariablesOpen,
+    variablesLoading: state.dbConversationVariablesLoading,
+    variables: state.dbConversationVariables,
+    activeWorkflowId: state.dbActiveWorkflowId,
+    activeConversationId: state.dbActiveConversationId,
+    selectedTriggerMessageId: state.dbSelectedTriggerMessageId
+  };
+}
+
+function renderDbRecordsPage() {
+  renderListToolbars();
+  syncDbConversationDetailChrome();
+}
+
+function syncDbConversationDetailChrome() {
+  if (!window.renderDbConversationDetailChrome) return;
+  if (state.dbRecordPage !== 'detail') {
+    window.renderDbConversationDetailChrome(null);
+    return;
+  }
+  const detail = state.dbConversationDetail;
+  window.renderDbConversationDetailChrome({
+    workflowId: detail?.workflow?.id || state.dbActiveWorkflowId,
+    workflowName: detail?.workflow?.name || '',
+    conversationId: detail?.messages?.[0]?.conversationId || state.dbActiveConversationId,
+    loading: state.dbConversationDetailLoading
+  });
+}
+
+async function loadDbConfigs() {
+  state.dbConfigs = await api('/api/db-configs');
+  if (!state.dbSettingsSelectedId) state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
+  renderDbRecordsPage();
+}
+
+async function loadDbSavedFilters() {
+  state.dbSavedFilters = await api('/api/db-conversation-filters');
+  renderDbRecordsPage();
+}
+
+async function saveDbSavedFilter(name) {
+  await api('/api/db-conversation-filters', {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      filters: {
+        workflowId: state.dbWorkflowId,
+        conversationId: state.dbConversationId,
+        friendNick: state.dbFriendNick,
+        keyword: state.dbKeyword,
+        hasError: state.dbHasError
+      }
+    })
+  });
+  await loadDbSavedFilters();
+  toast('筛选条件已保存');
+}
+
+async function deleteDbSavedFilter(id) {
+  await api(`/api/db-conversation-filters/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await loadDbSavedFilters();
+  toast('筛选条件已删除');
+}
+
+function applyDbSavedFilter(filters) {
+  state.dbWorkflowId = filters?.workflowId || '';
+  state.dbConversationId = filters?.conversationId || '';
+  state.dbFriendNick = filters?.friendNick || '';
+  state.dbKeyword = filters?.keyword || '';
+  state.dbHasError = filters?.hasError || '';
+  state.dbPageNo = 1;
+  queryDbConversations().catch(showError);
+}
+
+function resetDbConversationFilters() {
+  const [startTime, endTime] = defaultDbTimeRange();
+  state.dbWorkflowId = '';
+  state.dbConversationId = '';
+  state.dbFriendNick = '';
+  state.dbKeyword = '';
+  state.dbHasError = '';
+  state.dbStartTime = startTime;
+  state.dbEndTime = endTime;
+  state.dbPageNo = 1;
+  state.dbConversationItems = [];
+  state.dbConversationTotal = 0;
+  state.dbConversationQueried = false;
+  renderDbRecordsPage();
+}
+
+function openDbSettings() {
+  state.dbSettingsOpen = true;
+  state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
+  renderDbRecordsPage();
+}
+
+function closeDbSettings() {
+  state.dbSettingsOpen = false;
+  renderDbRecordsPage();
+}
+
+async function saveDbConfig(config) {
+  const path = config.id ? `/api/db-configs/${encodeURIComponent(config.id)}` : '/api/db-configs';
+  const saved = await api(path, { method: config.id ? 'PUT' : 'POST', body: JSON.stringify(config) });
+  await loadDbConfigs();
+  state.dbSettingsSelectedId = saved.id;
+  toast('数据库配置已保存');
+}
+
+async function testDbConfig(configId) {
+  state.dbSettingsTesting = true;
+  renderDbRecordsPage();
+  try {
+    await api('/api/db-configs/test', { method: 'POST', body: JSON.stringify({ configId }) });
+    toast('数据库连接正常');
+  } finally {
+    state.dbSettingsTesting = false;
+    renderDbRecordsPage();
+  }
+}
+
+async function queryDbConversations() {
+  if (!state.dbWorkflowId.trim()) {
+    toast('请输入工作流ID后再查询', 'warning');
+    return;
+  }
+  state.dbConversationLoading = true;
+  state.dbConversationQueried = true;
+  state.dbConversationDetail = null;
+  state.dbActiveWorkflowId = '';
+  state.dbActiveConversationId = '';
+  state.dbRecordPage = 'list';
+  renderDbRecordsPage();
+  try {
+    const params = new URLSearchParams({
+      pageNo: String(state.dbPageNo),
+      pageSize: String(state.dbPageSize)
+    });
+    if (state.dbWorkflowId.trim()) params.set('workflowId', state.dbWorkflowId.trim());
+    if (state.dbConversationId.trim()) params.set('conversationId', state.dbConversationId.trim());
+    if (state.dbFriendNick.trim()) params.set('friendNick', state.dbFriendNick.trim());
+    if (state.dbKeyword.trim()) params.set('keyword', state.dbKeyword.trim());
+    if (state.dbHasError) params.set('hasError', state.dbHasError);
+    if (state.dbStartTime) params.set('startTime', dbQueryDateBoundary(state.dbStartTime));
+    if (state.dbEndTime) params.set('endTime', dbQueryDateBoundary(state.dbEndTime, true));
+    const result = await api(`/api/db/conversations?${params}`);
+    state.dbConversationItems = result.items || [];
+    state.dbConversationTotal = result.total || 0;
+  } finally {
+    state.dbConversationLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+async function openDbConversationDetail(workflowId, conversationId) {
+  state.dbConversationDetailLoading = true;
+  state.dbConversationDetail = null;
+  state.dbSelectedTriggerMessageId = '';
+  state.dbActiveWorkflowId = workflowId || '';
+  state.dbActiveConversationId = conversationId || '';
+  showDbConversationDetailPage();
+  try {
+    const params = new URLSearchParams({ workflowId, conversationId });
+    const detail = await api(`/api/db/conversations/detail?${params}`);
+    state.dbConversationDetail = detail;
+    state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
+  } finally {
+    state.dbConversationDetailLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+function closeDbConversationVariables() {
+  state.dbConversationVariablesOpen = false;
+  renderDbRecordsPage();
+}
+
+async function openDbConversationVariables(workflowId, conversationId) {
+  const targetWorkflowId = String(workflowId || '').trim();
+  const targetConversationId = String(conversationId || '').trim();
+  if (!targetWorkflowId || !targetConversationId) return;
+  state.dbConversationVariablesOpen = true;
+  state.dbConversationVariablesLoading = true;
+  state.dbConversationVariables = [];
+  renderDbRecordsPage();
+  try {
+    if (state.dbActiveWorkflowId === targetWorkflowId
+      && state.dbActiveConversationId === targetConversationId
+      && state.dbConversationDetail) {
+      state.dbConversationVariables = state.dbConversationDetail.variables || [];
+      return;
+    }
+    const params = new URLSearchParams({ workflowId: targetWorkflowId, conversationId: targetConversationId });
+    const result = await api(`/api/db/conversations/variables?${params}`);
+    state.dbConversationVariables = result.variables || [];
+  } finally {
+    state.dbConversationVariablesLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
 async function showRecord(date, fileName) {
   const r = await api(`/api/records/detail?date=${encodeURIComponent(date)}&file=${encodeURIComponent(fileName)}`);
   const firstPayload = r.snapshots?.[0]?.payload || {};
@@ -1850,7 +2162,7 @@ function bindEvents() {
   });
   document.addEventListener('list-page-ui-ready', renderListToolbars);
   document.addEventListener('list-toolbar-action', e => {
-    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId } = e.detail || {};
+    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId, workflowId, conversationId, triggerMessageId, configId, filters } = e.detail || {};
     if (type === 'new-case') createCase().catch(showError);
     if (type === 'import-case' && file) importTestCaseFile(file, format).catch(showError);
     if (type === 'export-cases') exportCases();
@@ -1872,6 +2184,31 @@ function bindEvents() {
     if (type === 'check-update-from-version') checkForUpdate({ notify: true, openWhenAvailable: true }).catch(showError);
     if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
+    if (type === 'open-db-settings') openDbSettings();
+    if (type === 'close-db-settings') closeDbSettings();
+    if (type === 'select-db-config') {
+      state.dbSettingsSelectedId = value;
+      renderDbRecordsPage();
+    }
+    if (type === 'save-db-config') saveDbConfig(config).catch(showError);
+    if (type === 'test-db-config') testDbConfig(configId).catch(showError);
+    if (type === 'query-db-conversations') {
+      state.dbPageNo = 1;
+      queryDbConversations().catch(showError);
+    }
+    if (type === 'refresh-db-conversations') queryDbConversations().catch(showError);
+    if (type === 'reset-db-conversations') resetDbConversationFilters();
+    if (type === 'save-db-filter') saveDbSavedFilter(name).catch(showError);
+    if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
+    if (type === 'apply-db-filter') applyDbSavedFilter(filters);
+    if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'open-db-conversation-variables') openDbConversationVariables(workflowId, conversationId).catch(showError);
+    if (type === 'close-db-conversation-variables') closeDbConversationVariables();
+    if (type === 'back-db-conversations') showDbConversationList();
+    if (type === 'select-db-message') {
+      state.dbSelectedTriggerMessageId = triggerMessageId || '';
+      renderDbRecordsPage();
+    }
     if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
@@ -1894,6 +2231,11 @@ function bindEvents() {
     if (type === 'set-record-page') {
       state.recordPageNo = pageNo;
       renderRecordList();
+    }
+    if (type === 'set-db-page') {
+      state.dbPageNo = pageNo;
+      if (pageSize !== state.dbPageSize) state.dbPageSize = pageSize;
+      queryDbConversations().catch(showError);
     }
     if (type === 'create-agent-id') createAgentId(agentId).catch(showError);
     if (type === 'cancel-send') closeSendDialog();
@@ -1942,6 +2284,31 @@ function bindEvents() {
       state.recordFriendNick = '';
       state.recordPageNo = 1;
       renderRecordList();
+    }
+    if (type === 'db-workflow-id') {
+      state.dbWorkflowId = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-conversation-id') {
+      state.dbConversationId = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-friend-nick') {
+      state.dbFriendNick = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-keyword') {
+      state.dbKeyword = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-has-error') {
+      state.dbHasError = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-time-range') {
+      state.dbStartTime = Array.isArray(value) ? value[0] || '' : '';
+      state.dbEndTime = Array.isArray(value) ? value[1] || '' : '';
+      renderDbRecordsPage();
     }
   });
   document.addEventListener('case-detail-action', e => {
