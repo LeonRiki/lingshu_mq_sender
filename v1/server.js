@@ -11,6 +11,8 @@ const RECORDS_DIR = path.join(ROOT, 'records');
 const CACHE_DIR = path.join(ROOT, 'cache');
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const MQ_CONFIGS_FILE = path.join(CACHE_DIR, 'mq-configs.json');
+const DB_CONFIGS_FILE = path.join(CACHE_DIR, 'db-configs.json');
+const DB_CONVERSATION_FILTERS_FILE = path.join(CACHE_DIR, 'db-conversation-filters.json');
 const UPDATE_DIR = path.join(CACHE_DIR, 'updates');
 const UPDATE_BACKUPS_DIR = path.join(UPDATE_DIR, 'backups');
 const UPDATE_STAGING_DIR = path.join(UPDATE_DIR, 'staging');
@@ -564,6 +566,32 @@ function compactTime() {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+function formatDbDisplayDateTime(value) {
+  if (!value) return '';
+  const pad = n => String(n).padStart(2, '0');
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+  }
+  const text = String(value).trim();
+  const matched = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!matched) return text;
+  const [, year, month, day, hour, minute, second] = matched;
+  const dateText = `${year}-${month}-${day}`;
+  if (!hour || !minute) return dateText;
+  return `${dateText} ${hour}:${minute}:${second || '00'}`;
+}
+
+function formatDbDisplayDateTimeLoose(value) {
+  const formatted = formatDbDisplayDateTime(value);
+  if (formatted && formatted !== String(value).trim()) return formatted;
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+  }
+  return formatted;
 }
 
 function id(prefix) {
@@ -1155,6 +1183,1435 @@ function mqConfig(configId) {
   return environmentMqConfig();
 }
 
+function dbConfigRecord(value, existing = {}) {
+  const port = Number(value.port || existing.port || 5432);
+  const config = {
+    id: existing.id || value.id || id('db'),
+    name: String(value.name || existing.name || '').trim(),
+    host: String(value.host || existing.host || '').trim(),
+    port: Number.isFinite(port) && port > 0 ? port : 5432,
+    database: String(value.database || existing.database || '').trim(),
+    user: String(value.user || existing.user || '').trim(),
+    password: String(value.password || existing.password || '')
+  };
+  if (Object.entries(config).some(([key, item]) => !['id', 'password'].includes(key) && !String(item || '').trim())) {
+    const err = new Error('数据库配置填写不完整');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!config.password) {
+    const err = new Error('数据库密码未配置');
+    err.statusCode = 400;
+    throw err;
+  }
+  return config;
+}
+
+function readDbConfigs() {
+  const data = readJson(DB_CONFIGS_FILE, { configs: [] });
+  return Array.isArray(data?.configs) ? data.configs : [];
+}
+
+function publicDbConfig(config) {
+  return {
+    id: config.id,
+    name: config.name,
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.user,
+    hasPassword: Boolean(config.password)
+  };
+}
+
+function saveDbConfig(value) {
+  const configs = readDbConfigs();
+  const existingIndex = value.id ? configs.findIndex(config => config.id === value.id) : -1;
+  const config = dbConfigRecord(value, existingIndex >= 0 ? configs[existingIndex] : {});
+  if (configs.some(item => item.id !== config.id && item.name === config.name)) {
+    const err = new Error('数据库配置名称已存在');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (existingIndex >= 0) configs[existingIndex] = config;
+  else configs.push(config);
+  writePrivateJson(DB_CONFIGS_FILE, { configs });
+  return publicDbConfig(config);
+}
+
+function dbConversationFilterValues(value = {}) {
+  return {
+    workflowId: String(value.workflowId || '').trim(),
+    conversationId: String(value.conversationId || '').trim(),
+    friendNick: String(value.friendNick || '').trim(),
+    keyword: String(value.keyword || '').trim(),
+    hasError: ['true', 'false'].includes(String(value.hasError || '')) ? String(value.hasError) : ''
+  };
+}
+
+function readDbConversationFilters() {
+  const data = readJson(DB_CONVERSATION_FILTERS_FILE, { filters: [] });
+  return Array.isArray(data?.filters) ? data.filters : [];
+}
+
+function publicDbConversationFilter(filter) {
+  return {
+    id: filter.id,
+    name: filter.name,
+    filters: dbConversationFilterValues(filter.filters)
+  };
+}
+
+function saveDbConversationFilter(value) {
+  const name = String(value.name || '').trim();
+  const filters = dbConversationFilterValues(value.filters);
+  if (!name) {
+    const err = new Error('请输入筛选条件名称');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!filters.workflowId) {
+    const err = new Error('工作流ID为必填项，无法保存空筛选条件');
+    err.statusCode = 400;
+    throw err;
+  }
+  const savedFilters = readDbConversationFilters();
+  if (savedFilters.some(filter => filter.name === name)) {
+    const err = new Error('筛选条件名称已存在');
+    err.statusCode = 400;
+    throw err;
+  }
+  const filter = { id: id('db_filter'), name, filters };
+  savedFilters.push(filter);
+  writePrivateJson(DB_CONVERSATION_FILTERS_FILE, { filters: savedFilters });
+  return publicDbConversationFilter(filter);
+}
+
+function deleteDbConversationFilter(filterId) {
+  const savedFilters = readDbConversationFilters();
+  const nextFilters = savedFilters.filter(filter => filter.id !== filterId);
+  if (nextFilters.length === savedFilters.length) {
+    const err = new Error('筛选条件不存在');
+    err.statusCode = 404;
+    throw err;
+  }
+  writePrivateJson(DB_CONVERSATION_FILTERS_FILE, { filters: nextFilters });
+}
+
+function dbConfig(configId) {
+  const configs = readDbConfigs();
+  const selected = configId ? configs.find(config => config.id === configId) : configs[0];
+  if (!selected) {
+    const err = new Error('请先配置数据库连接');
+    err.statusCode = 400;
+    throw err;
+  }
+  return selected;
+}
+
+function requirePg() {
+  try {
+    const pg = require('pg');
+    // 数据库使用 timestamp without time zone，保留原始文本以避免 Node.js 时区转换改变日期。
+    pg.types.setTypeParser(1114, value => value);
+    return pg;
+  } catch (err) {
+    const error = new Error('缺少 pg 依赖，请重新启动应用以自动安装；若仍失败请检查网络');
+    error.statusCode = 500;
+    throw error;
+  }
+}
+
+let dbClientQueue = Promise.resolve();
+let dbPool = null;
+let dbPoolFingerprint = '';
+let dbConnectionState = { configId: '', fingerprint: '', status: 'disconnected', errorMessage: '' };
+
+function dbConnectionFingerprint(config) {
+  return JSON.stringify([config.host, config.port, config.database, config.user, config.password]);
+}
+
+function setDbConnectionState(config, status, errorMessage = '') {
+  dbConnectionState = {
+    configId: config.id,
+    fingerprint: dbConnectionFingerprint(config),
+    status,
+    errorMessage: String(errorMessage || '')
+  };
+}
+
+function dbConnectionStatus(configId = '') {
+  let config;
+  try {
+    config = dbConfig(configId);
+  } catch (err) {
+    return { configId: '', name: '未配置数据库', status: 'disconnected', errorMessage: '' };
+  }
+  const fingerprint = dbConnectionFingerprint(config);
+  const connectedConfig = dbConnectionState.configId === config.id && dbConnectionState.fingerprint === fingerprint;
+  return {
+    configId: config.id,
+    name: config.name || '未命名数据库',
+    status: connectedConfig ? dbConnectionState.status : 'disconnected',
+    errorMessage: connectedConfig ? dbConnectionState.errorMessage : ''
+  };
+}
+
+function normalizeDbConnectionError(err) {
+  if (err?.code === '53300' || /remaining connection slots are reserved/i.test(String(err?.message || ''))) {
+    const error = new Error('数据库连接数已满，当前只读账号暂时无法获取连接。请稍后重试，或联系数据库管理员释放连接/提高连接数。');
+    error.statusCode = 503;
+    return error;
+  }
+  return err;
+}
+
+function dbPoolForConfig(Pool, config, fingerprint) {
+  const pool = new Pool({
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.user,
+    password: config.password,
+    max: 1,
+    idleTimeoutMillis: 5 * 60 * 1000,
+    connectionTimeoutMillis: 5000
+  });
+  pool.on('error', err => {
+    if (dbPool !== pool || dbPoolFingerprint !== fingerprint) return;
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+  });
+  pool.on('remove', () => {
+    // pg 在空闲超时后移除最后一个客户端时，连接池还在但已没有实际数据库连接。
+    setImmediate(() => {
+      if (dbPool !== pool || dbPoolFingerprint !== fingerprint || pool.totalCount > 0) return;
+      setDbConnectionState(config, 'disconnected');
+    });
+  });
+  return pool;
+}
+
+async function withDbClient(configId, callback, { allowConnect = false } = {}) {
+  let releaseQueue;
+  const previous = dbClientQueue.catch(() => {});
+  dbClientQueue = new Promise(resolve => {
+    releaseQueue = resolve;
+  });
+  await previous;
+  try {
+    return await withDbClientOnce(configId, callback, { allowConnect });
+  } finally {
+    releaseQueue();
+  }
+}
+
+async function withDbClientOnce(configId, callback, { allowConnect = false } = {}) {
+  const config = dbConfig(configId);
+  const fingerprint = dbConnectionFingerprint(config);
+  const connection = dbConnectionStatus(config.id);
+  if (!allowConnect && (!dbPool || dbPoolFingerprint !== fingerprint || connection.status !== 'connected')) {
+    const error = new Error('数据库未连接，请先点击“建立连接”后再查询');
+    error.statusCode = 409;
+    throw error;
+  }
+  const { Pool } = requirePg();
+  if (!dbPool || dbPoolFingerprint !== fingerprint) {
+    const previousPool = dbPool;
+    dbPool = dbPoolForConfig(Pool, config, fingerprint);
+    dbPoolFingerprint = fingerprint;
+    if (previousPool) previousPool.end().catch(() => {});
+  }
+  const pool = dbPool;
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (err) {
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+    throw error;
+  }
+  setDbConnectionState(config, 'connected');
+  try {
+    await client.query('BEGIN READ ONLY');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function parseDbJson(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(String(value));
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function dbKey(workflowId, conversationId) {
+  return `${String(workflowId || '')}\n${String(conversationId || '')}`;
+}
+
+function executionHasError(execution) {
+  return Boolean(
+    String(execution.error_message || '').trim() ||
+    String(execution.error_class || '').trim() ||
+    String(execution.error_code || '').trim() ||
+    (execution.status && !['SUCCESS', 'COMPLETED'].includes(String(execution.status).toUpperCase()))
+  );
+}
+
+function dbTriggerIdOf(item) {
+  return String(item?.trigger_message_id ?? item?.triggerMessageId ?? item?.requestid ?? item?.requestId ?? '');
+}
+
+function dbWorkflowIdOf(item) {
+  return String(item?.workflow_id ?? item?.workflowId ?? '');
+}
+
+function dbInputText(value) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(dbInputText).filter(Boolean).join('\n');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value).trim();
+}
+
+function dbTriggerExecutionInput(execution) {
+  const nodeName = String(execution.node_name ?? execution.nodeName ?? '').trim();
+  if (nodeName !== '灵犀触发器') return '';
+  const outputs = parseDbJson(execution.outputs, execution.outputs || null);
+  return dbInputText(outputs?.input);
+}
+
+function dbNodeIdOf(execution) {
+  return String(execution?.node_id ?? execution?.nodeId ?? '');
+}
+
+function dbOwnValue(object, key) {
+  if (!object || typeof object !== 'object') return undefined;
+  return Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined;
+}
+
+function dbNodeOutputValue(execution, field) {
+  const outputs = parseDbJson(execution?.outputs, execution?.outputs || null);
+  return dbOwnValue(outputs, field);
+}
+
+function dbReferencedOutputNodeIds(executions = []) {
+  const nodeIds = new Set();
+  const referencePattern = /@node\.([^.\s}]+)\.[A-Za-z0-9_]+/g;
+  executions.forEach(execution => {
+    if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return;
+    const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+    const contentConfig = parseDbJson(inputs?.content, inputs?.content || null);
+    const serialized = JSON.stringify(contentConfig || inputs || {});
+    let matched;
+    while ((matched = referencePattern.exec(serialized))) nodeIds.add(matched[1]);
+  });
+  return [...nodeIds];
+}
+
+function dbLocalInputValue(localInputs, field) {
+  const direct = dbOwnValue(localInputs, field);
+  if (direct !== undefined) return direct;
+  return dbOwnValue(localInputs?.inputs, field);
+}
+
+function dbResolveSendExpression(expression, localInputs, executionsByNodeId) {
+  const expr = String(expression || '').trim();
+  const nodeMatched = expr.match(/^@node\.([^.]+)\.([A-Za-z0-9_]+)$/);
+  if (nodeMatched) return dbNodeOutputValue(executionsByNodeId.get(nodeMatched[1]), nodeMatched[2]);
+  return dbLocalInputValue(localInputs, expr);
+}
+
+function dbResolveSendContent(value, localInputs, executionsByNodeId) {
+  const text = dbInputText(value);
+  if (!text) return value === null ? null : '';
+  const singleReference = text.match(/^\{\{\s*([^}]+?)\s*\}\}$/);
+  if (singleReference) {
+    const resolved = dbResolveSendExpression(singleReference[1], localInputs, executionsByNodeId);
+    if (resolved === undefined) return '';
+    return resolved === null ? null : dbInputText(resolved);
+  }
+  return text.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expression) => {
+    const resolved = dbResolveSendExpression(expression, localInputs, executionsByNodeId);
+    return resolved === undefined || resolved === null ? '' : dbInputText(resolved);
+  }).replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
+}
+
+function dbSendExecutionContent(execution, executionsByNodeId) {
+  if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return { found: false, value: '' };
+  const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+  if (!inputs || typeof inputs !== 'object') return { found: false, value: '' };
+  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+  const replyAction = actions.find(action => Number(action?.actionType) === 6);
+  if (!replyAction) return { found: false, value: '' };
+  const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
+  return { found: true, value: dbResolveSendContent(replyAction.actionContent, localInputs, executionsByNodeId) };
+}
+
+function dbSendExecutionPreview(execution, executionsByNodeId) {
+  if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return { label: '', content: '' };
+  const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+  if (!inputs || typeof inputs !== 'object') return { label: '', content: '' };
+  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+  const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
+  const replyAction = actions.find(item => Number(item?.actionType) === 6);
+  if (replyAction) {
+    return {
+      label: 'AI回复',
+      content: dbResolveSendContent(replyAction.actionContent, localInputs, executionsByNodeId)
+    };
+  }
+  const tagActions = actions.filter(item => Number(item?.actionType) === 4);
+  if (tagActions.length) {
+    const content = tagActions.map(action => {
+      const value = dbResolveSendContent(action.actionMessage, localInputs, executionsByNodeId);
+      return `${Number(action?.tagOperateType) === 2 ? '-' : '+'}${value === null ? 'null' : dbInputText(value)}`;
+    }).join(' / ');
+    return { label: '打标签', content };
+  }
+  const action = actions.find(item => Object.prototype.hasOwnProperty.call(item || {}, 'actionContent'));
+  return action
+    ? { label: '消息推送', content: dbResolveSendContent(action.actionContent, localInputs, executionsByNodeId) }
+    : { label: '', content: '' };
+}
+
+function dbSendExecutionActions(execution, executionsByNodeId) {
+  if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return [];
+  const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+  if (!inputs || typeof inputs !== 'object') return [];
+  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+  const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
+  return actions
+    .filter(action => Number(action?.actionType) === 4)
+    .map(action => {
+      const operateType = Number(action?.tagOperateType);
+      const content = dbResolveSendContent(action.actionMessage, localInputs, executionsByNodeId);
+      return {
+        actionType: 'tag',
+        actionLabel: '打标签',
+        tagOperateType: operateType,
+        content,
+        startedAt: execution.started_at || ''
+      };
+    });
+}
+
+function dbSetVariableAssignments(execution) {
+  const inputs = parseDbJson(execution.inputs, execution.inputs || null) || {};
+  const outputs = parseDbJson(execution.outputs, execution.outputs || null) || {};
+  const inputAssignments = Array.isArray(inputs.assignments)
+    ? inputs.assignments
+    : inputs.variableKey ? [{ variableKey: inputs.variableKey, variableValue: inputs.variableValue ?? inputs.value }] : [];
+  const outputAssignments = Array.isArray(outputs.assignments) ? outputs.assignments : [];
+  const outputValues = new Map(outputAssignments
+    .filter(item => item && (item.key || item.variableKey))
+    .map(item => [String(item.key || item.variableKey), item.value ?? item.variableValue]));
+  const assignments = inputAssignments
+    .filter(item => item && (item.variableKey || item.key))
+    .map(item => {
+      const key = String(item.variableKey || item.key);
+      return {
+        key,
+        value: outputValues.has(key)
+          ? outputValues.get(key)
+          : Object.prototype.hasOwnProperty.call(outputs, key) ? dbOwnValue(outputs, key) : item.variableValue ?? item.value
+      };
+    });
+  if (assignments.length) return assignments;
+  if (outputAssignments.length) {
+    return outputAssignments
+      .filter(item => item && (item.key || item.variableKey))
+      .map(item => ({ key: String(item.key || item.variableKey), value: item.value ?? item.variableValue }));
+  }
+  return [];
+}
+
+function dbExecutionActionEvents(executions = []) {
+  const result = new Map();
+  const executionsByTrigger = new Map();
+  executions.forEach(execution => {
+    const workflowId = dbWorkflowIdOf(execution);
+    const triggerId = dbTriggerIdOf(execution);
+    if (!workflowId || !triggerId) return;
+    const key = `${workflowId}\n${triggerId}`;
+    if (!executionsByTrigger.has(key)) executionsByTrigger.set(key, []);
+    executionsByTrigger.get(key).push(execution);
+  });
+  executionsByTrigger.forEach((items, key) => {
+    const executionsByNodeId = new Map();
+    items.forEach(execution => {
+      const nodeId = dbNodeIdOf(execution);
+      if (nodeId) executionsByNodeId.set(nodeId, execution);
+    });
+    const events = [];
+    items.forEach(execution => {
+      const nodeType = String(execution.node_type ?? execution.nodeType ?? '');
+      const nodeName = String(execution.node_name ?? execution.nodeName ?? dbNodeIdOf(execution) ?? '');
+      if (nodeType === 'set_variable') {
+        events.push({
+          actionType: 'set_variable',
+          actionLabel: '设置变量',
+          nodeName: nodeName || '设置变量',
+          assignments: dbSetVariableAssignments(execution),
+          startedAt: execution.started_at || ''
+        });
+      } else if (nodeType === 'http_request') {
+        events.push({
+          actionType: 'http_request',
+          actionLabel: 'HTTP请求',
+          nodeName: nodeName || 'HTTP请求',
+          startedAt: execution.started_at || ''
+        });
+      } else {
+        events.push(...dbSendExecutionActions(execution, executionsByNodeId));
+      }
+    });
+    result.set(key, events.sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || ''))));
+  });
+  return result;
+}
+
+function dbTriggerInputMap(executions = []) {
+  const result = new Map();
+  executions.forEach(execution => {
+    const workflowId = dbWorkflowIdOf(execution);
+    const triggerId = dbTriggerIdOf(execution);
+    if (!workflowId || !triggerId) return;
+    const content = dbTriggerExecutionInput(execution);
+    if (content && !result.has(`${workflowId}\n${triggerId}`)) result.set(`${workflowId}\n${triggerId}`, content);
+  });
+  return result;
+}
+
+function dbAssistantReplyMap(executions = []) {
+  const result = new Map();
+  const executionsByTrigger = new Map();
+  executions.forEach(execution => {
+    const workflowId = dbWorkflowIdOf(execution);
+    const triggerId = dbTriggerIdOf(execution);
+    if (!workflowId || !triggerId) return;
+    const key = `${workflowId}\n${triggerId}`;
+    if (!executionsByTrigger.has(key)) executionsByTrigger.set(key, []);
+    executionsByTrigger.get(key).push(execution);
+  });
+  executionsByTrigger.forEach((items, key) => {
+    const executionsByNodeId = new Map();
+    items.forEach(execution => {
+      const nodeId = dbNodeIdOf(execution);
+      if (nodeId) executionsByNodeId.set(nodeId, execution);
+    });
+    items.forEach(execution => {
+      const reply = dbSendExecutionContent(execution, executionsByNodeId);
+      if (reply.found && !result.has(key)) result.set(key, reply.value);
+    });
+  });
+  return result;
+}
+
+function dbMessageDisplayContent(message, triggerInputs, assistantReplies) {
+  const role = String(message.role || '').toUpperCase();
+  const workflowId = dbWorkflowIdOf(message);
+  const triggerId = dbTriggerIdOf(message);
+  if (role === 'USER') return triggerInputs.get(`${workflowId}\n${triggerId}`) || String(message.content || '');
+  if (role === 'ASSISTANT') {
+    const key = `${workflowId}\n${triggerId}`;
+    return assistantReplies.has(key) ? assistantReplies.get(key) : '不回复';
+  }
+  return String(message.content || '');
+}
+
+function dbTriggerKeyOf(item) {
+  return `${dbWorkflowIdOf(item)}\n${dbTriggerIdOf(item)}`;
+}
+
+function dbFindJsonField(value, fieldName) {
+  if (value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const result = dbFindJsonField(item, fieldName);
+      if (result !== undefined) return result;
+    }
+    return undefined;
+  }
+  if (typeof value !== 'object') return undefined;
+  for (const [key, item] of Object.entries(value)) {
+    if (key.toLowerCase() === fieldName.toLowerCase()) return item;
+    const result = dbFindJsonField(item, fieldName);
+    if (result !== undefined) return result;
+  }
+  return undefined;
+}
+
+function dbConversationFriendNick(executions = []) {
+  for (const execution of executions) {
+    const nodeType = String(execution.node_type || execution.nodeType || '');
+    const nodeName = String(execution.node_name || execution.nodeName || '');
+    if (!nodeType.includes('lingxi') && !nodeName.includes('灵犀')) continue;
+    const friendNick = dbFindJsonField(parseDbJson(execution.inputs, null), 'friendNick')
+      ?? dbFindJsonField(parseDbJson(execution.outputs, null), 'friendNick');
+    if (friendNick !== undefined && friendNick !== null && String(friendNick).trim()) return String(friendNick).trim();
+  }
+  return '';
+}
+
+function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies) {
+  const actionEventsByTrigger = dbExecutionActionEvents(executions);
+  const processedTriggerKeys = new Set(executions
+    .filter(execution => dbWorkflowIdOf(execution) && dbTriggerIdOf(execution))
+    .map(dbTriggerKeyOf));
+  const assistantMessagesByTrigger = new Map();
+  sortedMessages
+    .filter(message => String(message.role || '').toUpperCase() === 'ASSISTANT' && dbTriggerIdOf(message))
+    .forEach(message => {
+      const key = dbTriggerKeyOf(message);
+      if (!assistantMessagesByTrigger.has(key)) assistantMessagesByTrigger.set(key, message);
+    });
+  return sortedMessages
+    .filter(message => String(message.role || '').toUpperCase() === 'USER' && dbTriggerIdOf(message))
+    .flatMap(message => {
+      const key = dbTriggerKeyOf(message);
+      const assistantMessage = assistantMessagesByTrigger.get(key);
+      const hasReplyAction = assistantReplies.has(key);
+      const assistantContent = hasReplyAction ? assistantReplies.get(key) : '';
+      const actionEvents = (actionEventsByTrigger.get(key) || []).map((event, index) => ({
+        id: `${dbTriggerIdOf(message)}:action:${index}`,
+        triggerMessageId: dbTriggerIdOf(message),
+        workflowId: String(message.workflow_id || ''),
+        conversationId: message.conversation_id || '',
+        role: 'ACTION',
+        actionType: event.actionType || '',
+        actionLabel: event.actionLabel,
+        tagOperateType: event.tagOperateType,
+        nodeName: event.nodeName || '',
+        assignments: event.assignments || [],
+        content: event.content,
+        contentType: 'TEXT',
+        messageTimestamp: formatDbDisplayDateTimeLoose(event.startedAt || message.message_timestamp)
+      }));
+      return [
+        {
+          id: message.id,
+          triggerMessageId: dbTriggerIdOf(message),
+          workflowId: String(message.workflow_id || ''),
+          conversationId: message.conversation_id || '',
+          role: message.role || 'USER',
+          processed: processedTriggerKeys.has(key),
+          hasReplyAction,
+          content: dbMessageDisplayContent(message, triggerInputs, assistantReplies),
+          contentType: message.content_type || '',
+          messageTimestamp: formatDbDisplayDateTimeLoose(message.message_timestamp)
+        },
+        ...(hasReplyAction ? [{
+          id: assistantMessage?.id || `${dbTriggerIdOf(message)}:assistant`,
+          triggerMessageId: dbTriggerIdOf(message),
+          workflowId: String(assistantMessage?.workflow_id || message.workflow_id || ''),
+          conversationId: assistantMessage?.conversation_id || message.conversation_id || '',
+          role: 'ASSISTANT',
+          actionLabel: 'AI回复',
+          content: assistantContent,
+          contentType: assistantMessage?.content_type || 'TEXT',
+          messageTimestamp: formatDbDisplayDateTimeLoose(assistantMessage?.message_timestamp || message.message_timestamp)
+        }] : []),
+        ...actionEvents
+      ];
+    });
+}
+
+function buildDbConversationRows({ conversations = [], messages = [], executions = [] }) {
+  const groups = new Map();
+  conversations.forEach(item => {
+    const workflowId = String(item.workflow_id ?? item.workflowId ?? '');
+    const conversationId = String(item.conversation_id ?? item.conversationId ?? '');
+    if (!workflowId || !conversationId) return;
+    const key = dbKey(workflowId, conversationId);
+    const existing = groups.get(key) || {
+      id: `${workflowId}:${conversationId}`,
+      workflowId,
+      conversationId,
+      status: item.status || '',
+      lastMessageAt: item.last_message_at || item.lastMessageAt || '',
+      messages: [],
+      executions: []
+    };
+    if (String(item.last_message_at || '').localeCompare(existing.lastMessageAt || '') > 0) existing.lastMessageAt = item.last_message_at;
+    existing.status ||= item.status || '';
+    groups.set(key, existing);
+  });
+
+  messages.forEach(message => {
+    const workflowId = String(message.workflow_id ?? message.workflowId ?? '');
+    const conversationId = String(message.conversation_id ?? message.conversationId ?? '');
+    const group = groups.get(dbKey(workflowId, conversationId));
+    if (!group) return;
+    group.messages.push(message);
+    const timestamp = String(message.message_timestamp || message.messageTimestamp || '');
+    if (timestamp.localeCompare(group.lastMessageAt || '') > 0) group.lastMessageAt = timestamp;
+  });
+
+  const triggerToGroup = new Map();
+  groups.forEach(group => {
+    group.messages.forEach(message => {
+      const triggerId = dbTriggerIdOf(message);
+      if (triggerId) triggerToGroup.set(`${group.workflowId}\n${triggerId}`, group);
+    });
+  });
+
+  executions.forEach(execution => {
+    const workflowId = dbWorkflowIdOf(execution);
+    const triggerId = dbTriggerIdOf(execution);
+    const group = triggerToGroup.get(`${workflowId}\n${triggerId}`);
+    if (group) group.executions.push(execution);
+  });
+
+  return [...groups.values()].sort((a, b) => String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || ''))).map(group => {
+    const sortedMessages = [...group.messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
+    const triggerInputs = dbTriggerInputMap(group.executions);
+    const assistantReplies = dbAssistantReplyMap(group.executions);
+    const errors = group.executions.filter(executionHasError);
+    return {
+      id: group.id,
+      workflowId: group.workflowId,
+      conversationId: group.conversationId,
+      status: group.status,
+      lastMessageAt: formatDbDisplayDateTimeLoose(group.lastMessageAt),
+      messageCount: group.messages.length,
+      userMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'USER').length,
+      assistantMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'ASSISTANT').length,
+      friendNick: dbConversationFriendNick(group.executions),
+      messageSummary: sortedMessages
+        .filter(message => String(message.role || '').toUpperCase() === 'USER')
+        .map(message => dbMessageDisplayContent(message, triggerInputs, assistantReplies))
+        .filter(value => value !== undefined && value !== ''),
+      hasError: errors.length > 0,
+      errorSummary: errors.map(item => item.error_message || item.error_class || item.error_code || item.status).filter(Boolean)[0] || ''
+    };
+  });
+}
+
+function normalizeDbExecution(execution, preview = {}, { includeDetails = false } = {}) {
+  const normalized = {
+    id: execution.id,
+    triggerMessageId: dbTriggerIdOf(execution),
+    workflowId: dbWorkflowIdOf(execution),
+    runId: execution.run_id ?? execution.runId ?? '',
+    nodeId: execution.node_id ?? execution.nodeId ?? '',
+    nodeType: execution.node_type ?? execution.nodeType ?? '',
+    nodeName: execution.node_name ?? execution.nodeName ?? '',
+    status: execution.status || '',
+    errorMessage: execution.error_message || '',
+    errorClass: execution.error_class || '',
+    errorCode: execution.error_code || '',
+    logs: parseDbJson(execution.logs, execution.logs || null),
+    beforeSnapshot: parseDbJson(execution.before_snapshot, execution.before_snapshot || null),
+    afterSnapshot: parseDbJson(execution.after_snapshot, execution.after_snapshot || null),
+    startedAt: formatDbDisplayDateTimeLoose(execution.started_at),
+    completedAt: formatDbDisplayDateTimeLoose(execution.completed_at),
+    durationMs: Number(execution.duration_ms || 0),
+    previewContent: preview.content ?? '',
+    previewLabel: preview.label || '',
+    previewOutputs: parseDbJson(execution.outputs, execution.outputs || null),
+    detailsLoaded: includeDetails
+  };
+  if (includeDetails) {
+    normalized.inputs = parseDbJson(execution.inputs, execution.inputs || null);
+    normalized.outputs = parseDbJson(execution.outputs, execution.outputs || null);
+    normalized.logs = parseDbJson(execution.logs, execution.logs || null);
+    normalized.beforeSnapshot = parseDbJson(execution.before_snapshot, execution.before_snapshot || null);
+    normalized.afterSnapshot = parseDbJson(execution.after_snapshot, execution.after_snapshot || null);
+  }
+  return normalized;
+}
+
+function normalizeDbConversationVariables(variables = []) {
+  return [...variables]
+    .sort((a, b) => String(a.variable_key || '').localeCompare(String(b.variable_key || '')))
+    .map(item => ({
+      key: item.variable_key || '',
+      value: parseDbJson(item.variable_value, item.variable_value || ''),
+      type: item.variable_type || '',
+      description: item.variable_description || item.description || ''
+    }));
+}
+
+function dbGraphNodeType(node) {
+  return String(node?.type || node?.nodeType || node?.data?.nodeType || '');
+}
+
+function dbGraphNodeLabel(node) {
+  return String(node?.data?.label || node?.label || node?.id || '');
+}
+
+function dbGraphTimestamp(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  return String(value || '');
+}
+
+function dbHistoricalSnapshotForExecutions(executions, snapshots) {
+  const executionNodeIds = new Set(executions.map(dbNodeIdOf).filter(Boolean));
+  const firstStartedAt = executions.map(item => dbGraphTimestamp(item.started_at)).filter(Boolean).sort()[0] || '';
+  const candidates = snapshots.map(snapshot => {
+    const nodeIds = new Set((snapshot.graph.nodes || []).map(node => String(node.id)));
+    return {
+      ...snapshot,
+      matchedCount: [...executionNodeIds].filter(id => nodeIds.has(id)).length,
+      publishedBeforeRun: !firstStartedAt || !snapshot.createdAt || snapshot.createdAt <= firstStartedAt
+    };
+  }).filter(snapshot => snapshot.matchedCount > 0);
+  if (!candidates.length) return null;
+  const preferredCandidates = candidates.some(snapshot => snapshot.publishedBeforeRun)
+    ? candidates.filter(snapshot => snapshot.publishedBeforeRun)
+    : candidates;
+  const maxMatchedCount = Math.max(...preferredCandidates.map(snapshot => snapshot.matchedCount));
+  return preferredCandidates
+    .filter(snapshot => snapshot.matchedCount === maxMatchedCount)
+    .sort((left, right) => {
+      return left.publishedBeforeRun
+        ? String(right.createdAt).localeCompare(String(left.createdAt))
+        : String(left.createdAt).localeCompare(String(right.createdAt));
+    })[0];
+}
+
+function dbHistoricalNodeState(node, currentNodes) {
+  const historicType = dbGraphNodeType(node);
+  const historicLabel = dbGraphNodeLabel(node).replace(/\s+/g, '').toLowerCase();
+  const matchedCurrentNode = currentNodes.find(currentNode => {
+    if (dbGraphNodeType(currentNode) !== historicType) return false;
+    const currentLabel = dbGraphNodeLabel(currentNode).replace(/\s+/g, '').toLowerCase();
+    return historicLabel && currentLabel && (historicLabel === currentLabel || historicLabel.includes(currentLabel) || currentLabel.includes(historicLabel));
+  });
+  return {
+    state: matchedCurrentNode ? 'modified' : 'deleted',
+    currentNodeId: matchedCurrentNode?.id || ''
+  };
+}
+
+function dbHistoricalNodesByTrigger({ currentGraph, workflowVersions, executions }) {
+  const currentNodes = currentGraph.nodes || [];
+  const currentNodeIds = new Set(currentNodes.map(node => String(node.id)));
+  const snapshots = workflowVersions.map(version => ({
+    id: String(version.id || ''),
+    publishVersion: Number(version.publish_version || 0),
+    createdAt: dbGraphTimestamp(version.created_at),
+    graph: parseDbJson(version.graph_snapshot, { nodes: [], edges: [] }) || { nodes: [], edges: [] }
+  })).filter(snapshot => Array.isArray(snapshot.graph.nodes));
+  if (!snapshots.length) return {};
+  const executionsByTrigger = new Map();
+  executions.forEach(execution => {
+    const triggerId = dbTriggerIdOf(execution);
+    if (!triggerId) return;
+    if (!executionsByTrigger.has(triggerId)) executionsByTrigger.set(triggerId, []);
+    executionsByTrigger.get(triggerId).push(execution);
+  });
+  const result = {};
+  executionsByTrigger.forEach((triggerExecutions, triggerId) => {
+    const snapshot = dbHistoricalSnapshotForExecutions(triggerExecutions, snapshots);
+    if (!snapshot) return;
+    const historicalNodesById = new Map((snapshot.graph.nodes || []).map(node => [String(node.id), node]));
+    const missingExecutions = triggerExecutions.filter(execution => !currentNodeIds.has(dbNodeIdOf(execution)));
+    if (!missingExecutions.length) return;
+    const nodes = missingExecutions.map(execution => {
+      const nodeId = dbNodeIdOf(execution);
+      const historicalNode = historicalNodesById.get(nodeId) || {
+        id: nodeId,
+        type: execution.node_type || execution.nodeType || '',
+        position: { x: 0, y: 0 },
+        data: {
+          label: execution.node_name || execution.nodeName || nodeId,
+          config: {},
+          nodeType: execution.node_type || execution.nodeType || ''
+        }
+      };
+      return {
+        id: nodeId,
+        node: historicalNode,
+        ...dbHistoricalNodeState(historicalNode, currentNodes)
+      };
+    });
+    const visibleNodeIds = new Set([...currentNodeIds, ...nodes.map(node => node.id)]);
+    const historicalNodeIds = new Set(nodes.map(node => node.id));
+    const edges = (snapshot.graph.edges || [])
+      .filter(edge => historicalNodeIds.has(String(edge.source)) || historicalNodeIds.has(String(edge.target)))
+      .filter(edge => visibleNodeIds.has(String(edge.source)) && visibleNodeIds.has(String(edge.target)))
+      .map(edge => ({
+        id: `historical:${edge.id || `${edge.source}-${edge.target}`}`,
+        source: String(edge.source),
+        target: String(edge.target),
+        sourceHandle: edge.sourceHandle || '',
+        targetHandle: edge.targetHandle || '',
+        label: edge.label || '',
+        historical: true
+      }));
+    result[triggerId] = {
+      version: { id: snapshot.id, publishVersion: snapshot.publishVersion },
+      nodes,
+      edges
+    };
+  });
+  return result;
+}
+
+async function dbWorkflowVersionsForHistoricalNodes(client, workflowId, currentGraph, executions) {
+  const currentNodeIds = new Set((currentGraph.nodes || []).map(node => String(node.id)));
+  const missingNodeIds = [...new Set(executions.map(dbNodeIdOf).filter(nodeId => nodeId && !currentNodeIds.has(nodeId)))];
+  if (!missingNodeIds.length) return [];
+  const firstStartedAt = executions.map(item => dbGraphTimestamp(item.started_at)).filter(Boolean).sort()[0] || '';
+  const queryVersions = async beforeRunOnly => {
+    const params = [workflowId, missingNodeIds];
+    const beforeRunClause = beforeRunOnly && firstStartedAt
+      ? `AND created_at <= $${params.push(firstStartedAt)}::timestamp`
+      : '';
+    const result = await client.query(`
+      SELECT id, publish_version, graph_snapshot, created_at
+      FROM public.workflow_version
+      WHERE workflow_id::text = $1
+        AND deleted_at IS NULL
+        ${beforeRunClause}
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(graph_snapshot->'nodes', '[]'::jsonb)) node
+          WHERE node->>'id' = ANY($2::text[])
+        )
+      ORDER BY created_at DESC
+      LIMIT 12
+    `, params);
+    return result.rows;
+  };
+  try {
+    const beforeRunVersions = await queryVersions(true);
+    return beforeRunVersions.length ? beforeRunVersions : await queryVersions(false);
+  } catch (error) {
+    return [];
+  }
+}
+
+function buildDbConversationDetail({ workflow = null, workflowVersions = [], messages = [], variables = [], executions = [] }) {
+  const sortedMessages = [...messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
+  const triggerInputs = dbTriggerInputMap(executions);
+  const assistantReplies = dbAssistantReplyMap(executions);
+  const userMessages = sortedMessages.filter(message => String(message.role || '').toUpperCase() === 'USER' && dbTriggerIdOf(message));
+  const selectedTriggerMessageId = dbTriggerIdOf(userMessages.at(-1)) || '';
+  const triggerOrder = [];
+  sortedMessages.forEach(message => {
+    const triggerId = dbTriggerIdOf(message);
+    if (String(message.role || '').toUpperCase() === 'USER' && triggerId && !triggerOrder.includes(triggerId)) triggerOrder.push(triggerId);
+  });
+  executions.forEach(execution => {
+    const triggerId = dbTriggerIdOf(execution);
+    if (triggerId && !triggerOrder.includes(triggerId)) triggerOrder.push(triggerId);
+  });
+  const executionsByTrigger = triggerOrder.reduce((result, triggerId) => {
+    const triggerExecutions = executions
+      .filter(execution => dbTriggerIdOf(execution) === triggerId)
+      .sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
+    const executionsByNodeId = new Map(triggerExecutions
+      .map(execution => [dbNodeIdOf(execution), execution])
+      .filter(([nodeId]) => Boolean(nodeId)));
+    result[triggerId] = triggerExecutions.map(execution => {
+      const nodeType = String(execution.node_type || execution.nodeType || '');
+      const nodeName = String(execution.node_name || execution.nodeName || '');
+      const preview = nodeName === '灵犀触发器'
+        ? { content: dbTriggerExecutionInput(execution) }
+        : nodeType === 'lingxi_send'
+          ? dbSendExecutionPreview(execution, executionsByNodeId)
+          : {};
+      return normalizeDbExecution(execution, preview);
+    });
+    return result;
+  }, {});
+  const workflowGraph = parseDbJson(workflow?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
+  return {
+    workflow: workflow ? {
+      id: String(workflow.id || workflow.workflow_id || ''),
+      name: workflow.name || '',
+      status: workflow.status || '',
+      publishVersion: workflow.publish_version || ''
+    } : null,
+    workflowGraph,
+    historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
+    friendNick: dbConversationFriendNick(executions),
+    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies),
+    variables: normalizeDbConversationVariables(variables),
+    selectedTriggerMessageId,
+    executionsByTrigger
+  };
+}
+
+async function testDbConnection(configId) {
+  return withDbClient(configId, async client => {
+    await client.query('SELECT 1');
+    return { ok: true };
+  }, { allowConnect: true });
+}
+
+async function disconnectDbConnection(configId) {
+  const config = dbConfig(configId);
+  const fingerprint = dbConnectionFingerprint(config);
+  if (dbPool && dbPoolFingerprint === fingerprint) {
+    const pool = dbPool;
+    dbPool = null;
+    dbPoolFingerprint = '';
+    await pool.end();
+  }
+  setDbConnectionState(config, 'disconnected');
+  return dbConnectionStatus(config.id);
+}
+
+function dbDateParam(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+async function listDbConversations(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  if (!workflowId) {
+    const err = new Error('工作流ID为必填项');
+    err.statusCode = 400;
+    throw err;
+  }
+  const conversationId = String(url.searchParams.get('conversationId') || '').trim();
+  const friendNick = String(url.searchParams.get('friendNick') || '').trim();
+  const keyword = String(url.searchParams.get('keyword') || '').trim();
+  const hasError = String(url.searchParams.get('hasError') || '').trim();
+  const startTime = dbDateParam(url.searchParams.get('startTime'));
+  const endTime = dbDateParam(url.searchParams.get('endTime'));
+  const pageNo = Math.max(1, Number(url.searchParams.get('pageNo') || 1));
+  const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 20)));
+  return withDbClient(configId, async client => {
+    const params = [];
+    const where = ['c.deleted_at IS NULL'];
+    // 会话表的 last_message_at 可能没有随着实际消息记录更新，列表以学员最新消息为准。
+    const lastMessageAtSql = `COALESCE(
+      (
+        SELECT MAX(m.message_timestamp)
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND UPPER(COALESCE(m.role, '')) = 'USER'
+      ),
+      (
+        SELECT MAX(m.message_timestamp)
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+      ),
+      c.last_message_at
+    )`;
+    if (workflowId) {
+      params.push(workflowId);
+      where.push(`c.workflow_id::text = $${params.length}`);
+    }
+    if (conversationId) {
+      params.push(`%${conversationId}%`);
+      where.push(`c.conversation_id ILIKE $${params.length}`);
+    }
+    if (friendNick) {
+      params.push(`%${friendNick}%`);
+      where.push(`EXISTS (
+        SELECT 1
+        FROM public.conversation_messages m
+        JOIN public.workflow_node_executions e
+          ON e.workflow_id = m.workflow_id
+         AND e.trigger_message_id = m.trigger_message_id
+         AND e.deleted_at IS NULL
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND (e.inputs::text ILIKE $${params.length} OR e.outputs::text ILIKE $${params.length})
+      )`);
+    }
+    if (startTime) {
+      params.push(startTime);
+      where.push(`${lastMessageAtSql} >= $${params.length}`);
+    }
+    if (endTime) {
+      params.push(endTime);
+      where.push(`${lastMessageAtSql} <= $${params.length}`);
+    }
+    if (keyword) {
+      params.push(`%${keyword}%`);
+      where.push(`EXISTS (
+        SELECT 1 FROM public.conversation_messages m
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM public.workflow_node_executions e
+              WHERE e.workflow_id = m.workflow_id
+                AND e.trigger_message_id = m.trigger_message_id
+                AND e.deleted_at IS NULL
+                AND e.node_name = '灵犀触发器'
+                AND e.outputs::text ILIKE $${params.length}
+            )
+            OR (
+              UPPER(COALESCE(m.role, '')) = 'USER'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM public.workflow_node_executions e
+                WHERE e.workflow_id = m.workflow_id
+                  AND e.trigger_message_id = m.trigger_message_id
+                  AND e.deleted_at IS NULL
+                  AND e.node_name = '灵犀触发器'
+              )
+              AND m.content ILIKE $${params.length}
+            )
+            OR (
+              UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
+              AND EXISTS (
+                SELECT 1
+                FROM public.workflow_node_executions send
+                WHERE send.workflow_id = m.workflow_id
+                  AND send.trigger_message_id = m.trigger_message_id
+                  AND send.deleted_at IS NULL
+                  AND send.node_type = 'lingxi_send'
+                  AND send.inputs::text ILIKE '%actionType%'
+                  AND send.inputs::text ILIKE '%actionContent%'
+                  AND send.inputs::text ILIKE '%6%'
+              )
+              AND EXISTS (
+                SELECT 1
+                FROM public.workflow_node_executions e
+                WHERE e.workflow_id = m.workflow_id
+                  AND e.trigger_message_id = m.trigger_message_id
+                  AND e.deleted_at IS NULL
+                  AND (
+                    e.inputs::text ILIKE $${params.length}
+                    OR e.outputs::text ILIKE $${params.length}
+                  )
+              )
+            )
+            OR (
+              UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM public.workflow_node_executions send
+                WHERE send.workflow_id = m.workflow_id
+                  AND send.trigger_message_id = m.trigger_message_id
+                  AND send.deleted_at IS NULL
+                  AND send.node_type = 'lingxi_send'
+                  AND send.inputs::text ILIKE '%actionType%'
+                  AND send.inputs::text ILIKE '%actionContent%'
+                  AND send.inputs::text ILIKE '%6%'
+              )
+              AND m.content ILIKE $${params.length}
+            )
+            OR (
+              UPPER(COALESCE(m.role, '')) NOT IN ('USER', 'ASSISTANT')
+              AND m.content ILIKE $${params.length}
+            )
+          )
+      )`);
+    }
+    if (hasError === 'true') {
+      where.push(`EXISTS (
+        SELECT 1
+        FROM public.conversation_messages m
+        JOIN public.workflow_node_executions e
+          ON e.workflow_id = m.workflow_id
+         AND e.trigger_message_id = m.trigger_message_id
+         AND e.deleted_at IS NULL
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND (
+            COALESCE(e.error_message, '') <> ''
+            OR COALESCE(e.error_class, '') <> ''
+            OR COALESCE(e.error_code, '') <> ''
+            OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
+          )
+      )`);
+    } else if (hasError === 'false') {
+      where.push(`NOT EXISTS (
+        SELECT 1
+        FROM public.conversation_messages m
+        JOIN public.workflow_node_executions e
+          ON e.workflow_id = m.workflow_id
+         AND e.trigger_message_id = m.trigger_message_id
+         AND e.deleted_at IS NULL
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND (
+            COALESCE(e.error_message, '') <> ''
+            OR COALESCE(e.error_class, '') <> ''
+            OR COALESCE(e.error_code, '') <> ''
+            OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
+          )
+      )`);
+    }
+    const pageParams = [...params, pageSize, (pageNo - 1) * pageSize];
+    const conversationSql = `WITH grouped AS (
+        SELECT c.workflow_id, c.conversation_id, MAX(${lastMessageAtSql}) AS last_message_at
+        FROM public.conversations c
+        WHERE ${where.join(' AND ')}
+        GROUP BY c.workflow_id, c.conversation_id
+      ), page AS (
+        SELECT grouped.*, COUNT(*) OVER() AS total_count
+        FROM grouped
+        ORDER BY last_message_at DESC NULLS LAST
+        LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}
+      )
+      SELECT c.workflow_id, c.conversation_id, c.status, page.last_message_at, page.total_count
+      FROM public.conversations c
+      JOIN page
+        ON page.workflow_id = c.workflow_id
+       AND page.conversation_id = c.conversation_id
+      ORDER BY page.last_message_at DESC NULLS LAST, c.workflow_id, c.conversation_id`;
+    const conversations = (await client.query(conversationSql, pageParams)).rows;
+    const keys = conversations.map(item => [String(item.workflow_id), item.conversation_id]);
+    const total = Number(conversations[0]?.total_count || 0);
+    if (!keys.length) return { items: [], total, pageNo, pageSize };
+    const workflowIds = keys.map(([id]) => id);
+    const conversationIds = keys.map(([, id]) => id);
+    const messages = (await client.query(`
+      WITH selected_conversations AS (
+        SELECT * FROM UNNEST($1::text[], $2::text[]) AS pair(workflow_id, conversation_id)
+      )
+      SELECT m.id, m.workflow_id, m.conversation_id, m.role, m.content, m.content_type, m.message_timestamp, m.trigger_message_id
+      FROM public.conversation_messages m
+      JOIN selected_conversations pair
+        ON m.workflow_id::text = pair.workflow_id
+       AND m.conversation_id = pair.conversation_id
+      WHERE m.deleted_at IS NULL
+      ORDER BY message_timestamp ASC NULLS LAST, id ASC
+    `, [workflowIds, conversationIds])).rows;
+    const triggerPairs = [...new Map(messages
+      .map(message => [dbWorkflowIdOf(message), dbTriggerIdOf(message)])
+      .filter(([, triggerId]) => Boolean(triggerId))
+      .map(([messageWorkflowId, triggerId]) => [`${messageWorkflowId}\n${triggerId}`, [messageWorkflowId, triggerId]]))
+      .values()];
+    const executions = triggerPairs.length ? (await client.query(`
+      WITH selected_triggers AS (
+        SELECT * FROM UNNEST($1::text[], $2::text[]) AS pair(workflow_id, trigger_message_id)
+      )
+      SELECT e.workflow_id,
+             e.trigger_message_id,
+             e.node_id,
+             e.node_type,
+             e.node_name,
+             CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
+               THEN e.inputs ELSE NULL END AS inputs,
+             CASE WHEN e.node_name = '灵犀触发器'
+               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
+               ELSE e.outputs
+             END AS outputs,
+             e.status,
+             e.error_message,
+             e.error_class,
+             e.error_code
+      FROM public.workflow_node_executions e
+      JOIN selected_triggers pair
+        ON e.workflow_id::text = pair.workflow_id
+       AND e.trigger_message_id = pair.trigger_message_id
+      WHERE e.deleted_at IS NULL
+    `, [triggerPairs.map(([messageWorkflowId]) => messageWorkflowId), triggerPairs.map(([, triggerId]) => triggerId)])).rows : [];
+    return {
+      items: buildDbConversationRows({ conversations, messages, executions }),
+      total,
+      pageNo,
+      pageSize
+    };
+  });
+}
+
+async function dbConversationDetail(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const conversationId = String(url.searchParams.get('conversationId') || '').trim();
+  if (!workflowId || !conversationId) {
+    const err = new Error('缺少 workflowId 或 conversationId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const [workflow, messages, variables] = await Promise.all([
+      client.query('SELECT * FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
+      client.query(`
+        SELECT *
+        FROM public.conversation_messages
+        WHERE workflow_id::text = $1
+          AND conversation_id = $2
+          AND deleted_at IS NULL
+        ORDER BY message_timestamp ASC NULLS LAST, id ASC
+      `, [workflowId, conversationId]),
+      client.query(`
+        SELECT DISTINCT ON (variable_key) *
+        FROM public.conversation_variables
+        WHERE workflow_id::text = $1
+          AND conversation_id = $2
+          AND deleted_at IS NULL
+        ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
+      `, [workflowId, conversationId])
+    ]);
+    const triggerIds = [...new Set(messages.rows.map(dbTriggerIdOf).filter(Boolean))];
+    const runId = `platform:${workflowId}:${conversationId}`;
+    const executions = (await client.query(`
+      SELECT e.id,
+             e.workflow_id,
+             e.trigger_message_id,
+             e.run_id,
+             e.node_id,
+             e.node_type,
+             e.node_name,
+             CASE WHEN e.node_type IN ('lingxi_send', 'set_variable') THEN e.inputs ELSE NULL END AS inputs,
+             CASE
+               WHEN e.node_name = '灵犀触发器'
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
+               WHEN e.node_type = 'agent'
+                 THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
+               WHEN e.node_type IN ('condition', 'set_variable')
+                 THEN e.outputs
+               ELSE NULL
+             END AS outputs,
+             e.status,
+             e.error_message,
+             e.error_class,
+             e.error_code,
+             e.started_at,
+             e.completed_at,
+             e.duration_ms
+      FROM public.workflow_node_executions e
+      WHERE e.workflow_id::text = $1
+        AND e.deleted_at IS NULL
+        AND (
+          e.trigger_message_id = ANY($2::text[])
+          OR e.run_id = $3
+        )
+      ORDER BY e.started_at ASC NULLS LAST, e.id ASC
+    `, [workflowId, triggerIds, runId])).rows;
+    const referencedNodeIds = dbReferencedOutputNodeIds(executions);
+    if (referencedNodeIds.length && triggerIds.length) {
+      const referencedOutputs = (await client.query(`
+        SELECT e.trigger_message_id, e.node_id, e.outputs
+        FROM public.workflow_node_executions e
+        WHERE e.workflow_id::text = $1
+          AND e.trigger_message_id = ANY($2::text[])
+          AND e.node_id = ANY($3::text[])
+          AND e.deleted_at IS NULL
+      `, [workflowId, triggerIds, referencedNodeIds])).rows;
+      const outputsByNode = new Map(referencedOutputs.map(item => [
+        `${dbTriggerIdOf(item)}\n${dbNodeIdOf(item)}`,
+        item.outputs
+      ]));
+      executions.forEach(execution => {
+        const outputs = outputsByNode.get(`${dbTriggerIdOf(execution)}\n${dbNodeIdOf(execution)}`);
+        if (outputs !== undefined) execution.outputs = outputs;
+      });
+    }
+    return buildDbConversationDetail({
+      workflow: workflow.rows[0] || null,
+      messages: messages.rows,
+      variables: variables.rows,
+      executions
+    });
+  });
+}
+
+async function dbConversationNodeExecution(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const triggerMessageId = String(url.searchParams.get('triggerMessageId') || '').trim();
+  const executionId = String(url.searchParams.get('executionId') || '').trim();
+  if (!workflowId || !triggerMessageId || !executionId) {
+    const err = new Error('缺少 workflowId、triggerMessageId 或 executionId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const execution = await client.query(`
+      SELECT *
+      FROM public.workflow_node_executions
+      WHERE id::text = $1
+        AND workflow_id::text = $2
+        AND trigger_message_id = $3
+        AND deleted_at IS NULL
+      LIMIT 1
+    `, [executionId, workflowId, triggerMessageId]);
+    if (!execution.rows[0]) {
+      const err = new Error('节点执行记录不存在');
+      err.statusCode = 404;
+      throw err;
+    }
+    return { execution: normalizeDbExecution(execution.rows[0], {}, { includeDetails: true }) };
+  });
+}
+
+async function dbConversationHistoricalNode(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const triggerMessageId = String(url.searchParams.get('triggerMessageId') || '').trim();
+  const nodeId = String(url.searchParams.get('nodeId') || '').trim();
+  if (!workflowId || !triggerMessageId || !nodeId) {
+    const err = new Error('缺少 workflowId、triggerMessageId 或 nodeId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const [workflow, executionResult] = await Promise.all([
+      client.query('SELECT id, graph_json FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
+      client.query(`
+        SELECT *
+        FROM public.workflow_node_executions
+        WHERE workflow_id::text = $1
+          AND trigger_message_id = $2
+          AND deleted_at IS NULL
+        ORDER BY started_at ASC NULLS LAST, id ASC
+      `, [workflowId, triggerMessageId])
+    ]);
+    const currentGraph = parseDbJson(workflow.rows[0]?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
+    if ((currentGraph.nodes || []).some(node => String(node.id) === nodeId)) {
+      return { historicalRuntime: null };
+    }
+    const workflowVersions = await dbWorkflowVersionsForHistoricalNodes(client, workflowId, currentGraph, executionResult.rows);
+    const historicalRuntime = dbHistoricalNodesByTrigger({
+      currentGraph,
+      workflowVersions,
+      executions: executionResult.rows
+    })[triggerMessageId] || null;
+    return { historicalRuntime };
+  });
+}
+
+async function dbConversationVariables(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const conversationId = String(url.searchParams.get('conversationId') || '').trim();
+  if (!workflowId || !conversationId) {
+    const err = new Error('缺少 workflowId 或 conversationId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const variables = await client.query(`
+      SELECT DISTINCT ON (variable_key) *
+      FROM public.conversation_variables
+      WHERE workflow_id::text = $1
+        AND conversation_id = $2
+        AND deleted_at IS NULL
+      ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
+    `, [workflowId, conversationId]);
+    return { variables: normalizeDbConversationVariables(variables.rows) };
+  });
+}
+
 function wait(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
@@ -1639,6 +3096,60 @@ async function handleApi(req, res, pathname, url) {
       body.id = decodeURIComponent(mqConfigMatch[1]);
       return json(res, 200, saveMqConfig(body));
     }
+    if (req.method === 'GET' && pathname === '/api/db-configs') {
+      return json(res, 200, readDbConfigs().map(publicDbConfig));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs') {
+      return json(res, 201, saveDbConfig(await parseBody(req)));
+    }
+    const dbConfigMatch = pathname.match(/^\/api\/db-configs\/([^/]+)$/);
+    if (req.method === 'PUT' && dbConfigMatch) {
+      const body = await parseBody(req);
+      body.id = decodeURIComponent(dbConfigMatch[1]);
+      return json(res, 200, saveDbConfig(body));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/test') {
+      const body = await parseBody(req);
+      return json(res, 200, await testDbConnection(body.configId));
+    }
+    if (req.method === 'GET' && pathname === '/api/db-configs/status') {
+      return json(res, 200, dbConnectionStatus(url.searchParams.get('configId') || ''));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/connect') {
+      const body = await parseBody(req);
+      await testDbConnection(body.configId || '');
+      return json(res, 200, dbConnectionStatus(body.configId || ''));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/disconnect') {
+      const body = await parseBody(req);
+      return json(res, 200, await disconnectDbConnection(body.configId || ''));
+    }
+    if (req.method === 'GET' && pathname === '/api/db-conversation-filters') {
+      return json(res, 200, readDbConversationFilters().map(publicDbConversationFilter));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-conversation-filters') {
+      return json(res, 201, saveDbConversationFilter(await parseBody(req)));
+    }
+    const dbConversationFilterMatch = pathname.match(/^\/api\/db-conversation-filters\/([^/]+)$/);
+    if (req.method === 'DELETE' && dbConversationFilterMatch) {
+      deleteDbConversationFilter(decodeURIComponent(dbConversationFilterMatch[1]));
+      return json(res, 204, {});
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations') {
+      return json(res, 200, await listDbConversations(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/detail') {
+      return json(res, 200, await dbConversationDetail(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/node-execution') {
+      return json(res, 200, await dbConversationNodeExecution(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/historical-node') {
+      return json(res, 200, await dbConversationHistoricalNode(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/variables') {
+      return json(res, 200, await dbConversationVariables(url));
+    }
     if (req.method === 'GET' && pathname === '/api/cases') {
       return json(res, 200, listCases());
     }
@@ -1775,13 +3286,17 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildDbConversationDetail,
+  buildDbConversationRows,
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
   currentAppVersion,
+  dbConfigRecord,
   ensureUpdateFilePermissions,
   getFallbackUpdateSource,
   isUpdateAllowedPath,
+  publicDbConfig,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
   summarizeMqSend,
