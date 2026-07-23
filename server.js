@@ -1311,7 +1311,10 @@ function dbConfig(configId) {
 
 function requirePg() {
   try {
-    return require('pg');
+    const pg = require('pg');
+    // 数据库使用 timestamp without time zone，保留原始文本以避免 Node.js 时区转换改变日期。
+    pg.types.setTypeParser(1114, value => value);
+    return pg;
   } catch (err) {
     const error = new Error('缺少 pg 依赖，请重新启动应用以自动安装；若仍失败请检查网络');
     error.statusCode = 500;
@@ -1322,6 +1325,37 @@ function requirePg() {
 let dbClientQueue = Promise.resolve();
 let dbPool = null;
 let dbPoolFingerprint = '';
+let dbConnectionState = { configId: '', fingerprint: '', status: 'disconnected', errorMessage: '' };
+
+function dbConnectionFingerprint(config) {
+  return JSON.stringify([config.host, config.port, config.database, config.user, config.password]);
+}
+
+function setDbConnectionState(config, status, errorMessage = '') {
+  dbConnectionState = {
+    configId: config.id,
+    fingerprint: dbConnectionFingerprint(config),
+    status,
+    errorMessage: String(errorMessage || '')
+  };
+}
+
+function dbConnectionStatus(configId = '') {
+  let config;
+  try {
+    config = dbConfig(configId);
+  } catch (err) {
+    return { configId: '', name: '未配置数据库', status: 'disconnected', errorMessage: '' };
+  }
+  const fingerprint = dbConnectionFingerprint(config);
+  const connectedConfig = dbConnectionState.configId === config.id && dbConnectionState.fingerprint === fingerprint;
+  return {
+    configId: config.id,
+    name: config.name || '未命名数据库',
+    status: connectedConfig ? dbConnectionState.status : 'disconnected',
+    errorMessage: connectedConfig ? dbConnectionState.errorMessage : ''
+  };
+}
 
 function normalizeDbConnectionError(err) {
   if (err?.code === '53300' || /remaining connection slots are reserved/i.test(String(err?.message || ''))) {
@@ -1332,7 +1366,33 @@ function normalizeDbConnectionError(err) {
   return err;
 }
 
-async function withDbClient(configId, callback) {
+function dbPoolForConfig(Pool, config, fingerprint) {
+  const pool = new Pool({
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    user: config.user,
+    password: config.password,
+    max: 1,
+    idleTimeoutMillis: 5 * 60 * 1000,
+    connectionTimeoutMillis: 5000
+  });
+  pool.on('error', err => {
+    if (dbPool !== pool || dbPoolFingerprint !== fingerprint) return;
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+  });
+  pool.on('remove', () => {
+    // pg 在空闲超时后移除最后一个客户端时，连接池还在但已没有实际数据库连接。
+    setImmediate(() => {
+      if (dbPool !== pool || dbPoolFingerprint !== fingerprint || pool.totalCount > 0) return;
+      setDbConnectionState(config, 'disconnected');
+    });
+  });
+  return pool;
+}
+
+async function withDbClient(configId, callback, { allowConnect = false } = {}) {
   let releaseQueue;
   const previous = dbClientQueue.catch(() => {});
   dbClientQueue = new Promise(resolve => {
@@ -1340,47 +1400,50 @@ async function withDbClient(configId, callback) {
   });
   await previous;
   try {
-    return await withDbClientOnce(configId, callback);
+    return await withDbClientOnce(configId, callback, { allowConnect });
   } finally {
     releaseQueue();
   }
 }
 
-async function withDbClientOnce(configId, callback) {
-  const { Pool } = requirePg();
+async function withDbClientOnce(configId, callback, { allowConnect = false } = {}) {
   const config = dbConfig(configId);
-  const fingerprint = JSON.stringify([config.host, config.port, config.database, config.user, config.password]);
+  const fingerprint = dbConnectionFingerprint(config);
+  const connection = dbConnectionStatus(config.id);
+  if (!allowConnect && (!dbPool || dbPoolFingerprint !== fingerprint || connection.status !== 'connected')) {
+    const error = new Error('数据库未连接，请先点击“建立连接”后再查询');
+    error.statusCode = 409;
+    throw error;
+  }
+  const { Pool } = requirePg();
   if (!dbPool || dbPoolFingerprint !== fingerprint) {
     const previousPool = dbPool;
-    dbPool = new Pool({
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      max: 1,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000
-    });
+    dbPool = dbPoolForConfig(Pool, config, fingerprint);
     dbPoolFingerprint = fingerprint;
     if (previousPool) previousPool.end().catch(() => {});
   }
   const pool = dbPool;
+  let client;
   try {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN READ ONLY');
-      const result = await callback(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
+    client = await pool.connect();
   } catch (err) {
-    throw normalizeDbConnectionError(err);
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+    throw error;
+  }
+  setDbConnectionState(config, 'connected');
+  try {
+    await client.query('BEGIN READ ONLY');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    const error = normalizeDbConnectionError(err);
+    setDbConnectionState(config, 'error', error.message);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
@@ -1443,6 +1506,20 @@ function dbNodeOutputValue(execution, field) {
   return dbOwnValue(outputs, field);
 }
 
+function dbReferencedOutputNodeIds(executions = []) {
+  const nodeIds = new Set();
+  const referencePattern = /@node\.([^.\s}]+)\.[A-Za-z0-9_]+/g;
+  executions.forEach(execution => {
+    if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return;
+    const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+    const contentConfig = parseDbJson(inputs?.content, inputs?.content || null);
+    const serialized = JSON.stringify(contentConfig || inputs || {});
+    let matched;
+    while ((matched = referencePattern.exec(serialized))) nodeIds.add(matched[1]);
+  });
+  return [...nodeIds];
+}
+
 function dbLocalInputValue(localInputs, field) {
   const direct = dbOwnValue(localInputs, field);
   if (direct !== undefined) return direct;
@@ -1481,6 +1558,34 @@ function dbSendExecutionContent(execution, executionsByNodeId) {
   if (!replyAction) return { found: false, value: '' };
   const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
   return { found: true, value: dbResolveSendContent(replyAction.actionContent, localInputs, executionsByNodeId) };
+}
+
+function dbSendExecutionPreview(execution, executionsByNodeId) {
+  if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return { label: '', content: '' };
+  const inputs = parseDbJson(execution.inputs, execution.inputs || null);
+  if (!inputs || typeof inputs !== 'object') return { label: '', content: '' };
+  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+  const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
+  const replyAction = actions.find(item => Number(item?.actionType) === 6);
+  if (replyAction) {
+    return {
+      label: 'AI回复',
+      content: dbResolveSendContent(replyAction.actionContent, localInputs, executionsByNodeId)
+    };
+  }
+  const tagActions = actions.filter(item => Number(item?.actionType) === 4);
+  if (tagActions.length) {
+    const content = tagActions.map(action => {
+      const value = dbResolveSendContent(action.actionMessage, localInputs, executionsByNodeId);
+      return `${Number(action?.tagOperateType) === 2 ? '-' : '+'}${value === null ? 'null' : dbInputText(value)}`;
+    }).join(' / ');
+    return { label: '打标签', content };
+  }
+  const action = actions.find(item => Object.prototype.hasOwnProperty.call(item || {}, 'actionContent'));
+  return action
+    ? { label: '消息推送', content: dbResolveSendContent(action.actionContent, localInputs, executionsByNodeId) }
+    : { label: '', content: '' };
 }
 
 function dbSendExecutionActions(execution, executionsByNodeId) {
@@ -1797,8 +1902,8 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
   });
 }
 
-function normalizeDbExecution(execution) {
-  return {
+function normalizeDbExecution(execution, preview = {}, { includeDetails = false } = {}) {
+  const normalized = {
     id: execution.id,
     triggerMessageId: dbTriggerIdOf(execution),
     workflowId: dbWorkflowIdOf(execution),
@@ -1806,8 +1911,6 @@ function normalizeDbExecution(execution) {
     nodeId: execution.node_id ?? execution.nodeId ?? '',
     nodeType: execution.node_type ?? execution.nodeType ?? '',
     nodeName: execution.node_name ?? execution.nodeName ?? '',
-    inputs: parseDbJson(execution.inputs, execution.inputs || null),
-    outputs: parseDbJson(execution.outputs, execution.outputs || null),
     status: execution.status || '',
     errorMessage: execution.error_message || '',
     errorClass: execution.error_class || '',
@@ -1817,8 +1920,20 @@ function normalizeDbExecution(execution) {
     afterSnapshot: parseDbJson(execution.after_snapshot, execution.after_snapshot || null),
     startedAt: formatDbDisplayDateTimeLoose(execution.started_at),
     completedAt: formatDbDisplayDateTimeLoose(execution.completed_at),
-    durationMs: Number(execution.duration_ms || 0)
+    durationMs: Number(execution.duration_ms || 0),
+    previewContent: preview.content ?? '',
+    previewLabel: preview.label || '',
+    previewOutputs: parseDbJson(execution.outputs, execution.outputs || null),
+    detailsLoaded: includeDetails
   };
+  if (includeDetails) {
+    normalized.inputs = parseDbJson(execution.inputs, execution.inputs || null);
+    normalized.outputs = parseDbJson(execution.outputs, execution.outputs || null);
+    normalized.logs = parseDbJson(execution.logs, execution.logs || null);
+    normalized.beforeSnapshot = parseDbJson(execution.before_snapshot, execution.before_snapshot || null);
+    normalized.afterSnapshot = parseDbJson(execution.after_snapshot, execution.after_snapshot || null);
+  }
+  return normalized;
 }
 
 function normalizeDbConversationVariables(variables = []) {
@@ -1832,7 +1947,158 @@ function normalizeDbConversationVariables(variables = []) {
     }));
 }
 
-function buildDbConversationDetail({ workflow = null, messages = [], variables = [], executions = [] }) {
+function dbGraphNodeType(node) {
+  return String(node?.type || node?.nodeType || node?.data?.nodeType || '');
+}
+
+function dbGraphNodeLabel(node) {
+  return String(node?.data?.label || node?.label || node?.id || '');
+}
+
+function dbGraphTimestamp(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  return String(value || '');
+}
+
+function dbHistoricalSnapshotForExecutions(executions, snapshots) {
+  const executionNodeIds = new Set(executions.map(dbNodeIdOf).filter(Boolean));
+  const firstStartedAt = executions.map(item => dbGraphTimestamp(item.started_at)).filter(Boolean).sort()[0] || '';
+  const candidates = snapshots.map(snapshot => {
+    const nodeIds = new Set((snapshot.graph.nodes || []).map(node => String(node.id)));
+    return {
+      ...snapshot,
+      matchedCount: [...executionNodeIds].filter(id => nodeIds.has(id)).length,
+      publishedBeforeRun: !firstStartedAt || !snapshot.createdAt || snapshot.createdAt <= firstStartedAt
+    };
+  }).filter(snapshot => snapshot.matchedCount > 0);
+  if (!candidates.length) return null;
+  const preferredCandidates = candidates.some(snapshot => snapshot.publishedBeforeRun)
+    ? candidates.filter(snapshot => snapshot.publishedBeforeRun)
+    : candidates;
+  const maxMatchedCount = Math.max(...preferredCandidates.map(snapshot => snapshot.matchedCount));
+  return preferredCandidates
+    .filter(snapshot => snapshot.matchedCount === maxMatchedCount)
+    .sort((left, right) => {
+      return left.publishedBeforeRun
+        ? String(right.createdAt).localeCompare(String(left.createdAt))
+        : String(left.createdAt).localeCompare(String(right.createdAt));
+    })[0];
+}
+
+function dbHistoricalNodeState(node, currentNodes) {
+  const historicType = dbGraphNodeType(node);
+  const historicLabel = dbGraphNodeLabel(node).replace(/\s+/g, '').toLowerCase();
+  const matchedCurrentNode = currentNodes.find(currentNode => {
+    if (dbGraphNodeType(currentNode) !== historicType) return false;
+    const currentLabel = dbGraphNodeLabel(currentNode).replace(/\s+/g, '').toLowerCase();
+    return historicLabel && currentLabel && (historicLabel === currentLabel || historicLabel.includes(currentLabel) || currentLabel.includes(historicLabel));
+  });
+  return {
+    state: matchedCurrentNode ? 'modified' : 'deleted',
+    currentNodeId: matchedCurrentNode?.id || ''
+  };
+}
+
+function dbHistoricalNodesByTrigger({ currentGraph, workflowVersions, executions }) {
+  const currentNodes = currentGraph.nodes || [];
+  const currentNodeIds = new Set(currentNodes.map(node => String(node.id)));
+  const snapshots = workflowVersions.map(version => ({
+    id: String(version.id || ''),
+    publishVersion: Number(version.publish_version || 0),
+    createdAt: dbGraphTimestamp(version.created_at),
+    graph: parseDbJson(version.graph_snapshot, { nodes: [], edges: [] }) || { nodes: [], edges: [] }
+  })).filter(snapshot => Array.isArray(snapshot.graph.nodes));
+  if (!snapshots.length) return {};
+  const executionsByTrigger = new Map();
+  executions.forEach(execution => {
+    const triggerId = dbTriggerIdOf(execution);
+    if (!triggerId) return;
+    if (!executionsByTrigger.has(triggerId)) executionsByTrigger.set(triggerId, []);
+    executionsByTrigger.get(triggerId).push(execution);
+  });
+  const result = {};
+  executionsByTrigger.forEach((triggerExecutions, triggerId) => {
+    const snapshot = dbHistoricalSnapshotForExecutions(triggerExecutions, snapshots);
+    if (!snapshot) return;
+    const historicalNodesById = new Map((snapshot.graph.nodes || []).map(node => [String(node.id), node]));
+    const missingExecutions = triggerExecutions.filter(execution => !currentNodeIds.has(dbNodeIdOf(execution)));
+    if (!missingExecutions.length) return;
+    const nodes = missingExecutions.map(execution => {
+      const nodeId = dbNodeIdOf(execution);
+      const historicalNode = historicalNodesById.get(nodeId) || {
+        id: nodeId,
+        type: execution.node_type || execution.nodeType || '',
+        position: { x: 0, y: 0 },
+        data: {
+          label: execution.node_name || execution.nodeName || nodeId,
+          config: {},
+          nodeType: execution.node_type || execution.nodeType || ''
+        }
+      };
+      return {
+        id: nodeId,
+        node: historicalNode,
+        ...dbHistoricalNodeState(historicalNode, currentNodes)
+      };
+    });
+    const visibleNodeIds = new Set([...currentNodeIds, ...nodes.map(node => node.id)]);
+    const historicalNodeIds = new Set(nodes.map(node => node.id));
+    const edges = (snapshot.graph.edges || [])
+      .filter(edge => historicalNodeIds.has(String(edge.source)) || historicalNodeIds.has(String(edge.target)))
+      .filter(edge => visibleNodeIds.has(String(edge.source)) && visibleNodeIds.has(String(edge.target)))
+      .map(edge => ({
+        id: `historical:${edge.id || `${edge.source}-${edge.target}`}`,
+        source: String(edge.source),
+        target: String(edge.target),
+        sourceHandle: edge.sourceHandle || '',
+        targetHandle: edge.targetHandle || '',
+        label: edge.label || '',
+        historical: true
+      }));
+    result[triggerId] = {
+      version: { id: snapshot.id, publishVersion: snapshot.publishVersion },
+      nodes,
+      edges
+    };
+  });
+  return result;
+}
+
+async function dbWorkflowVersionsForHistoricalNodes(client, workflowId, currentGraph, executions) {
+  const currentNodeIds = new Set((currentGraph.nodes || []).map(node => String(node.id)));
+  const missingNodeIds = [...new Set(executions.map(dbNodeIdOf).filter(nodeId => nodeId && !currentNodeIds.has(nodeId)))];
+  if (!missingNodeIds.length) return [];
+  const firstStartedAt = executions.map(item => dbGraphTimestamp(item.started_at)).filter(Boolean).sort()[0] || '';
+  const queryVersions = async beforeRunOnly => {
+    const params = [workflowId, missingNodeIds];
+    const beforeRunClause = beforeRunOnly && firstStartedAt
+      ? `AND created_at <= $${params.push(firstStartedAt)}::timestamp`
+      : '';
+    const result = await client.query(`
+      SELECT id, publish_version, graph_snapshot, created_at
+      FROM public.workflow_version
+      WHERE workflow_id::text = $1
+        AND deleted_at IS NULL
+        ${beforeRunClause}
+        AND EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(graph_snapshot->'nodes', '[]'::jsonb)) node
+          WHERE node->>'id' = ANY($2::text[])
+        )
+      ORDER BY created_at DESC
+      LIMIT 12
+    `, params);
+    return result.rows;
+  };
+  try {
+    const beforeRunVersions = await queryVersions(true);
+    return beforeRunVersions.length ? beforeRunVersions : await queryVersions(false);
+  } catch (error) {
+    return [];
+  }
+}
+
+function buildDbConversationDetail({ workflow = null, workflowVersions = [], messages = [], variables = [], executions = [] }) {
   const sortedMessages = [...messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
   const triggerInputs = dbTriggerInputMap(executions);
   const assistantReplies = dbAssistantReplyMap(executions);
@@ -1848,12 +2114,25 @@ function buildDbConversationDetail({ workflow = null, messages = [], variables =
     if (triggerId && !triggerOrder.includes(triggerId)) triggerOrder.push(triggerId);
   });
   const executionsByTrigger = triggerOrder.reduce((result, triggerId) => {
-    result[triggerId] = executions
+    const triggerExecutions = executions
       .filter(execution => dbTriggerIdOf(execution) === triggerId)
-      .sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')))
-      .map(normalizeDbExecution);
+      .sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
+    const executionsByNodeId = new Map(triggerExecutions
+      .map(execution => [dbNodeIdOf(execution), execution])
+      .filter(([nodeId]) => Boolean(nodeId)));
+    result[triggerId] = triggerExecutions.map(execution => {
+      const nodeType = String(execution.node_type || execution.nodeType || '');
+      const nodeName = String(execution.node_name || execution.nodeName || '');
+      const preview = nodeName === '灵犀触发器'
+        ? { content: dbTriggerExecutionInput(execution) }
+        : nodeType === 'lingxi_send'
+          ? dbSendExecutionPreview(execution, executionsByNodeId)
+          : {};
+      return normalizeDbExecution(execution, preview);
+    });
     return result;
   }, {});
+  const workflowGraph = parseDbJson(workflow?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
   return {
     workflow: workflow ? {
       id: String(workflow.id || workflow.workflow_id || ''),
@@ -1861,7 +2140,9 @@ function buildDbConversationDetail({ workflow = null, messages = [], variables =
       status: workflow.status || '',
       publishVersion: workflow.publish_version || ''
     } : null,
-    workflowGraph: parseDbJson(workflow?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] },
+    workflowGraph,
+    historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
+    friendNick: dbConversationFriendNick(executions),
     messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies),
     variables: normalizeDbConversationVariables(variables),
     selectedTriggerMessageId,
@@ -1873,7 +2154,20 @@ async function testDbConnection(configId) {
   return withDbClient(configId, async client => {
     await client.query('SELECT 1');
     return { ok: true };
-  });
+  }, { allowConnect: true });
+}
+
+async function disconnectDbConnection(configId) {
+  const config = dbConfig(configId);
+  const fingerprint = dbConnectionFingerprint(config);
+  if (dbPool && dbPoolFingerprint === fingerprint) {
+    const pool = dbPool;
+    dbPool = null;
+    dbPoolFingerprint = '';
+    await pool.end();
+  }
+  setDbConnectionState(config, 'disconnected');
+  return dbConnectionStatus(config.id);
 }
 
 function dbDateParam(value) {
@@ -1900,6 +2194,25 @@ async function listDbConversations(url) {
   return withDbClient(configId, async client => {
     const params = [];
     const where = ['c.deleted_at IS NULL'];
+    // 会话表的 last_message_at 可能没有随着实际消息记录更新，列表以学员最新消息为准。
+    const lastMessageAtSql = `COALESCE(
+      (
+        SELECT MAX(m.message_timestamp)
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+          AND UPPER(COALESCE(m.role, '')) = 'USER'
+      ),
+      (
+        SELECT MAX(m.message_timestamp)
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = c.workflow_id
+          AND m.conversation_id = c.conversation_id
+          AND m.deleted_at IS NULL
+      ),
+      c.last_message_at
+    )`;
     if (workflowId) {
       params.push(workflowId);
       where.push(`c.workflow_id::text = $${params.length}`);
@@ -1925,11 +2238,11 @@ async function listDbConversations(url) {
     }
     if (startTime) {
       params.push(startTime);
-      where.push(`c.last_message_at >= $${params.length}`);
+      where.push(`${lastMessageAtSql} >= $${params.length}`);
     }
     if (endTime) {
       params.push(endTime);
-      where.push(`c.last_message_at <= $${params.length}`);
+      where.push(`${lastMessageAtSql} <= $${params.length}`);
     }
     if (keyword) {
       params.push(`%${keyword}%`);
@@ -2046,7 +2359,7 @@ async function listDbConversations(url) {
     }
     const pageParams = [...params, pageSize, (pageNo - 1) * pageSize];
     const conversationSql = `WITH grouped AS (
-        SELECT c.workflow_id, c.conversation_id, MAX(c.last_message_at) AS last_message_at
+        SELECT c.workflow_id, c.conversation_id, MAX(${lastMessageAtSql}) AS last_message_at
         FROM public.conversations c
         WHERE ${where.join(' AND ')}
         GROUP BY c.workflow_id, c.conversation_id
@@ -2056,7 +2369,7 @@ async function listDbConversations(url) {
         ORDER BY last_message_at DESC NULLS LAST
         LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}
       )
-      SELECT c.workflow_id, c.conversation_id, c.status, c.last_message_at, page.total_count
+      SELECT c.workflow_id, c.conversation_id, c.status, page.last_message_at, page.total_count
       FROM public.conversations c
       JOIN page
         ON page.workflow_id = c.workflow_id
@@ -2151,22 +2464,129 @@ async function dbConversationDetail(url) {
     const triggerIds = [...new Set(messages.rows.map(dbTriggerIdOf).filter(Boolean))];
     const runId = `platform:${workflowId}:${conversationId}`;
     const executions = (await client.query(`
-      SELECT *
-      FROM public.workflow_node_executions
-      WHERE workflow_id::text = $1
-        AND deleted_at IS NULL
+      SELECT e.id,
+             e.workflow_id,
+             e.trigger_message_id,
+             e.run_id,
+             e.node_id,
+             e.node_type,
+             e.node_name,
+             CASE WHEN e.node_type IN ('lingxi_send', 'set_variable') THEN e.inputs ELSE NULL END AS inputs,
+             CASE
+               WHEN e.node_name = '灵犀触发器'
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
+               WHEN e.node_type = 'agent'
+                 THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
+               WHEN e.node_type IN ('condition', 'set_variable')
+                 THEN e.outputs
+               ELSE NULL
+             END AS outputs,
+             e.status,
+             e.error_message,
+             e.error_class,
+             e.error_code,
+             e.started_at,
+             e.completed_at,
+             e.duration_ms
+      FROM public.workflow_node_executions e
+      WHERE e.workflow_id::text = $1
+        AND e.deleted_at IS NULL
         AND (
-          trigger_message_id = ANY($2::text[])
-          OR run_id = $3
+          e.trigger_message_id = ANY($2::text[])
+          OR e.run_id = $3
         )
-      ORDER BY started_at ASC NULLS LAST, id ASC
+      ORDER BY e.started_at ASC NULLS LAST, e.id ASC
     `, [workflowId, triggerIds, runId])).rows;
+    const referencedNodeIds = dbReferencedOutputNodeIds(executions);
+    if (referencedNodeIds.length && triggerIds.length) {
+      const referencedOutputs = (await client.query(`
+        SELECT e.trigger_message_id, e.node_id, e.outputs
+        FROM public.workflow_node_executions e
+        WHERE e.workflow_id::text = $1
+          AND e.trigger_message_id = ANY($2::text[])
+          AND e.node_id = ANY($3::text[])
+          AND e.deleted_at IS NULL
+      `, [workflowId, triggerIds, referencedNodeIds])).rows;
+      const outputsByNode = new Map(referencedOutputs.map(item => [
+        `${dbTriggerIdOf(item)}\n${dbNodeIdOf(item)}`,
+        item.outputs
+      ]));
+      executions.forEach(execution => {
+        const outputs = outputsByNode.get(`${dbTriggerIdOf(execution)}\n${dbNodeIdOf(execution)}`);
+        if (outputs !== undefined) execution.outputs = outputs;
+      });
+    }
     return buildDbConversationDetail({
       workflow: workflow.rows[0] || null,
       messages: messages.rows,
       variables: variables.rows,
       executions
     });
+  });
+}
+
+async function dbConversationNodeExecution(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const triggerMessageId = String(url.searchParams.get('triggerMessageId') || '').trim();
+  const executionId = String(url.searchParams.get('executionId') || '').trim();
+  if (!workflowId || !triggerMessageId || !executionId) {
+    const err = new Error('缺少 workflowId、triggerMessageId 或 executionId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const execution = await client.query(`
+      SELECT *
+      FROM public.workflow_node_executions
+      WHERE id::text = $1
+        AND workflow_id::text = $2
+        AND trigger_message_id = $3
+        AND deleted_at IS NULL
+      LIMIT 1
+    `, [executionId, workflowId, triggerMessageId]);
+    if (!execution.rows[0]) {
+      const err = new Error('节点执行记录不存在');
+      err.statusCode = 404;
+      throw err;
+    }
+    return { execution: normalizeDbExecution(execution.rows[0], {}, { includeDetails: true }) };
+  });
+}
+
+async function dbConversationHistoricalNode(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  const triggerMessageId = String(url.searchParams.get('triggerMessageId') || '').trim();
+  const nodeId = String(url.searchParams.get('nodeId') || '').trim();
+  if (!workflowId || !triggerMessageId || !nodeId) {
+    const err = new Error('缺少 workflowId、triggerMessageId 或 nodeId');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const [workflow, executionResult] = await Promise.all([
+      client.query('SELECT id, graph_json FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
+      client.query(`
+        SELECT *
+        FROM public.workflow_node_executions
+        WHERE workflow_id::text = $1
+          AND trigger_message_id = $2
+          AND deleted_at IS NULL
+        ORDER BY started_at ASC NULLS LAST, id ASC
+      `, [workflowId, triggerMessageId])
+    ]);
+    const currentGraph = parseDbJson(workflow.rows[0]?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
+    if ((currentGraph.nodes || []).some(node => String(node.id) === nodeId)) {
+      return { historicalRuntime: null };
+    }
+    const workflowVersions = await dbWorkflowVersionsForHistoricalNodes(client, workflowId, currentGraph, executionResult.rows);
+    const historicalRuntime = dbHistoricalNodesByTrigger({
+      currentGraph,
+      workflowVersions,
+      executions: executionResult.rows
+    })[triggerMessageId] || null;
+    return { historicalRuntime };
   });
 }
 
@@ -2692,6 +3112,18 @@ async function handleApi(req, res, pathname, url) {
       const body = await parseBody(req);
       return json(res, 200, await testDbConnection(body.configId));
     }
+    if (req.method === 'GET' && pathname === '/api/db-configs/status') {
+      return json(res, 200, dbConnectionStatus(url.searchParams.get('configId') || ''));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/connect') {
+      const body = await parseBody(req);
+      await testDbConnection(body.configId || '');
+      return json(res, 200, dbConnectionStatus(body.configId || ''));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/disconnect') {
+      const body = await parseBody(req);
+      return json(res, 200, await disconnectDbConnection(body.configId || ''));
+    }
     if (req.method === 'GET' && pathname === '/api/db-conversation-filters') {
       return json(res, 200, readDbConversationFilters().map(publicDbConversationFilter));
     }
@@ -2708,6 +3140,12 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/db/conversations/detail') {
       return json(res, 200, await dbConversationDetail(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/node-execution') {
+      return json(res, 200, await dbConversationNodeExecution(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/historical-node') {
+      return json(res, 200, await dbConversationHistoricalNode(url));
     }
     if (req.method === 'GET' && pathname === '/api/db/conversations/variables') {
       return json(res, 200, await dbConversationVariables(url));

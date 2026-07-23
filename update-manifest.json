@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "notes": [],
   "files": [
     {
@@ -9,15 +9,15 @@
     },
     {
       "path": "server.js",
-      "sha256": "c00b2e0ac5f9525255bc4fe28931f8ba788b3fb1d37df1e919b2c7e9e98401b7"
+      "sha256": "a60b3fa6975296ca8a2d1ae38171ba633ffe950c5bb250bac9aa3ca73efa5b0c"
     },
     {
       "path": "version.json",
-      "sha256": "6ffa01856a571ef6bf49aee1fcde4923183570f3af7c3ab292880643d25286cf"
+      "sha256": "dc8a08a0c3d2b1f1223923f4617b71b8e90bf9db6dc45b745d7818c7e66eba35"
     },
     {
       "path": "web/app.js",
-      "sha256": "f57f99f0c565dfe4139ae046694af8af17efc7ffe52cd24b705e2581d3b43810"
+      "sha256": "1ca089ec84c992d73e394487ce6772dd3a0535b6fee96ed87e457f955d1c68c4"
     },
     {
       "path": "web/assets/github.png",
@@ -33,7 +33,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "85a1c5d8d3ae8a472f3d6424fe14e065748bf5daab57593ca1753023ba287424"
+      "sha256": "680dbc6e60f444977427d4deeb7a9579b343930c2405eda3e5b9187f41cdf849"
     },
     {
       "path": "web/favicon.ico",
@@ -49,7 +49,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "c047ad3b12f887e8272a926278e554a29315c64c0ec393a0fbb0ce152b38f4f4"
+      "sha256": "ab6bd3beb406c987221b5cffbfc15005b67c956e6755f62fc37f13e118d985e1"
     },
     {
       "path": "win-启动服务.bat",

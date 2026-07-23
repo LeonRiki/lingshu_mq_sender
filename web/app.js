@@ -29,6 +29,8 @@ const state = {
   casesLoading: true,
   records: [],
   dbConfigs: [],
+  dbConnection: { configId: '', name: '', status: 'disconnected', errorMessage: '' },
+  dbConnectionChanging: false,
   dbSavedFilters: [],
   dbConversationItems: [],
   dbConversationQueried: false,
@@ -45,6 +47,10 @@ const state = {
   dbSettingsSelectedId: null,
   dbSettingsTesting: false,
   dbSelectedTriggerMessageId: '',
+  dbHistoricalFocusNodeId: '',
+  dbHistoricalLoadingNodeId: '',
+  dbNodeExecutionDetails: {},
+  dbNodeExecutionLoadingId: '',
   activeCaseId: null,
   activeRecord: null,
   selectedCases: new Set(),
@@ -1519,6 +1525,8 @@ function dbRecordPageData() {
   return {
     page: state.dbRecordPage,
     configs: state.dbConfigs,
+    connection: state.dbConnection,
+    connectionChanging: state.dbConnectionChanging,
     savedFilters: state.dbSavedFilters,
     settingsOpen: state.dbSettingsOpen,
     selectedConfigId: state.dbSettingsSelectedId,
@@ -1545,7 +1553,11 @@ function dbRecordPageData() {
     variables: state.dbConversationVariables,
     activeWorkflowId: state.dbActiveWorkflowId,
     activeConversationId: state.dbActiveConversationId,
-    selectedTriggerMessageId: state.dbSelectedTriggerMessageId
+    selectedTriggerMessageId: state.dbSelectedTriggerMessageId,
+    historicalFocusNodeId: state.dbHistoricalFocusNodeId,
+    historicalLoadingNodeId: state.dbHistoricalLoadingNodeId,
+    nodeExecutionDetails: state.dbNodeExecutionDetails,
+    nodeExecutionLoadingId: state.dbNodeExecutionLoadingId
   };
 }
 
@@ -1570,9 +1582,42 @@ function syncDbConversationDetailChrome() {
 }
 
 async function loadDbConfigs() {
-  state.dbConfigs = await api('/api/db-configs');
+  const [configs, connection] = await Promise.all([
+    api('/api/db-configs'),
+    api('/api/db-configs/status')
+  ]);
+  state.dbConfigs = configs;
+  state.dbConnection = connection;
   if (!state.dbSettingsSelectedId) state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
   renderDbRecordsPage();
+}
+
+async function refreshDbConnectionStatus() {
+  const nextConnection = await api('/api/db-configs/status');
+  const changed = JSON.stringify(nextConnection) !== JSON.stringify(state.dbConnection);
+  state.dbConnection = nextConnection;
+  if (changed) renderDbRecordsPage();
+}
+
+function pollDbConnectionStatus() {
+  if (!$('dbRecordsView')?.classList.contains('active') || state.dbConnectionChanging) return;
+  refreshDbConnectionStatus().catch(() => {});
+}
+
+async function changeDbConnection(action) {
+  state.dbConnectionChanging = true;
+  renderDbRecordsPage();
+  try {
+    const configId = state.dbConfigs[0]?.id || '';
+    state.dbConnection = await api(`/api/db-configs/${action}`, { method: 'POST', body: JSON.stringify({ configId }) });
+    toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
+  } catch (error) {
+    await refreshDbConnectionStatus().catch(() => {});
+    throw error;
+  } finally {
+    state.dbConnectionChanging = false;
+    renderDbRecordsPage();
+  }
 }
 
 async function loadDbSavedFilters() {
@@ -1654,7 +1699,11 @@ async function testDbConfig(configId) {
   renderDbRecordsPage();
   try {
     await api('/api/db-configs/test', { method: 'POST', body: JSON.stringify({ configId }) });
+    await refreshDbConnectionStatus();
     toast('数据库连接正常');
+  } catch (error) {
+    await refreshDbConnectionStatus().catch(() => {});
+    throw error;
   } finally {
     state.dbSettingsTesting = false;
     renderDbRecordsPage();
@@ -1698,6 +1747,10 @@ async function openDbConversationDetail(workflowId, conversationId) {
   state.dbConversationDetailLoading = true;
   state.dbConversationDetail = null;
   state.dbSelectedTriggerMessageId = '';
+  state.dbHistoricalFocusNodeId = '';
+  state.dbHistoricalLoadingNodeId = '';
+  state.dbNodeExecutionDetails = {};
+  state.dbNodeExecutionLoadingId = '';
   state.dbActiveWorkflowId = workflowId || '';
   state.dbActiveConversationId = conversationId || '';
   showDbConversationDetailPage();
@@ -1708,6 +1761,64 @@ async function openDbConversationDetail(workflowId, conversationId) {
     state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
   } finally {
     state.dbConversationDetailLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+async function loadDbConversationNodeExecution(workflowId, triggerMessageId, executionId) {
+  const targetWorkflowId = String(workflowId || '').trim();
+  const targetTriggerMessageId = String(triggerMessageId || '').trim();
+  const targetExecutionId = String(executionId || '').trim();
+  if (!targetWorkflowId || !targetTriggerMessageId || !targetExecutionId || state.dbNodeExecutionDetails[targetExecutionId] || state.dbNodeExecutionLoadingId === targetExecutionId) return;
+  state.dbNodeExecutionLoadingId = targetExecutionId;
+  renderDbRecordsPage();
+  try {
+    const params = new URLSearchParams({
+      workflowId: targetWorkflowId,
+      triggerMessageId: targetTriggerMessageId,
+      executionId: targetExecutionId
+    });
+    const result = await api(`/api/db/conversations/node-execution?${params}`);
+    if (!result.execution) return;
+    state.dbNodeExecutionDetails = { ...state.dbNodeExecutionDetails, [targetExecutionId]: result.execution };
+  } finally {
+    state.dbNodeExecutionLoadingId = '';
+    renderDbRecordsPage();
+  }
+}
+
+async function loadDbConversationHistoricalNode(workflowId, triggerMessageId, nodeId) {
+  const targetWorkflowId = String(workflowId || '').trim();
+  const targetTriggerMessageId = String(triggerMessageId || '').trim();
+  const targetNodeId = String(nodeId || '').trim();
+  if (!targetWorkflowId || !targetTriggerMessageId || !targetNodeId || state.dbHistoricalLoadingNodeId === targetNodeId) return;
+  state.dbHistoricalFocusNodeId = '';
+  state.dbHistoricalLoadingNodeId = targetNodeId;
+  renderDbRecordsPage();
+  try {
+    const params = new URLSearchParams({
+      workflowId: targetWorkflowId,
+      triggerMessageId: targetTriggerMessageId,
+      nodeId: targetNodeId
+    });
+    const result = await api(`/api/db/conversations/historical-node?${params}`);
+    const historicalRuntime = result.historicalRuntime;
+    if (!historicalRuntime?.nodes?.some(node => node.id === targetNodeId)) {
+      window.showGlobalMessage?.('未找到该节点对应的历史快照', 'warning');
+      return;
+    }
+    const detail = state.dbConversationDetail;
+    if (!detail || state.dbActiveWorkflowId !== targetWorkflowId) return;
+    state.dbConversationDetail = {
+      ...detail,
+      historicalNodesByTrigger: {
+        ...(detail.historicalNodesByTrigger || {}),
+        [targetTriggerMessageId]: historicalRuntime
+      }
+    };
+    state.dbHistoricalFocusNodeId = targetNodeId;
+  } finally {
+    state.dbHistoricalLoadingNodeId = '';
     renderDbRecordsPage();
   }
 }
@@ -2192,6 +2303,8 @@ function bindEvents() {
     }
     if (type === 'save-db-config') saveDbConfig(config).catch(showError);
     if (type === 'test-db-config') testDbConfig(configId).catch(showError);
+    if (type === 'connect-db') changeDbConnection('connect').catch(showError);
+    if (type === 'disconnect-db') changeDbConnection('disconnect').catch(showError);
     if (type === 'query-db-conversations') {
       state.dbPageNo = 1;
       queryDbConversations().catch(showError);
@@ -2207,7 +2320,14 @@ function bindEvents() {
     if (type === 'back-db-conversations') showDbConversationList();
     if (type === 'select-db-message') {
       state.dbSelectedTriggerMessageId = triggerMessageId || '';
+      state.dbHistoricalFocusNodeId = '';
       renderDbRecordsPage();
+    }
+    if (type === 'load-db-historical-node') {
+      loadDbConversationHistoricalNode(workflowId, triggerMessageId, e.detail?.nodeId).catch(showError);
+    }
+    if (type === 'load-db-node-execution') {
+      loadDbConversationNodeExecution(workflowId, triggerMessageId, e.detail?.executionId).catch(showError);
     }
     if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
@@ -2360,3 +2480,4 @@ loadInitial().catch(err => {
   console.error(err);
   showError(err);
 });
+setInterval(pollDbConnectionStatus, 5000);

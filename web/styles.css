@@ -750,10 +750,30 @@ main {
   font-weight: 700;
 }
 
+.db-record-list-heading {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
 .db-record-total {
   color: var(--muted);
   font-size: 14px;
   font-weight: 400;
+}
+
+.db-connection-control .ant-btn:first-child {
+  cursor: default;
+}
+
+.db-connection-control .ant-badge {
+  white-space: nowrap;
+}
+
+.db-connection-control .ant-badge-status-text {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .db-saved-filter-row {
@@ -1001,29 +1021,60 @@ main {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
+  padding: 0 12px 12px;
+  background: #F5F7FA;
   overflow-y: auto;
+  scrollbar-width: none;
   border-top: 0;
   border-bottom: 0;
   border-left: 0;
   border-radius: 0;
 }
 
+.db-message-flow::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 .db-flow-panel {
-  margin: 12px 16px 12px 12px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: #0D1A33;
+}
+
+.db-flow-panel .react-flow,
+.db-flow-panel .react-flow__pane {
+  background: #0D1A33;
 }
 
 .db-message-flow-toolbar {
   display: flex;
   flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 2;
   align-items: center;
   justify-content: space-between;
+  margin: 0 -12px;
+  padding: 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .db-message-flow-title {
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
+}
+
+.db-message-action-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .db-message-sort-button {
@@ -1280,6 +1331,172 @@ main {
   text-align: center;
 }
 
+.db-flow-step-controls {
+  position: absolute;
+  z-index: 5;
+  bottom: 14px;
+  left: 50%;
+  width: min(720px, calc(100% - 132px));
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, .12);
+  transform: translateX(-50%);
+}
+
+.db-flow-step-progress {
+  height: 6px;
+  margin: 10px 14px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.db-flow-step-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #10b981, #3b82f6);
+  transition: width .18s ease;
+}
+
+.db-flow-step-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.db-flow-step-menu-button,
+.db-flow-step-actions .ant-btn {
+  min-width: 34px;
+  height: 34px;
+  padding-inline: 8px;
+}
+
+.db-flow-step-type {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.db-flow-step-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-flow-step-duration {
+  flex: 0 0 auto;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.db-flow-step-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.db-flow-step-menu-item {
+  display: flex;
+  max-width: 300px;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.db-flow-step-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-flow-step-menu-type {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 56px;
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: 0;
+  font-size: 11px;
+  text-align: center;
+}
+
+.db-flow-step-menu-duration {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.db-flow-step-menu-item.success .db-flow-step-menu-duration {
+  color: #059669;
+}
+
+.db-flow-step-menu-item.failed .db-flow-step-menu-duration {
+  color: #dc2626;
+}
+
+.db-flow-step-menu-option-selected {
+  border: 1px solid #bfdbfe !important;
+  background: #eff6ff !important;
+}
+
+.db-flow-step-menu-option-selected .db-flow-step-menu-name {
+  font-weight: 700;
+}
+
+.db-workflow-card.active-step {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, .2), 0 10px 26px rgba(15, 23, 42, .14);
+}
+
+.db-workflow-card.historical {
+  border-style: dashed;
+  background: #fffbeb;
+}
+
+.db-workflow-card.historical.modified {
+  border-color: #d97706;
+}
+
+.db-workflow-card.historical.deleted {
+  border-color: #dc2626;
+  background: #fff7ed;
+}
+
+@media (max-width: 720px) {
+  .db-flow-step-controls {
+    width: calc(100% - 24px);
+  }
+
+  .db-flow-step-content {
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .db-flow-step-name {
+    font-size: 13px;
+  }
+
+  .db-flow-step-duration {
+    display: none;
+  }
+}
+
 .db-flow-panel .react-flow {
   direction: ltr;
   --xy-edge-stroke-default: #94a3b8;
@@ -1402,13 +1619,12 @@ main {
 }
 
 .db-flow-panel .react-flow__node-dbWorkflow {
-  width: 260px;
+  width: 210px;
 }
 
 .db-workflow-card {
   position: relative;
-  width: 260px;
-  min-height: 112px;
+  width: 210px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #fff;
@@ -1464,7 +1680,7 @@ main {
 .db-workflow-card-header {
   display: grid;
   min-width: 0;
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   padding: 9px 12px;
@@ -1494,12 +1710,31 @@ main {
   white-space: nowrap;
 }
 
+.db-workflow-history-tag {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.db-workflow-history-tag.modified {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.db-workflow-history-tag.deleted {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .db-workflow-body {
   display: flex;
-  min-height: 62px;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
+  padding: 8px;
 }
 
 .db-workflow-primary {
@@ -1526,6 +1761,24 @@ main {
   word-break: break-word;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+}
+
+.db-workflow-variables {
+  display: grid;
+  gap: 4px;
+}
+
+.db-workflow-variable {
+  overflow: hidden;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .db-workflow-chips {
@@ -1616,6 +1869,34 @@ main {
 
 .db-flow-edge .react-flow__edge-path {
   transition: stroke .18s ease, stroke-width .18s ease, opacity .18s ease;
+}
+
+.db-flow-edge-label {
+  position: absolute;
+  max-width: 144px;
+  padding: 3px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  pointer-events: none;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-flow-edge-label.active {
+  border-color: #86efac;
+  color: #047857;
+}
+
+.db-flow-edge-label.historical {
+  border-color: #fcd34d;
+  color: #92400e;
 }
 
 .db-flow-edge.idle {
