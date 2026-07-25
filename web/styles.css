@@ -763,17 +763,118 @@ main {
   font-weight: 400;
 }
 
-.db-connection-control .ant-btn:first-child {
-  cursor: default;
+.db-connection-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.db-connection-control .ant-badge {
+.db-connection-status-trigger .anticon {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.db-connection-dropdown {
+  width: 360px;
+  overflow: hidden;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow:
+    0 6px 16px 0 rgba(0, 0, 0, 0.08),
+    0 3px 6px -4px rgba(0, 0, 0, 0.12),
+    0 9px 28px 8px rgba(0, 0, 0, 0.05);
+}
+
+.db-connection-dropdown-title {
+  padding: 12px 14px 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.db-connection-dropdown .ant-dropdown-menu {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.db-connection-dropdown .ant-dropdown-menu-item {
+  height: auto;
+  min-height: 52px;
+  margin: 2px 0;
+  padding: 8px;
+}
+
+.db-connection-dropdown .ant-dropdown-menu-item-disabled {
+  cursor: default;
+  color: inherit;
+}
+
+.db-connection-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.db-connection-dropdown-main {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.db-connection-dropdown-main .ant-badge-status-dot {
+  margin-top: 5px;
+}
+
+.db-connection-dropdown-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.db-connection-dropdown-name small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.db-connection-control .ant-badge-status-text {
-  color: var(--text);
-  font-size: 13px;
+.db-connection-dropdown-status {
+  flex: 0 0 auto;
+  margin-inline-end: 0;
+}
+
+.db-connection-dropdown-status.connected {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.db-connection-dropdown-status.disconnected {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.db-connection-dropdown-status.error {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+.db-connection-dropdown-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
 }
 
 .db-saved-filter-row {

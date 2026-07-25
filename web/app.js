@@ -1608,7 +1608,7 @@ async function changeDbConnection(action) {
   state.dbConnectionChanging = true;
   renderDbRecordsPage();
   try {
-    const configId = state.dbConfigs[0]?.id || '';
+    const configId = state.dbConnection.configId || state.dbConfigs[0]?.id || '';
     state.dbConnection = await api(`/api/db-configs/${action}`, { method: 'POST', body: JSON.stringify({ configId }) });
     toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
   } catch (error) {
@@ -1618,6 +1618,41 @@ async function changeDbConnection(action) {
     state.dbConnectionChanging = false;
     renderDbRecordsPage();
   }
+}
+
+async function switchDbConnection(configId) {
+  const targetConfigId = String(configId || '').trim();
+  if (!targetConfigId || targetConfigId === state.dbConnection.configId) return;
+  state.dbConnectionChanging = true;
+  renderDbRecordsPage();
+  try {
+    state.dbConnection = await api('/api/db-configs/switch', {
+      method: 'POST',
+      body: JSON.stringify({ configId: targetConfigId })
+    });
+    state.dbConversationItems = [];
+    state.dbConversationTotal = 0;
+    state.dbConversationQueried = false;
+    state.dbConversationDetail = null;
+    state.dbConversationVariables = [];
+    state.dbConversationVariablesOpen = false;
+    state.dbActiveWorkflowId = '';
+    state.dbActiveConversationId = '';
+    state.dbRecordPage = 'list';
+    toast(`已切换至数据库：${state.dbConnection.name}`);
+  } catch (error) {
+    await refreshDbConnectionStatus().catch(() => {});
+    throw error;
+  } finally {
+    state.dbConnectionChanging = false;
+    renderDbRecordsPage();
+  }
+}
+
+function appendDbConfigId(params) {
+  const configId = String(state.dbConnection?.configId || '').trim();
+  if (configId) params.set('configId', configId);
+  return params;
 }
 
 async function loadDbSavedFilters() {
@@ -1711,8 +1746,8 @@ async function testDbConfig(configId) {
 }
 
 async function queryDbConversations() {
-  if (!state.dbWorkflowId.trim()) {
-    toast('请输入工作流ID后再查询', 'warning');
+  if (!state.dbWorkflowId.trim() || !state.dbStartTime || !state.dbEndTime) {
+    toast('请填写工作流ID和时间范围后再查询', 'warning');
     return;
   }
   state.dbConversationLoading = true;
@@ -1734,6 +1769,7 @@ async function queryDbConversations() {
     if (state.dbHasError) params.set('hasError', state.dbHasError);
     if (state.dbStartTime) params.set('startTime', dbQueryDateBoundary(state.dbStartTime));
     if (state.dbEndTime) params.set('endTime', dbQueryDateBoundary(state.dbEndTime, true));
+    appendDbConfigId(params);
     const result = await api(`/api/db/conversations?${params}`);
     state.dbConversationItems = result.items || [];
     state.dbConversationTotal = result.total || 0;
@@ -1756,6 +1792,7 @@ async function openDbConversationDetail(workflowId, conversationId) {
   showDbConversationDetailPage();
   try {
     const params = new URLSearchParams({ workflowId, conversationId });
+    appendDbConfigId(params);
     const detail = await api(`/api/db/conversations/detail?${params}`);
     state.dbConversationDetail = detail;
     state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
@@ -1778,6 +1815,7 @@ async function loadDbConversationNodeExecution(workflowId, triggerMessageId, exe
       triggerMessageId: targetTriggerMessageId,
       executionId: targetExecutionId
     });
+    appendDbConfigId(params);
     const result = await api(`/api/db/conversations/node-execution?${params}`);
     if (!result.execution) return;
     state.dbNodeExecutionDetails = { ...state.dbNodeExecutionDetails, [targetExecutionId]: result.execution };
@@ -1801,6 +1839,7 @@ async function loadDbConversationHistoricalNode(workflowId, triggerMessageId, no
       triggerMessageId: targetTriggerMessageId,
       nodeId: targetNodeId
     });
+    appendDbConfigId(params);
     const result = await api(`/api/db/conversations/historical-node?${params}`);
     const historicalRuntime = result.historicalRuntime;
     if (!historicalRuntime?.nodes?.some(node => node.id === targetNodeId)) {
@@ -1844,6 +1883,7 @@ async function openDbConversationVariables(workflowId, conversationId) {
       return;
     }
     const params = new URLSearchParams({ workflowId: targetWorkflowId, conversationId: targetConversationId });
+    appendDbConfigId(params);
     const result = await api(`/api/db/conversations/variables?${params}`);
     state.dbConversationVariables = result.variables || [];
   } finally {
@@ -2305,6 +2345,7 @@ function bindEvents() {
     if (type === 'test-db-config') testDbConfig(configId).catch(showError);
     if (type === 'connect-db') changeDbConnection('connect').catch(showError);
     if (type === 'disconnect-db') changeDbConnection('disconnect').catch(showError);
+    if (type === 'switch-db-config') switchDbConnection(configId).catch(showError);
     if (type === 'query-db-conversations') {
       state.dbPageNo = 1;
       queryDbConversations().catch(showError);

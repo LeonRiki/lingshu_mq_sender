@@ -1215,7 +1215,7 @@ function readDbConfigs() {
 function publicDbConfig(config) {
   return {
     id: config.id,
-    name: config.name,
+    name: String(config.name || '').trim().replace(/\s{2,}/g, ' '),
     host: config.host,
     port: config.port,
     database: config.database,
@@ -1341,17 +1341,20 @@ function setDbConnectionState(config, status, errorMessage = '') {
 }
 
 function dbConnectionStatus(configId = '') {
-  let config;
-  try {
-    config = dbConfig(configId);
-  } catch (err) {
+  const configs = readDbConfigs();
+  const activeConfig = configs.find(config => config.id === dbConnectionState.configId
+    && dbConnectionFingerprint(config) === dbConnectionState.fingerprint);
+  const config = configId
+    ? configs.find(item => item.id === configId)
+    : activeConfig || configs[0];
+  if (!config) {
     return { configId: '', name: '未配置数据库', status: 'disconnected', errorMessage: '' };
   }
   const fingerprint = dbConnectionFingerprint(config);
   const connectedConfig = dbConnectionState.configId === config.id && dbConnectionState.fingerprint === fingerprint;
   return {
     configId: config.id,
-    name: config.name || '未命名数据库',
+    name: String(config.name || '').trim().replace(/\s{2,}/g, ' ') || '未命名数据库',
     status: connectedConfig ? dbConnectionState.status : 'disconnected',
     errorMessage: connectedConfig ? dbConnectionState.errorMessage : ''
   };
@@ -1393,6 +1396,10 @@ function dbPoolForConfig(Pool, config, fingerprint) {
 }
 
 async function withDbClient(configId, callback, { allowConnect = false } = {}) {
+  return withDbClientQueue(() => withDbClientOnce(configId, callback, { allowConnect }));
+}
+
+async function withDbClientQueue(callback) {
   let releaseQueue;
   const previous = dbClientQueue.catch(() => {});
   dbClientQueue = new Promise(resolve => {
@@ -1400,7 +1407,7 @@ async function withDbClient(configId, callback, { allowConnect = false } = {}) {
   });
   await previous;
   try {
-    return await withDbClientOnce(configId, callback, { allowConnect });
+    return await callback();
   } finally {
     releaseQueue();
   }
@@ -2151,28 +2158,82 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
 }
 
 async function testDbConnection(configId) {
-  return withDbClient(configId, async client => {
-    await client.query('SELECT 1');
-    return { ok: true };
-  }, { allowConnect: true });
+  return withDbClientQueue(async () => {
+    const config = dbConfig(configId);
+    const fingerprint = dbConnectionFingerprint(config);
+    const { Pool } = requirePg();
+    const pool = dbPoolForConfig(Pool, config, fingerprint);
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT 1');
+      } finally {
+        client.release();
+      }
+      return { ok: true };
+    } catch (err) {
+      throw normalizeDbConnectionError(err);
+    } finally {
+      await pool.end().catch(() => {});
+    }
+  });
+}
+
+async function connectDbConnection(configId) {
+  return withDbClientQueue(async () => {
+    const config = dbConfig(configId);
+    const fingerprint = dbConnectionFingerprint(config);
+    if (dbPool && dbPoolFingerprint === fingerprint && dbConnectionStatus(config.id).status === 'connected') {
+      return dbConnectionStatus(config.id);
+    }
+    const { Pool } = requirePg();
+    const candidatePool = dbPoolForConfig(Pool, config, fingerprint);
+    try {
+      const client = await candidatePool.connect();
+      try {
+        await client.query('SELECT 1');
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      await candidatePool.end().catch(() => {});
+      if (!dbPool) setDbConnectionState(config, 'error', normalizeDbConnectionError(err).message);
+      throw normalizeDbConnectionError(err);
+    }
+
+    const previousPool = dbPool;
+    dbPool = candidatePool;
+    dbPoolFingerprint = fingerprint;
+    setDbConnectionState(config, 'connected');
+    if (previousPool) await previousPool.end().catch(() => {});
+    return dbConnectionStatus(config.id);
+  });
 }
 
 async function disconnectDbConnection(configId) {
-  const config = dbConfig(configId);
-  const fingerprint = dbConnectionFingerprint(config);
-  if (dbPool && dbPoolFingerprint === fingerprint) {
-    const pool = dbPool;
-    dbPool = null;
-    dbPoolFingerprint = '';
-    await pool.end();
-  }
-  setDbConnectionState(config, 'disconnected');
-  return dbConnectionStatus(config.id);
+  return withDbClientQueue(async () => {
+    const config = dbConfig(configId);
+    const fingerprint = dbConnectionFingerprint(config);
+    if (dbPool && dbPoolFingerprint === fingerprint) {
+      const pool = dbPool;
+      dbPool = null;
+      dbPoolFingerprint = '';
+      await pool.end();
+      setDbConnectionState(config, 'disconnected');
+    }
+    return dbConnectionStatus(config.id);
+  });
 }
 
 function dbDateParam(value) {
   const text = String(value || '').trim();
   return text || null;
+}
+
+function dbDateRangeDay(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+  if (!match) return Number.NaN;
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
 }
 
 async function listDbConversations(url) {
@@ -2189,37 +2250,32 @@ async function listDbConversations(url) {
   const hasError = String(url.searchParams.get('hasError') || '').trim();
   const startTime = dbDateParam(url.searchParams.get('startTime'));
   const endTime = dbDateParam(url.searchParams.get('endTime'));
+  if (!startTime || !endTime) {
+    const err = new Error('时间范围为必填项');
+    err.statusCode = 400;
+    throw err;
+  }
+  const startDay = dbDateRangeDay(startTime);
+  const endDay = dbDateRangeDay(endTime);
+  if (!Number.isFinite(startDay) || !Number.isFinite(endDay) || endDay < startDay) {
+    const err = new Error('时间范围无效');
+    err.statusCode = 400;
+    throw err;
+  }
+  if ((endDay - startDay) / 86400000 > 6) {
+    const err = new Error('时间范围最多7天');
+    err.statusCode = 400;
+    throw err;
+  }
   const pageNo = Math.max(1, Number(url.searchParams.get('pageNo') || 1));
   const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 20)));
   return withDbClient(configId, async client => {
-    const params = [];
-    const where = ['c.deleted_at IS NULL'];
-    // 会话表的 last_message_at 可能没有随着实际消息记录更新，列表以学员最新消息为准。
-    const lastMessageAtSql = `COALESCE(
-      (
-        SELECT MAX(m.message_timestamp)
-        FROM public.conversation_messages m
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
-          AND m.deleted_at IS NULL
-          AND UPPER(COALESCE(m.role, '')) = 'USER'
-      ),
-      (
-        SELECT MAX(m.message_timestamp)
-        FROM public.conversation_messages m
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
-          AND m.deleted_at IS NULL
-      ),
-      c.last_message_at
-    )`;
-    if (workflowId) {
-      params.push(workflowId);
-      where.push(`c.workflow_id::text = $${params.length}`);
-    }
+    // 先按必填的工作流和时间范围聚合候选会话，避免在每个可选筛选条件中重复计算最新消息时间。
+    const params = [workflowId, startTime, endTime];
+    const where = [];
     if (conversationId) {
       params.push(`%${conversationId}%`);
-      where.push(`c.conversation_id ILIKE $${params.length}`);
+      where.push(`candidate.conversation_id ILIKE $${params.length}`);
     }
     if (friendNick) {
       params.push(`%${friendNick}%`);
@@ -2227,29 +2283,21 @@ async function listDbConversations(url) {
         SELECT 1
         FROM public.conversation_messages m
         JOIN public.workflow_node_executions e
-          ON e.workflow_id = m.workflow_id
+         ON e.workflow_id = m.workflow_id
          AND e.trigger_message_id = m.trigger_message_id
          AND e.deleted_at IS NULL
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
+        WHERE m.workflow_id = candidate.workflow_id
+          AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
           AND (e.inputs::text ILIKE $${params.length} OR e.outputs::text ILIKE $${params.length})
       )`);
-    }
-    if (startTime) {
-      params.push(startTime);
-      where.push(`${lastMessageAtSql} >= $${params.length}`);
-    }
-    if (endTime) {
-      params.push(endTime);
-      where.push(`${lastMessageAtSql} <= $${params.length}`);
     }
     if (keyword) {
       params.push(`%${keyword}%`);
       where.push(`EXISTS (
         SELECT 1 FROM public.conversation_messages m
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
+        WHERE m.workflow_id = candidate.workflow_id
+          AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
           AND (
             EXISTS (
@@ -2325,11 +2373,11 @@ async function listDbConversations(url) {
         SELECT 1
         FROM public.conversation_messages m
         JOIN public.workflow_node_executions e
-          ON e.workflow_id = m.workflow_id
+         ON e.workflow_id = m.workflow_id
          AND e.trigger_message_id = m.trigger_message_id
          AND e.deleted_at IS NULL
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
+        WHERE m.workflow_id = candidate.workflow_id
+          AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
           AND (
             COALESCE(e.error_message, '') <> ''
@@ -2343,11 +2391,11 @@ async function listDbConversations(url) {
         SELECT 1
         FROM public.conversation_messages m
         JOIN public.workflow_node_executions e
-          ON e.workflow_id = m.workflow_id
+         ON e.workflow_id = m.workflow_id
          AND e.trigger_message_id = m.trigger_message_id
          AND e.deleted_at IS NULL
-        WHERE m.workflow_id = c.workflow_id
-          AND m.conversation_id = c.conversation_id
+        WHERE m.workflow_id = candidate.workflow_id
+          AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
           AND (
             COALESCE(e.error_message, '') <> ''
@@ -2358,14 +2406,34 @@ async function listDbConversations(url) {
       )`);
     }
     const pageParams = [...params, pageSize, (pageNo - 1) * pageSize];
-    const conversationSql = `WITH grouped AS (
-        SELECT c.workflow_id, c.conversation_id, MAX(${lastMessageAtSql}) AS last_message_at
+    const conversationSql = `WITH grouped AS MATERIALIZED (
+        SELECT c.workflow_id,
+               c.conversation_id,
+               COALESCE(
+                 MAX(m.message_timestamp) FILTER (WHERE UPPER(COALESCE(m.role, '')) = 'USER'),
+                 MAX(m.message_timestamp),
+                 MAX(c.last_message_at)
+               ) AS last_message_at
         FROM public.conversations c
-        WHERE ${where.join(' AND ')}
+        LEFT JOIN public.conversation_messages m
+          ON m.workflow_id = c.workflow_id
+         AND m.conversation_id = c.conversation_id
+         AND m.deleted_at IS NULL
+        WHERE c.deleted_at IS NULL
+          AND c.workflow_id::text = $1
         GROUP BY c.workflow_id, c.conversation_id
-      ), page AS (
-        SELECT grouped.*, COUNT(*) OVER() AS total_count
+      ), candidates AS MATERIALIZED (
+        SELECT *
         FROM grouped
+        WHERE last_message_at >= $2
+          AND last_message_at <= $3
+      ), filtered AS MATERIALIZED (
+        SELECT candidate.*
+        FROM candidates candidate
+        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ), page AS (
+        SELECT filtered.*, COUNT(*) OVER() AS total_count
+        FROM filtered
         ORDER BY last_message_at DESC NULLS LAST
         LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}
       )
@@ -3117,8 +3185,11 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'POST' && pathname === '/api/db-configs/connect') {
       const body = await parseBody(req);
-      await testDbConnection(body.configId || '');
-      return json(res, 200, dbConnectionStatus(body.configId || ''));
+      return json(res, 200, await connectDbConnection(body.configId || ''));
+    }
+    if (req.method === 'POST' && pathname === '/api/db-configs/switch') {
+      const body = await parseBody(req);
+      return json(res, 200, await connectDbConnection(body.configId || ''));
     }
     if (req.method === 'POST' && pathname === '/api/db-configs/disconnect') {
       const body = await parseBody(req);
