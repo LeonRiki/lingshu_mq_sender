@@ -31,7 +31,7 @@ const UPDATE_SOURCES = [
     label: '魔搭',
     repository: 'LeonRiki/lingshu_mq',
     contentRoot: 'v1',
-    revision: 'main',
+    revision: 'master',
     type: 'modelscope-repository'
   }
 ];
