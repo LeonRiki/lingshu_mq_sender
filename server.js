@@ -1412,7 +1412,7 @@ function dbPoolForConfig(Pool, config, fingerprint) {
     user: config.user,
     password: config.password,
     max: 1,
-    idleTimeoutMillis: 60 * 60 * 1000,
+    idleTimeoutMillis: 5 * 60 * 1000,
     connectionTimeoutMillis: 5000
   });
   pool.on('error', err => {
