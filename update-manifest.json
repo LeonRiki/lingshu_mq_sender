@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.4",
+  "version": "2.1.6",
   "notes": [],
   "files": [
     {
@@ -13,7 +13,7 @@
     },
     {
       "path": "version.json",
-      "sha256": "29c2ebe8f3b747af049e3bc3930f54949d231eac20c217e0acba6aaa14f6db51"
+      "sha256": "071e12d879d724049bb89e0f00a0166f333d7451baedb3bd7e1811621fb017d9"
     },
     {
       "path": "web/app.js",
