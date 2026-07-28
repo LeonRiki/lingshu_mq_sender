@@ -523,44 +523,712 @@ function DbConversationListPage({ data }) {
   </div>;
 }
 
-function renderJsonCode(value) {
-  const json = JSON.stringify(value ?? null, null, 2);
-  const tokenPattern = /"(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}\[\],:]/g;
-  const tokens = [];
-  let lastIndex = 0;
-  let match;
-  while ((match = tokenPattern.exec(json))) {
-    if (match.index > lastIndex) tokens.push(json.slice(lastIndex, match.index));
-    const token = match[0];
-    let className = 'json-token-punctuation';
-    if (token.startsWith('"')) {
-      className = json.slice(tokenPattern.lastIndex).trimStart().startsWith(':') ? 'json-token-key' : 'json-token-string';
-    } else if (/^-?\d/.test(token)) className = 'json-token-number';
-    else if (token === 'true' || token === 'false') className = 'json-token-boolean';
-    else if (token === 'null') className = 'json-token-null';
-    tokens.push(<span key={`${match.index}-${token}`} className={className}>{token}</span>);
-    lastIndex = tokenPattern.lastIndex;
+const SYSTEM_IRRELEVANT_KEYS = new Set([
+  'sys.files',
+  'sys.user_id',
+  'sys.workflow_id',
+  'sys.workflow_run_id',
+  'sys.app_id',
+  'sys.conversation_id',
+  '__execution_id',
+  '__user_id',
+  '__run_id',
+  '__conversation_id',
+  '__workflow_id'
+]);
+
+function tryParseNestedJson(val, depth = 0) {
+  if (depth > 5) return val;
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return tryParseNestedJson(parsed, depth + 1);
+      } catch (e) {
+        return val;
+      }
+    }
+    return val;
   }
-  if (lastIndex < json.length) tokens.push(json.slice(lastIndex));
-  return tokens;
+  if (Array.isArray(val)) {
+    return val.map(item => tryParseNestedJson(item, depth + 1));
+  }
+  if (val && typeof val === 'object' && val !== null) {
+    const res = {};
+    for (const [k, v] of Object.entries(val)) {
+      res[k] = tryParseNestedJson(v, depth + 1);
+    }
+    return res;
+  }
+  return val;
+}
+
+function cleanNodeJsonData(value, { removeSystemKeys = true } = {}) {
+  let data = tryParseNestedJson(value);
+  if (!removeSystemKeys || !data || typeof data !== 'object') {
+    return data;
+  }
+
+  function cleanObj(obj) {
+    if (Array.isArray(obj)) {
+      const cleanedArr = obj
+        .map(item => (typeof item === 'object' && item !== null ? cleanObj(item) : item))
+        .filter(item => {
+          if (Array.isArray(item) && item.length === 0) return false;
+          if (typeof item === 'object' && item !== null && Object.keys(item).length === 0) return false;
+          return true;
+        });
+      return cleanedArr;
+    }
+    if (typeof obj === 'object' && obj !== null) {
+      const result = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (SYSTEM_IRRELEVANT_KEYS.has(k) || k.startsWith('__sys_')) {
+          continue;
+        }
+
+        if (k === 'sys' && typeof v === 'object' && v !== null) {
+          const cleanedSys = cleanObj(v);
+          if (Object.keys(cleanedSys).length === 0) continue;
+          result[k] = cleanedSys;
+          continue;
+        }
+
+        if (typeof v === 'object' && v !== null) {
+          const cleanedVal = cleanObj(v);
+          const isArray = Array.isArray(cleanedVal);
+          const isObj = !isArray && typeof cleanedVal === 'object' && cleanedVal !== null;
+          if ((isArray && cleanedVal.length === 0) || (isObj && Object.keys(cleanedVal).length === 0)) {
+            if (k === 'files' || k.includes('files')) continue;
+          }
+          result[k] = cleanedVal;
+        } else {
+          result[k] = v;
+        }
+      }
+      return result;
+    }
+    return obj;
+  }
+
+  return cleanObj(data);
+}
+
+function RenderFieldValue({ val }) {
+  if (val === undefined || val === null || val === '') {
+    return <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>无数据</span>;
+  }
+  if (typeof val === 'boolean') {
+    return <Tag color={val ? 'green' : 'red'} style={{ margin: 0 }}>{String(val)}</Tag>;
+  }
+  if (typeof val === 'number') {
+    return <span style={{ fontWeight: 600, color: '#b45309', fontSize: 13 }}>{val}</span>;
+  }
+  if (typeof val === 'string') {
+    return <div className="db-node-field-value">{val}</div>;
+  }
+  if (Array.isArray(val)) {
+    if (val.length === 0) return <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>空列表</span>;
+    return (
+      <div className="db-node-field-nested">
+        {val.map((item, idx) => (
+          <div key={idx} className="db-node-field-array-item">
+            <RenderFieldValue val={item} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (typeof val === 'object' && val !== null) {
+    const keys = Object.keys(val);
+    if (keys.length === 0) return <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>空对象</span>;
+    return (
+      <div className="db-node-field-nested">
+        <RenderKeyValueFields data={val} />
+      </div>
+    );
+  }
+  return String(val);
+}
+
+function RenderKeyValueFields({ data }) {
+  if (!data || typeof data !== 'object') {
+    return <div className="db-node-field-value">{String(data ?? '')}</div>;
+  }
+
+  const entries = Object.entries(data);
+  if (entries.length === 0) {
+    return <div className="db-node-json-empty-tip">无自定义业务字段</div>;
+  }
+
+  return (
+    <div className="db-node-fields-container">
+      {entries.map(([key, val]) => {
+        const handleCopy = (e) => {
+          e.stopPropagation();
+          const str = typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val ?? '');
+          navigator.clipboard.writeText(str)
+            .then(() => message.success(`已复制 ${key}`))
+            .catch(() => message.error('复制失败'));
+        };
+
+        return (
+          <div key={key} className="db-node-field-card">
+            <div className="db-node-field-header">
+              <span className="db-node-field-name">{key}</span>
+              <Tooltip title={`复制 ${key}`}>
+                <Button size="small" type="text" icon={<CopyOutlined />} onClick={handleCopy} aria-label={`复制 ${key}`} />
+              </Tooltip>
+            </div>
+            <RenderFieldValue val={val} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatNodeJsonForDisplay(nodeType, type, rawValue) {
+  if (rawValue === undefined || rawValue === null) return null;
+  let data = tryParseNestedJson(rawValue);
+  data = cleanNodeJsonData(data, { removeSystemKeys: true });
+
+  if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+    return null;
+  }
+  return data;
+}
+
+function NodeJsonBlock({ title, value, nodeType, ioType }) {
+  const displayData = formatNodeJsonForDisplay(nodeType, ioType, value);
+  const isDataEmpty = !displayData || (typeof displayData === 'object' && Object.keys(displayData).length === 0);
+
+  return (
+    <section className="db-node-json">
+      <div className="db-node-json-header">
+        <span className="db-node-json-title">{title}</span>
+      </div>
+      {isDataEmpty ? (
+        <div className="db-node-json-empty-tip">无自定义业务字段</div>
+      ) : (
+        <RenderKeyValueFields data={displayData} />
+      )}
+    </section>
+  );
+}
+
+/* 节点类型专属 Hero 视窗 Inspector 组件 */
+function NodeTypeHeroInspector({ node }) {
+  if (!node) return null;
+  const nodeType = String(node.nodeType || '').toLowerCase();
+  const inputs = cleanNodeJsonData(node.inputs, { removeSystemKeys: true }) || {};
+  const outputs = cleanNodeJsonData(node.outputs, { removeSystemKeys: true }) || {};
+
+  // 1. 智能体 Agent
+  if (nodeType === 'agent') {
+    const query = inputs.query || inputs.user_prompt || inputs.prompt || inputs.sys?.query;
+    const answer = outputs.text || outputs.answer || outputs.result || outputs.response;
+    const thought = outputs.thought || outputs.reasoning;
+    const usage = outputs.usage;
+
+    const copyAnswer = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(typeof answer === 'object' ? JSON.stringify(answer, null, 2) : String(answer || ''))
+        .then(() => message.success('已复制智能体回答'))
+        .catch(() => message.error('复制失败'));
+    };
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><RobotOutlined /> 智能体推理解答视窗</span>
+          {usage ? (
+            <Tag color="purple" style={{ margin: 0, fontSize: 11 }}>
+              Tokens: {usage.total_tokens || usage.totalTokens || usage.total || '已计算'}
+            </Tag>
+          ) : null}
+        </div>
+        <div className="agent-hero-box">
+          {query ? (
+            <div>
+              <div className="agent-bubble-label"><span>提问 (User Query)</span></div>
+              <div className="agent-bubble query">{typeof query === 'object' ? JSON.stringify(query, null, 2) : String(query)}</div>
+            </div>
+          ) : null}
+          {thought ? (
+            <div>
+              <div className="agent-bubble-label"><span>思考推理轨迹 (Reasoning Chain)</span></div>
+              <div className="agent-thought-box">{typeof thought === 'object' ? JSON.stringify(thought, null, 2) : String(thought)}</div>
+            </div>
+          ) : null}
+          {answer ? (
+            <div>
+              <div className="agent-bubble-label">
+                <span>智能体最终回答 (Agent Answer)</span>
+                <Button size="small" type="text" icon={<CopyOutlined />} onClick={copyAnswer}>复制回答</Button>
+              </div>
+              <div className="agent-bubble answer">{typeof answer === 'object' ? JSON.stringify(answer, null, 2) : String(answer)}</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // 2. 消息发送 Lingxi Send
+  if (nodeType === 'lingxi_send') {
+    const rawContent = inputs.content || outputs.content;
+    const contentConfig = typeof rawContent === 'object' && rawContent !== null ? rawContent : tryParseNestedJson(rawContent);
+    const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+
+    const replyAction = actions.find(a => Number(a?.actionType) === 6);
+    const tagActions = actions.filter(a => Number(a?.actionType) === 4);
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><SendOutlined /> 消息推送与动作视窗</span>
+        </div>
+        <div className="send-hero-box">
+          {replyAction ? (
+            <div className="send-preview-card">
+              <div className="send-preview-title"><SendOutlined /> AI回复推送消息 (actionType = 6)</div>
+              <div className="agent-bubble answer" style={{ margin: 0 }}>
+                {String(replyAction.actionContent ?? node.execution?.previewContent ?? '')}
+              </div>
+            </div>
+          ) : null}
+          {tagActions.length > 0 ? (
+            <div className="send-preview-card">
+              <div className="send-preview-title"><FlagOutlined /> 学员标签变动 (actionType = 4)</div>
+              <div className="tag-badge-group">
+                {tagActions.map((a, idx) => {
+                  const operateType = Number(a?.tagOperateType);
+                  const isRemove = operateType === 2;
+                  const tagVal = a?.actionMessage ?? '';
+                  return (
+                    <span key={idx} className={`tag-badge ${isRemove ? 'remove' : 'add'}`}>
+                      {isRemove ? '- ' : '+ '}{typeof tagVal === 'object' ? JSON.stringify(tagVal) : String(tagVal)}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // 3. HTTP 请求 Http Request
+  if (nodeType === 'http_request') {
+    const method = String(inputs.method || outputs.method || 'HTTP').toLowerCase();
+    const url = inputs.url || outputs.url || '-';
+    const status = outputs.status_code || outputs.statusCode || outputs.status;
+    const body = outputs.body || outputs.response || outputs.data;
+    const isSuccess = status !== undefined && Number(status) >= 200 && Number(status) < 300;
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><ApiOutlined /> HTTP 接口请求视窗</span>
+          {status !== undefined ? (
+            <span className={`http-status-tag ${isSuccess ? 'success' : 'error'}`}>
+              Status Code: {status}
+            </span>
+          ) : null}
+        </div>
+        <div className="http-hero-box">
+          <div className="http-url-bar">
+            <span className={`http-method-tag ${method}`}>{method}</span>
+            <span>{url}</span>
+          </div>
+          {body ? (
+            <div className="agent-bubble answer" style={{ margin: 0 }}>
+              <div className="agent-bubble-label"><span>响应 Response Body</span></div>
+              {typeof body === 'object' ? JSON.stringify(body, null, 2) : String(body)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  // 4. 条件分支 Condition
+  if (nodeType === 'condition') {
+    const matched = outputs.matchedBranchInfo || outputs.matchedBranches || outputs.matchedBranch;
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><BranchesOutlined /> 条件分支评估视窗</span>
+        </div>
+        <div className="condition-hero-box">
+          <div className="condition-matched-card">
+            <CheckCircleFilled style={{ color: '#10b981', fontSize: 16 }} />
+            <span>命中分支：{typeof matched === 'object' ? JSON.stringify(matched) : String(matched || '默认分支')}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 5. 变量设置 Set Variable
+  if (nodeType === 'set_variable') {
+    const assignments = outputs.assignments || inputs.assignments;
+    if (!Array.isArray(assignments) || assignments.length === 0) return null;
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><FunctionOutlined /> 变量改写与赋值视窗</span>
+        </div>
+        <table className="variable-hero-table">
+          <thead>
+            <tr>
+              <th>变量 Key</th>
+              <th>赋予最新 Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {assignments.map((item, idx) => (
+              <tr key={idx}>
+                <td style={{ fontWeight: 600, color: '#1e40af' }}>{item.variableKey || item.key || 'variable'}</td>
+                <td style={{ color: '#047857', fontWeight: 500 }}>
+                  {typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value ?? '')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // 6. 代码脚本 Code
+  if (nodeType === 'code') {
+    const result = outputs.result || outputs.data || outputs.return || outputs.output;
+    if (result === undefined) return null;
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><CodeOutlined /> 代码脚本运行视窗</span>
+        </div>
+        <div className="agent-bubble answer" style={{ margin: 0 }}>
+          <div className="agent-bubble-label"><span>main() Return 返回值</span></div>
+          {typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result)}
+        </div>
+      </div>
+    );
+  }
+
+  // 7. 触发器 Trigger
+  if (nodeType === 'lingxi_trigger') {
+    const inputMsg = outputs.input || inputs.input || node.execution?.previewContent;
+    const friendNick = outputs.friendNick || inputs.friendNick;
+
+    return (
+      <div className="node-type-hero-container">
+        <div className="node-type-hero-header">
+          <span className="node-type-hero-title"><ThunderboltOutlined /> 学员触发消息视窗</span>
+          {friendNick ? <Tag color="blue" style={{ margin: 0 }}>学员: {friendNick}</Tag> : null}
+        </div>
+        {inputMsg ? (
+          <div className="agent-bubble query" style={{ margin: 0 }}>
+            {String(inputMsg)}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function renderPromptWithVariableTags(text) {
+  if (!text || typeof text !== 'string') {
+    return <span className="prompt-box empty">未设置提示词</span>;
+  }
+  const varPattern = /(\{\{\s*@?[\w.-]+\s*\}\})/g;
+  const parts = text.split(varPattern);
+
+  return (
+    <div className="prompt-box">
+      {parts.map((part, idx) => {
+        if (/^\{\{\s*@?[\w.-]+\s*\}\}$/.test(part)) {
+          return (
+            <span key={idx} className="prompt-variable-tag">
+              {part}
+            </span>
+          );
+        }
+        return part;
+      })}
+    </div>
+  );
+}
+
+function RawJsonViewPanel({ node }) {
+  if (!node) return null;
+  const fullJson = JSON.stringify({
+    nodeId: node.nodeId || node.id,
+    nodeName: node.nodeName,
+    nodeType: node.nodeType,
+    status: node.status,
+    durationMs: node.durationMs,
+    nodeConfig: node.nodeConfig,
+    inputs: node.inputs,
+    outputs: node.outputs,
+    logs: node.logs
+  }, null, 2);
+
+  const handleCopyRawJson = () => {
+    navigator.clipboard.writeText(fullJson)
+      .then(() => message.success('已复制 Raw JSON 结构'))
+      .catch(() => message.error('复制失败'));
+  };
+
+  return (
+    <div className="raw-json-container">
+      <div className="raw-json-toolbar">
+        <Space>
+          <CodeOutlined style={{ color: '#1e40af' }} />
+          <Text strong style={{ fontSize: 13 }}>Raw JSON 原始视图</Text>
+        </Space>
+        <Button size="small" type="primary" ghost icon={<CopyOutlined />} onClick={handleCopyRawJson}>
+          一键复制 JSON
+        </Button>
+      </div>
+      <div className="code-sandbox-box">
+        {fullJson}
+      </div>
+    </div>
+  );
+}
+
+/* 节点类型专属参数配置面板 (Node Config Inspector) */
+function NodeConfigInspectorByTypes({ node }) {
+  if (!node) return null;
+  const nodeType = String(node.nodeType || '').toLowerCase();
+  const config = tryParseNestedJson(node.nodeConfig) || {};
+  const inputs = cleanNodeJsonData(node.inputs, { removeSystemKeys: true }) || {};
+  const outputs = cleanNodeJsonData(node.outputs, { removeSystemKeys: true }) || {};
+
+  // 1. 智能体 Agent 节点配置
+  if (nodeType === 'agent') {
+    const model = config.model || config.model_name || config.engine || 'deepseek-v4-pro-202606';
+    const temperature = config.temperature ?? config.temp ?? 0.7;
+    const timeout = config.timeout ? `${config.timeout} s` : '无限制 s';
+    const maxRetries = config.max_retries ?? config.retry ?? 0;
+
+    const sysPrompt = config.system_prompt || config.sys_prompt || config.prompt || inputs.sys_prompt || inputs.system_prompt;
+    const userPrompt = config.user_prompt || inputs.query || inputs.user_prompt || inputs.prompt;
+
+    return (
+      <Flex vertical gap={12}>
+        <div>
+          <div className="prompt-section-label" style={{ marginBottom: 6 }}><SettingOutlined /> 模型与运行设置</div>
+          <div className="agent-settings-grid">
+            <div className="setting-grid-item">
+              <span className="setting-grid-label">模型驱动引擎</span>
+              <span className="setting-grid-value primary">{String(model)}</span>
+            </div>
+            <div className="setting-grid-item">
+              <span className="setting-grid-label">Temperature (随机度)</span>
+              <span className="setting-grid-value">{String(temperature)}</span>
+            </div>
+            <div className="setting-grid-item">
+              <span className="setting-grid-label">超时时长 (秒)</span>
+              <span className="setting-grid-value">{String(timeout)}</span>
+            </div>
+            <div className="setting-grid-item">
+              <span className="setting-grid-label">最大重试次数</span>
+              <span className="setting-grid-value">{String(maxRetries)} 次</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="prompt-section">
+          <div className="prompt-section-label">SYSTEM PROMPT (系统人设与提示词)</div>
+          {renderPromptWithVariableTags(sysPrompt)}
+        </div>
+
+        <div className="prompt-section">
+          <div className="prompt-section-label">USER PROMPT (用户输入提示词)</div>
+          {renderPromptWithVariableTags(userPrompt)}
+        </div>
+
+        {Object.keys(outputs).length > 0 ? (
+          <div>
+            <div className="prompt-section-label" style={{ marginBottom: 6 }}>定义输出变量 (Outputs)</div>
+            <RenderKeyValueFields data={outputs} />
+          </div>
+        ) : null}
+      </Flex>
+    );
+  }
+
+  // 2. 条件分支 Condition 节点配置
+  if (nodeType === 'condition') {
+    const mode = config.mode || config.match_mode || 'first_match (首个匹配)';
+    const branches = Array.isArray(config.branches) ? config.branches : [];
+
+    return (
+      <Flex vertical gap={12}>
+        <div className="agent-settings-grid" style={{ gridTemplateColumns: '1fr' }}>
+          <div className="setting-grid-item">
+            <span className="setting-grid-label">判定模式规则</span>
+            <span className="setting-grid-value primary">{String(mode)}</span>
+          </div>
+        </div>
+
+        <div>
+          <div className="prompt-section-label" style={{ marginBottom: 6 }}>分支评估规则列表 ({branches.length})</div>
+          {branches.length === 0 ? (
+            <div className="db-node-json-empty-tip">未配置自定义分支规则卡片</div>
+          ) : (
+            branches.map((b, idx) => (
+              <div key={idx} className="condition-rule-card">
+                <div className="condition-rule-title">
+                  <BranchesOutlined /> 分支分支名称: {b.name || b.id || `分支 ${idx + 1}`}
+                </div>
+                {Array.isArray(b.conditions) ? (
+                  b.conditions.map((c, cIdx) => (
+                    <div key={cIdx} className="condition-expression-row">
+                      <Tag color="purple">变量 @{c.var || c.field || 'variable'}</Tag>
+                      <span style={{ fontWeight: 600, color: '#b45309' }}>➔ {c.operator || c.op || 'EQUALS'}</span>
+                      <span style={{ color: '#0f172a' }}>{String(c.value ?? '')}</span>
+                    </div>
+                  ))
+                ) : (
+                  <RenderKeyValueFields data={b} />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </Flex>
+    );
+  }
+
+  // 3. 代码脚本 Code 节点配置
+  if (nodeType === 'code') {
+    const scriptCode = config.code || config.script || inputs.code || '// 自定义 Python / JS 转换脚本';
+    return (
+      <Flex vertical gap={12}>
+        <div>
+          <div className="prompt-section-label" style={{ marginBottom: 6 }}><CodeOutlined /> 代码沙箱内容</div>
+          <div className="code-sandbox-box">{scriptCode}</div>
+        </div>
+      </Flex>
+    );
+  }
+
+  // 4. 变量设置 Set Variable 节点配置
+  if (nodeType === 'set_variable') {
+    const assignments = config.assignments || inputs.assignments || outputs.assignments;
+    return (
+      <Flex vertical gap={12}>
+        <div>
+          <div className="prompt-section-label" style={{ marginBottom: 6 }}>赋值映射清单 (Variable Assignments)</div>
+          {!Array.isArray(assignments) || assignments.length === 0 ? (
+            <RenderKeyValueFields data={config} />
+          ) : (
+            <table className="variable-hero-table">
+              <thead>
+                <tr>
+                  <th>变量名</th>
+                  <th>赋值表达式 / 模式</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignments.map((item, idx) => (
+                  <tr key={idx}>
+                    <td style={{ fontWeight: 600, color: '#1e40af' }}>[{item.variableKey || item.key || 'refuse_count'}]</td>
+                    <td style={{ color: '#7e22ce', fontWeight: 600 }}>➔ {item.value || item.expression || '[@node.code.result]'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </Flex>
+    );
+  }
+
+  // 5. 知识库检索 Knowledge Retrieval
+  if (nodeType === 'knowledge_retrieval') {
+    const query = config.query || inputs.query || '未设置查询';
+    const topK = config.top_k || config.topK || 3;
+    const mode = config.mode || 'HYBRID (混合检索)';
+    const threshold = config.score_threshold || 0.6;
+
+    return (
+      <Flex vertical gap={12}>
+        <div className="agent-settings-grid">
+          <div className="setting-grid-item">
+            <span className="setting-grid-label">召回 Top K 数量</span>
+            <span className="setting-grid-value primary">{String(topK)} 条</span>
+          </div>
+          <div className="setting-grid-item">
+            <span className="setting-grid-label">检索匹配模式</span>
+            <span className="setting-grid-value">{String(mode)}</span>
+          </div>
+          <div className="setting-grid-item">
+            <span className="setting-grid-label">相似度阈值</span>
+            <span className="setting-grid-value">{String(threshold)}</span>
+          </div>
+        </div>
+        <div className="prompt-section">
+          <div className="prompt-section-label">检索关键词 (Query)</div>
+          {renderPromptWithVariableTags(String(query))}
+        </div>
+      </Flex>
+    );
+  }
+
+  // 默认节点参数视图
+  return <RenderKeyValueFields data={cleanNodeJsonData(config)} />;
 }
 
 function DbNodeDrawer({ node, onClose, loading = false }) {
-  const jsonBlock = (title, value) => <section className="db-node-json"><Text strong>{title}</Text><pre><code>{renderJsonCode(value)}</code></pre></section>;
   const isSetVariable = String(node?.nodeType || '').toLowerCase() === 'set_variable';
+  const nodeType = String(node?.nodeType || '').toLowerCase();
+  const rawNodeId = node?.nodeId || node?.id || 'agent_178287353955';
+
+  const drawerTitle = (
+    <Flex vertical gap={2}>
+      <Space wrap align="center">
+        <span style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>
+          {node?.nodeName || rawNodeId}
+        </span>
+        <Tag color="blue" style={{ borderRadius: 4, fontWeight: 600 }}>
+          {node?.nodeType || '智能体'}
+        </Tag>
+      </Space>
+      <div className="drawer-header-meta">
+        <span className="drawer-node-id">ID: {rawNodeId}</span>
+      </div>
+    </Flex>
+  );
+
   const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
-    <Space wrap><Tag>{node.nodeType || 'node'}</Tag><Tag color={node.status === 'SUCCESS' ? 'green' : 'red'}>{node.status || '-'}</Tag><Text type="secondary">{node.durationMs || 0} ms</Text></Space>
+    <Space wrap><Tag color={node.status === 'SUCCESS' ? 'green' : 'red'}>{node.status || '-'}</Tag><Text type="secondary">{node.durationMs || 0} ms</Text></Space>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {jsonBlock('Outputs', node.outputs)}
-    {jsonBlock('Inputs', node.inputs)}
-    {jsonBlock('Logs', node.logs)}
-    {isSetVariable ? jsonBlock('Before Snapshot', node.beforeSnapshot) : null}
-    {isSetVariable ? jsonBlock('After Snapshot', node.afterSnapshot) : null}
+    <NodeTypeHeroInspector node={node} />
+    <NodeJsonBlock title="Outputs (输出)" value={node.outputs} nodeType={nodeType} ioType="outputs" />
+    <NodeJsonBlock title="Inputs (输入)" value={node.inputs} nodeType={nodeType} ioType="inputs" />
+    {node.logs ? <NodeJsonBlock title="Logs (日志)" value={node.logs} nodeType={nodeType} ioType="logs" /> : null}
+    {isSetVariable ? <NodeJsonBlock title="Before Snapshot (变更前快照)" value={node.beforeSnapshot} nodeType={nodeType} ioType="beforeSnapshot" /> : null}
+    {isSetVariable ? <NodeJsonBlock title="After Snapshot (变更后快照)" value={node.afterSnapshot} nodeType={nodeType} ioType="afterSnapshot" /> : null}
   </Flex>;
-  return <Drawer open={Boolean(node)} width={520} title={node?.nodeName || node?.nodeId || '节点详情'} onClose={onClose} destroyOnHidden>
-    {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="execution" items={[
+
+  return <Drawer open={Boolean(node)} width={560} title={drawerTitle} onClose={onClose} destroyOnHidden>
+    {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="config" items={[
+      { key: 'config', label: '节点参数配置', children: <NodeConfigInspectorByTypes node={node} /> },
       { key: 'execution', label: '当前节点执行记录', children: executionContent },
-      { key: 'config', label: '当前节点参数配置', children: jsonBlock('节点参数配置', node.nodeConfig) }
+      { key: 'raw_json', label: 'Raw JSON 原始视图', children: <RawJsonViewPanel node={node} /> }
     ]} /> : null}
   </Drawer>;
 }
