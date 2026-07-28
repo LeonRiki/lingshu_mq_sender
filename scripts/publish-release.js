@@ -286,27 +286,51 @@ async function fetchBytes(url) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function retryRemoteCheck(description, check, attempts = 6) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await check();
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      await delay(1500 * attempt);
+    }
+  }
+  throw new Error(`${description}：${lastError.message}`);
+}
+
 async function verifyRemotePackage(name, baseUrl, prefix, manifest) {
   const verificationKey = `verify=${Date.now()}`;
   const fileUrl = relativePath => {
     const url = `${baseUrl}${baseUrl.endsWith('=') ? '' : '/'}${prefix}${relativePath}`;
     return `${url}${url.includes('?') ? '&' : '?'}${verificationKey}`;
   };
-  const remoteManifest = JSON.parse((await fetchBytes(fileUrl('update-manifest.json'))).toString('utf8'));
-  if (remoteManifest.version !== manifest.version) {
-    throw new Error(`${name} 更新清单版本不正确：${remoteManifest.version}`);
-  }
+  await retryRemoteCheck(`${name} 更新清单校验失败`, async () => {
+    const remoteManifest = JSON.parse((await fetchBytes(fileUrl('update-manifest.json'))).toString('utf8'));
+    if (remoteManifest.version !== manifest.version) {
+      throw new Error(`${name} 更新清单版本不正确：${remoteManifest.version}`);
+    }
+  });
   await mapConcurrent(manifest.files, 8, async file => {
-    const actual = sha256(await fetchBytes(fileUrl(file.path)));
-    if (actual !== file.sha256) throw new Error(`${name} 文件校验失败：${file.path}`);
+    await retryRemoteCheck(`${name} 文件校验失败：${file.path}`, async () => {
+      const actual = sha256(await fetchBytes(fileUrl(file.path)));
+      if (actual !== file.sha256) throw new Error(`哈希不匹配`);
+    });
   });
 }
 
 async function verifyGithubSource(manifest) {
   const files = githubSourceFiles();
   await mapConcurrent(files, 8, async file => {
-    const remote = await fetchBytes(`https://raw.githubusercontent.com/${REPOSITORY}/${GITHUB_PACKAGE_BRANCH}/${file.relativePath.split('/').map(encodeURIComponent).join('/')}?verify=${Date.now()}`);
-    if (!remote.equals(file.content)) throw new Error(`GitHub 源码校验失败：${file.relativePath}`);
+    await retryRemoteCheck(`GitHub 源码校验失败：${file.relativePath}`, async () => {
+      const remote = await fetchBytes(`https://raw.githubusercontent.com/${REPOSITORY}/${GITHUB_PACKAGE_BRANCH}/${file.relativePath.split('/').map(encodeURIComponent).join('/')}?verify=${Date.now()}`);
+      if (!remote.equals(file.content)) throw new Error('内容不匹配');
+    });
   });
   await verifyRemotePackage('GitHub', `https://raw.githubusercontent.com/${REPOSITORY}/main`, '', manifest);
 }
@@ -328,9 +352,11 @@ async function publishRelease({ dryRun = false, replaceRelease = false } = {}) {
 
   const token = githubToken();
   ensureModelscopeSdk();
+  let modelscopePromise = null;
+  let primaryError = null;
   try {
     console.log('正在发布 GitHub 源码与更新包…');
-    const modelscopePromise = publishModelscope(path.join(outputDirectory, 'modelscope'), version);
+    modelscopePromise = publishModelscope(path.join(outputDirectory, 'modelscope'), version);
     const githubSource = await publishGithubSource(token, version);
     if (replaceRelease) await removeGithubReleaseAndTag(token, version);
     const release = await createGithubRelease(token, version, githubSource.sha);
@@ -347,7 +373,18 @@ async function publishRelease({ dryRun = false, replaceRelease = false } = {}) {
     console.log(`发布完成：v${version}`);
     console.log(`GitHub 源码与更新包提交：${githubSource.sha}`);
     console.log(`GitHub Release：${release.html_url}`);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
+    if (modelscopePromise) {
+      try {
+        await modelscopePromise;
+      } catch (error) {
+        if (!primaryError) throw error;
+        console.error(`魔搭发布后续失败：${error.message}`);
+      }
+    }
     fs.rmSync(outputDirectory, { recursive: true, force: true });
   }
 }
