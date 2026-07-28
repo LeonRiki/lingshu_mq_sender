@@ -1176,6 +1176,19 @@ function saveMqConfig(value) {
   return publicMqConfig(config);
 }
 
+function deleteMqConfig(configId) {
+  const idValue = String(configId || '').trim();
+  const configs = readMqConfigs();
+  const existingIndex = configs.findIndex(config => config.id === idValue);
+  if (existingIndex < 0) {
+    const err = new Error('MQ 配置不存在');
+    err.statusCode = 404;
+    throw err;
+  }
+  configs.splice(existingIndex, 1);
+  writePrivateJson(MQ_CONFIGS_FILE, { configs });
+}
+
 function mqConfig(configId) {
   const configs = readMqConfigs();
   const selected = configId ? configs.find(config => config.id === configId) : configs[0];
@@ -1237,6 +1250,28 @@ function saveDbConfig(value) {
   else configs.push(config);
   writePrivateJson(DB_CONFIGS_FILE, { configs });
   return publicDbConfig(config);
+}
+
+async function deleteDbConfig(configId) {
+  const idValue = String(configId || '').trim();
+  const configs = readDbConfigs();
+  const existingIndex = configs.findIndex(config => config.id === idValue);
+  if (existingIndex < 0) {
+    const err = new Error('数据库配置不存在');
+    err.statusCode = 404;
+    throw err;
+  }
+  const [config] = configs.splice(existingIndex, 1);
+  const deletingConnectedConfig = dbConnectionState.configId === config.id
+    && dbConnectionState.fingerprint === dbConnectionFingerprint(config);
+  if (deletingConnectedConfig) {
+    const pool = dbPool;
+    dbPool = null;
+    dbPoolFingerprint = '';
+    dbConnectionState = { configId: '', fingerprint: '', status: 'disconnected', errorMessage: '' };
+    if (pool) await pool.end().catch(() => {});
+  }
+  writePrivateJson(DB_CONFIGS_FILE, { configs });
 }
 
 function dbConversationFilterValues(value = {}) {
@@ -3164,6 +3199,10 @@ async function handleApi(req, res, pathname, url) {
       body.id = decodeURIComponent(mqConfigMatch[1]);
       return json(res, 200, saveMqConfig(body));
     }
+    if (req.method === 'DELETE' && mqConfigMatch) {
+      deleteMqConfig(decodeURIComponent(mqConfigMatch[1]));
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && pathname === '/api/db-configs') {
       return json(res, 200, readDbConfigs().map(publicDbConfig));
     }
@@ -3175,6 +3214,10 @@ async function handleApi(req, res, pathname, url) {
       const body = await parseBody(req);
       body.id = decodeURIComponent(dbConfigMatch[1]);
       return json(res, 200, saveDbConfig(body));
+    }
+    if (req.method === 'DELETE' && dbConfigMatch) {
+      await deleteDbConfig(decodeURIComponent(dbConfigMatch[1]));
+      return json(res, 200, { ok: true });
     }
     if (req.method === 'POST' && pathname === '/api/db-configs/test') {
       const body = await parseBody(req);

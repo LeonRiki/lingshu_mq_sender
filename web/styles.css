@@ -166,6 +166,41 @@ button:disabled {
   border-inline-end: 0;
 }
 
+.settings-menu-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+}
+
+.settings-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-menu-delete.ant-btn {
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--danger);
+}
+
+.mq-settings-nav .ant-menu-item:hover .settings-menu-delete.ant-btn,
+.mq-settings-nav .ant-menu-item:focus-within .settings-menu-delete.ant-btn,
+.settings-menu-delete.ant-btn.ant-popover-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settings-menu-delete.ant-btn:hover,
+.settings-menu-delete.ant-btn:focus-visible {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .mq-settings-form {
   min-width: 0;
   flex: 1;

@@ -65,6 +65,16 @@ function displayDbConfigName(value) {
   return String(value || '').trim().replace(/\s{2,}/g, ' ') || '未配置数据库';
 }
 
+function SettingsMenuLabel({ name, deleteTitle, deleteDescription, deleteAriaLabel, onDelete }) {
+  const stopMenuEvent = event => event?.stopPropagation?.();
+  return <span className="settings-menu-label">
+    <span className="settings-menu-name">{name}</span>
+    <Popconfirm title={deleteTitle} description={deleteDescription} okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={onDelete} onPopupClick={stopMenuEvent}>
+      <Button type="text" danger size="small" shape="circle" className="settings-menu-delete" icon={<DeleteOutlined />} aria-label={deleteAriaLabel} onClick={stopMenuEvent} onMouseDown={stopMenuEvent} />
+    </Popconfirm>
+  </span>;
+}
+
 function renderTriggerMessages(values) {
   const messages = Array.isArray(values) ? values : [];
   const visibleMessages = messages.slice(0, 3);
@@ -370,7 +380,16 @@ function DbSettingsDialog({ data }) {
     setForm(selected ? { ...selected, password: '' } : emptyForm);
   }, [selectedId, data.open]);
   const setField = key => event => setForm(current => ({ ...current, [key]: event?.target ? event.target.value : event }));
-  const menuItems = [...configs.map(config => ({ key: config.id, label: config.name })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增数据库配置' }];
+  const menuItems = [...configs.map(config => ({
+    key: config.id,
+    label: <SettingsMenuLabel
+      name={config.name}
+      deleteTitle={`删除数据库配置“${config.name || '未命名数据库'}”？`}
+      deleteDescription="删除后将无法恢复，若当前正在使用该配置会同时断开连接。"
+      deleteAriaLabel={`删除数据库配置 ${config.name || '未命名数据库'}`}
+      onDelete={() => emitListToolbar('delete-db-config', { configId: config.id })}
+    />
+  })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增数据库配置' }];
   const complete = form.name && form.host && form.port && form.database && form.user && (form.password || selected?.hasPassword);
   return <Modal open={data.open} centered title="数据库配置" width={820} onCancel={() => emitListToolbar('close-db-settings')} footer={null} destroyOnHidden>
     <Flex className="mq-settings-layout" gap={16}>
@@ -469,7 +488,7 @@ function DbConversationListPage({ data }) {
         <Tag className={`db-connection-dropdown-status ${statusMeta.className}`} bordered={false}>{statusMeta.label}</Tag>
       </span>;
     })(),
-    disabled: config.id === connection.configId && connectionStatus === 'connected'
+    disabled: data.connectionChanging
   }));
   return <div className="db-record-page">
     <div className="db-record-toolbar">
@@ -495,7 +514,7 @@ function DbConversationListPage({ data }) {
         </Space>
       </div>
     </div>
-    <div className="db-record-list-header"><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button><Button type="link" icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>去管理配置</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Button icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>数据库配置</Button><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
+    <div className="db-record-list-header"><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button><Button type="link" icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>去管理配置</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Button icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>数据库配置</Button><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
     {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: 'calc(100vh - 344px)', x: 1260 }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize }) }} />}
     <DbSettingsDialog data={{ open: data.settingsOpen, configs: data.configs, selectedConfigId: data.selectedConfigId, testing: data.testing }} />
     <Modal open={saveFilterOpen} title="保存筛选条件" okText="保存" cancelText="取消" onCancel={() => { setSaveFilterOpen(false); setFilterName(''); }} onOk={saveCurrentFilter} destroyOnHidden>
@@ -1105,7 +1124,16 @@ function MqSettingsDialog({ data }) {
       window.showGlobalMessage?.('复制失败，请检查浏览器剪贴板权限', 'error');
     }
   };
-  const menuItems = [...configs.map(config => ({ key: config.id, label: config.name })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增 MQ 配置' }];
+  const menuItems = [...configs.map(config => ({
+    key: config.id,
+    label: <SettingsMenuLabel
+      name={config.name}
+      deleteTitle={`删除 MQ 配置“${config.name || '未命名配置'}”？`}
+      deleteDescription="删除后将无法恢复。"
+      deleteAriaLabel={`删除 MQ 配置 ${config.name || '未命名配置'}`}
+      onDelete={() => emitListToolbar('delete-mq-config', { configId: config.id })}
+    />
+  })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增 MQ 配置' }];
   return <Modal open={data.open} centered title="MQ 配置" width={880} onCancel={() => emitListToolbar('close-mq-settings')} footer={null} destroyOnHidden>
     <Flex className="mq-settings-layout" gap={16}>
       <aside className="mq-settings-nav"><Menu mode="inline" selectedKeys={[selectedId]} items={menuItems} onClick={({ key }) => selectConfig(key)} /></aside>

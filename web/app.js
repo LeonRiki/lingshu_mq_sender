@@ -1173,6 +1173,16 @@ async function saveMqConfig(config) {
   toast('MQ 配置已保存');
 }
 
+async function deleteMqConfig(configId) {
+  const targetConfigId = String(configId || '').trim();
+  if (!targetConfigId) return;
+  await api(`/api/mq-configs/${encodeURIComponent(targetConfigId)}`, { method: 'DELETE' });
+  await loadMqConfigs();
+  state.mqSettingsSelectedId = state.mqConfigs[0]?.id || null;
+  renderMqSettingsDialog();
+  toast('MQ 配置已删除');
+}
+
 async function loadUpdateStatus() {
   state.updateStatus = await api('/api/update/status');
   return state.updateStatus;
@@ -1622,7 +1632,8 @@ async function changeDbConnection(action) {
 
 async function switchDbConnection(configId) {
   const targetConfigId = String(configId || '').trim();
-  if (!targetConfigId || targetConfigId === state.dbConnection.configId) return;
+  if (!targetConfigId) return;
+  const changedConfig = targetConfigId !== state.dbConnection.configId;
   state.dbConnectionChanging = true;
   renderDbRecordsPage();
   try {
@@ -1630,16 +1641,18 @@ async function switchDbConnection(configId) {
       method: 'POST',
       body: JSON.stringify({ configId: targetConfigId })
     });
-    state.dbConversationItems = [];
-    state.dbConversationTotal = 0;
-    state.dbConversationQueried = false;
-    state.dbConversationDetail = null;
-    state.dbConversationVariables = [];
-    state.dbConversationVariablesOpen = false;
-    state.dbActiveWorkflowId = '';
-    state.dbActiveConversationId = '';
-    state.dbRecordPage = 'list';
-    toast(`已切换至数据库：${state.dbConnection.name}`);
+    if (changedConfig) {
+      state.dbConversationItems = [];
+      state.dbConversationTotal = 0;
+      state.dbConversationQueried = false;
+      state.dbConversationDetail = null;
+      state.dbConversationVariables = [];
+      state.dbConversationVariablesOpen = false;
+      state.dbActiveWorkflowId = '';
+      state.dbActiveConversationId = '';
+      state.dbRecordPage = 'list';
+    }
+    toast(changedConfig ? `已切换至数据库：${state.dbConnection.name}` : '数据库连接正常');
   } catch (error) {
     await refreshDbConnectionStatus().catch(() => {});
     throw error;
@@ -1727,6 +1740,28 @@ async function saveDbConfig(config) {
   await loadDbConfigs();
   state.dbSettingsSelectedId = saved.id;
   toast('数据库配置已保存');
+}
+
+async function deleteDbConfig(configId) {
+  const targetConfigId = String(configId || '').trim();
+  if (!targetConfigId) return;
+  const deletingConnectedConfig = state.dbConnection.configId === targetConfigId;
+  await api(`/api/db-configs/${encodeURIComponent(targetConfigId)}`, { method: 'DELETE' });
+  await loadDbConfigs();
+  state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
+  if (deletingConnectedConfig) {
+    state.dbConversationItems = [];
+    state.dbConversationTotal = 0;
+    state.dbConversationQueried = false;
+    state.dbConversationDetail = null;
+    state.dbConversationVariables = [];
+    state.dbConversationVariablesOpen = false;
+    state.dbActiveWorkflowId = '';
+    state.dbActiveConversationId = '';
+    state.dbRecordPage = 'list';
+  }
+  renderDbRecordsPage();
+  toast('数据库配置已删除');
 }
 
 async function testDbConfig(configId) {
@@ -2329,6 +2364,7 @@ function bindEvents() {
     if (type === 'open-mq-settings') openMqSettings().catch(showError);
     if (type === 'close-mq-settings') closeMqSettings();
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
+    if (type === 'delete-mq-config') deleteMqConfig(configId).catch(showError);
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
     if (type === 'close-update-dialog') closeUpdateDialog();
     if (type === 'check-update') checkForUpdate({ notify: true }).catch(showError);
@@ -2342,6 +2378,7 @@ function bindEvents() {
       renderDbRecordsPage();
     }
     if (type === 'save-db-config') saveDbConfig(config).catch(showError);
+    if (type === 'delete-db-config') deleteDbConfig(configId).catch(showError);
     if (type === 'test-db-config') testDbConfig(configId).catch(showError);
     if (type === 'connect-db') changeDbConnection('connect').catch(showError);
     if (type === 'disconnect-db') changeDbConnection('disconnect').catch(showError);
