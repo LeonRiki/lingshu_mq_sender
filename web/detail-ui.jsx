@@ -545,15 +545,353 @@ function renderJsonCode(value) {
   return tokens;
 }
 
+/* ---- 节点详情结构化展示 ---- */
+
+function parseDbJson(value, fallback = null) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(String(value)); } catch (err) { return fallback; }
+}
+
+function isEmptyValue(value) {
+  if (value === null || value === undefined || value === '') return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return true;
+  return false;
+}
+
+function textTruncate(value, maxLen = 200) {
+  const s = value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + '…';
+}
+
+function pluck(obj, key) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  if (obj[key] !== undefined) return obj[key];
+  for (const k of Object.keys(obj)) {
+    if (k.toLowerCase() === key.toLowerCase()) return obj[k];
+  }
+  return undefined;
+}
+
+/* ---- 每条信息的渲染 ---- */
+
+function infoRow(label, value, opts = {}) {
+  if (isEmptyValue(value)) return null;
+  const { code, tag, tagColor, maxLen } = opts;
+  const display = maxLen ? textTruncate(value, maxLen) : String(value);
+  return <div className="node-data-row">
+    <span className="node-data-label">{label}</span>
+    {tag ? <Tag color={tagColor || 'default'}>{display}</Tag>
+      : code ? <Text code>{display}</Text>
+      : <span className="node-data-value">{display}</span>}
+  </div>;
+}
+
+function infoCard(label, children) {
+  return <div className="node-data-card">
+    <div className="node-data-card-label">{label}</div>
+    {children}
+  </div>;
+}
+
+function infoCode(label, codeText, maxLen = 500) {
+  if (isEmptyValue(codeText)) return null;
+  return infoCard(label, <pre className="node-data-code"><code>{textTruncate(codeText, maxLen)}</code></pre>);
+}
+
+function infoTable(rows) {
+  if (!rows.length) return null;
+  return <table className="node-data-table">
+    <thead><tr><th>变量名</th><th>值</th></tr></thead>
+    <tbody>
+      {rows.map((row, i) => <tr key={row.key || i}>
+        <td className="node-data-table-key">{row.key || '-'}</td>
+        <td className="node-data-table-value"><Text code>{textTruncate(row.value, 300)}</Text></td>
+      </tr>)}
+    </tbody>
+  </table>;
+}
+
+/* ---- 各节点类型输入渲染（仅核心字段） ---- */
+
+function renderAgentInputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('模型', pluck(obj, 'model'), { tag: true, tagColor: 'blue' })}
+    {infoCode('系统提示词', pluck(obj, 'systemPrompt'), 200)}
+    {infoCode('用户提示词', pluck(obj, 'userPrompt'), 200)}
+  </Flex>;
+}
+
+function renderCodeInputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('语言', pluck(obj, 'language'), { tag: true, tagColor: 'green' })}
+    {infoCode('代码', pluck(obj, 'code'), 500)}
+  </Flex>;
+}
+
+function renderKnowledgeInputs(obj) {
+  const ids = pluck(obj, 'knowledgeBaseIds');
+  const idText = Array.isArray(ids) ? ids.slice(0, 3).join(', ') + (ids.length > 3 ? ` …共${ids.length}个` : '') : ids;
+  return <Flex vertical gap={8}>
+    {infoRow('检索内容', pluck(obj, 'query'), { maxLen: 200 })}
+    {infoRow('TopK', pluck(obj, 'topK'), { tag: true, tagColor: 'purple' })}
+    {infoRow('知识库', idText, { maxLen: 120 })}
+  </Flex>;
+}
+
+function renderHttpInputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('请求方法', pluck(obj, 'method'), { tag: true, tagColor: 'blue' })}
+    {infoRow('URL', pluck(obj, 'url'), { code: true, maxLen: 300 })}
+  </Flex>;
+}
+
+function renderTriggerInputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('触发输入', pluck(obj, 'input'), { maxLen: 200 })}
+  </Flex>;
+}
+
+function renderConditionInputs(obj) {
+  const branches = Array.isArray(pluck(obj, 'branches'))
+    ? pluck(obj, 'branches').map(b => (b && typeof b === 'object') ? (b.label || b.name || b.id || JSON.stringify(b)) : String(b))
+    : [];
+  return branches.length
+    ? <Flex vertical gap={8}>{infoRow('分支', branches.join(' / '))}</Flex>
+    : null;
+}
+
+function renderOutputInputs(obj) {
+  const mapping = pluck(obj, 'outputMapping') || pluck(obj, 'content') || pluck(obj, 'output');
+  return <Flex vertical gap={8}>
+    {infoRow('输出配置', mapping, { maxLen: 200 })}
+  </Flex>;
+}
+
+/* ---- 各节点类型输出渲染（仅核心字段） ---- */
+
+function renderAgentOutputs(obj) {
+  const text = pluck(obj, 'output') || pluck(obj, 'text') || pluck(obj, 'content') || pluck(obj, 'response');
+  return <Flex vertical gap={8}>
+    {text ? infoCard('回复内容', <div className="node-data-preview-content">{textTruncate(text, 300)}</div>) : null}
+    {infoRow('Token用量', pluck(obj, 'usage') || pluck(obj, 'tokens'), { maxLen: 60 })}
+  </Flex>;
+}
+
+function renderCodeOutputs(obj) {
+  const err = pluck(obj, 'error') || pluck(obj, 'errorMessage');
+  const result = pluck(obj, 'result') || pluck(obj, 'output') || pluck(obj, 'returnValue');
+  return <Flex vertical gap={8}>
+    {err ? <Alert type="error" message={String(err)} /> : null}
+    {infoRow('执行结果', result, { maxLen: 200 })}
+  </Flex>;
+}
+
+function renderHttpOutputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('状态码', pluck(obj, 'statusCode') || pluck(obj, 'status'), { tag: true, tagColor: 'green' })}
+  </Flex>;
+}
+
+function renderKnowledgeOutputs(obj) {
+  const docs = pluck(obj, 'documents') || pluck(obj, 'results') || pluck(obj, 'items');
+  const items = Array.isArray(docs) ? docs : (docs ? [docs] : []);
+  return <Flex vertical gap={8}>
+    {infoRow('检索结果数', items.length, { tag: true, tagColor: 'purple' })}
+    {items.slice(0, 3).map((item, i) => {
+      const content = item && typeof item === 'object' ? (item.content || item.text || item.title || JSON.stringify(item)) : String(item);
+      return <div key={i} className="node-data-card">
+        <div className="node-data-card-label">结果 #{i + 1}</div>
+        <div className="node-data-preview-content">{textTruncate(content, 150)}</div>
+      </div>;
+    })}
+  </Flex>;
+}
+
+function renderTriggerOutputs(obj) {
+  return <Flex vertical gap={8}>
+    {infoRow('触发输入', pluck(obj, 'input'), { maxLen: 200 })}
+    {infoRow('好友昵称', pluck(obj, 'friendNick'), { maxLen: 60 })}
+  </Flex>;
+}
+
+function renderConditionOutputs(obj) {
+  const matched = pluck(obj, 'matchedBranch') || pluck(obj, 'matchedBranches') || pluck(obj, 'selectedBranch');
+  return <Flex vertical gap={8}>
+    {matched !== undefined && matched !== null
+      ? <div className="node-data-card">
+        <div className="node-data-card-label">命中分支</div>
+        <Tag color="green">{String(Array.isArray(matched) ? matched.join(', ') : matched)}</Tag>
+      </div>
+      : null}
+  </Flex>;
+}
+
+function renderSetVariableOutputs(node) {
+  const outputs = parseDbJson(node.outputs, node.outputs || null);
+  const assignments = Array.isArray(outputs?.assignments) ? outputs.assignments : [];
+  if (assignments.length) {
+    const rows = assignments
+      .filter(item => item && (item.key || item.variableKey))
+      .map(item => ({ key: item.key || item.variableKey, value: item.value ?? item.variableValue }));
+    return <Flex vertical gap={8}>{infoTable(rows)}</Flex>;
+  }
+  // fallback to before/after comparison
+  return null;
+}
+
+function renderLingxiSendOutputs(node) {
+  if (node.previewLabel && node.previewContent) {
+    return <div className="node-data-card">
+      <div className="node-data-card-label">{node.previewLabel}</div>
+      <div className="node-data-preview-content">{node.previewContent}</div>
+    </div>;
+  }
+  return null;
+}
+
+function renderOutputOutputs(obj) {
+  const output = pluck(obj, 'output') || pluck(obj, 'result') || pluck(obj, 'finalOutput');
+  return <Flex vertical gap={8}>
+    {infoRow('最终输出', output, { maxLen: 200 })}
+  </Flex>;
+}
+
+/* ---- 分发函数 ---- */
+
+function renderStructuredInputs(nodeType, node) {
+  const inputs = node.inputs;
+  if (isEmptyValue(inputs)) return <Text type="secondary">（无输入）</Text>;
+
+  switch (nodeType) {
+    case 'agent': return renderAgentInputs(inputs);
+    case 'code': return renderCodeInputs(inputs);
+    case 'knowledge_retrieval': return renderKnowledgeInputs(inputs);
+    case 'http_request': return renderHttpInputs(inputs);
+    case 'lingxi_trigger': return renderTriggerInputs(inputs);
+    case 'condition': return renderConditionInputs(inputs);
+    case 'output': return renderOutputInputs(inputs);
+    case 'set_variable': return renderSetVariableInputs(inputs);
+    case 'lingxi_send': return renderLingxiSendInputs(node);
+    default: return null;
+  }
+}
+
+function renderStructuredOutputs(nodeType, node) {
+  const outputs = node.outputs;
+  if (isEmptyValue(outputs)) return <Text type="secondary">（无输出）</Text>;
+
+  switch (nodeType) {
+    case 'agent': return renderAgentOutputs(outputs);
+    case 'code': return renderCodeOutputs(outputs);
+    case 'http_request': return renderHttpOutputs(outputs);
+    case 'knowledge_retrieval': return renderKnowledgeOutputs(outputs);
+    case 'lingxi_trigger': return renderTriggerOutputs(outputs);
+    case 'condition': return renderConditionOutputs(outputs);
+    case 'set_variable': return renderSetVariableOutputs(node);
+    case 'lingxi_send': return renderLingxiSendOutputs(node);
+    case 'output': return renderOutputOutputs(outputs);
+    default: return null;
+  }
+}
+
+function renderLingxiSendInputs(node) {
+  const inputs = parseDbJson(node.inputs, node.inputs || null);
+  if (!inputs || typeof inputs !== 'object') return <Text type="secondary">（无输入）</Text>;
+
+  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
+
+  return <Flex vertical gap={8}>
+    {node.previewLabel ? <div className="node-data-card">
+      <div className="node-data-card-label">{node.previewLabel}</div>
+      {node.previewContent ? <div className="node-data-preview-content">{node.previewContent}</div> : null}
+    </div> : null}
+    {actions.map((action, index) => {
+      const type = Number(action?.actionType);
+      const typeLabel = type === 6 ? 'AI回复' : type === 4 ? '打标签' : `动作 #${index + 1}`;
+      const contentField = type === 6 ? action?.actionContent : action?.actionMessage;
+      const tagOp = type === 4 ? (Number(action?.tagOperateType) === 2 ? '移除' : '添加') : '';
+      const contentStr = contentField !== undefined && contentField !== null ? String(contentField) : '';
+      return <div key={index} className="node-data-action-item">
+        <Space size={4} wrap>
+          <Tag color={type === 6 ? 'blue' : type === 4 ? 'purple' : 'default'}>{typeLabel}</Tag>
+          {tagOp ? <Tag>{tagOp}</Tag> : null}
+        </Space>
+        {contentStr ? <div className="node-data-action-template"><Text type="secondary">模板: </Text><Text code>{textTruncate(contentStr, 300)}</Text></div> : null}
+      </div>;
+    })}
+  </Flex>;
+}
+
+function renderSetVariableInputs(inputs) {
+  const parsed = parseDbJson(inputs, inputs || null);
+  if (!parsed || typeof parsed !== 'object') return <Text type="secondary">（无输入）</Text>;
+
+  const assignments = Array.isArray(parsed.assignments)
+    ? parsed.assignments
+    : parsed.variableKey ? [{ variableKey: parsed.variableKey, variableValue: parsed.variableValue ?? parsed.value }] : [];
+
+  return assignments.length
+    ? infoTable(assignments.map(item => ({ key: item.variableKey || item.key || '?', value: item.variableValue ?? item.value })))
+    : <Text type="secondary">（无数据）</Text>;
+}
+
+function NodeRawJson({ title, value }) {
+  return <div className="node-raw-json-collapse">
+    <Text type="secondary" style={{ cursor: 'pointer', userSelect: 'none', fontSize: 12 }}
+      onClick={event => {
+        const target = event.currentTarget;
+        const content = target.nextElementSibling;
+        if (content) {
+          const hidden = content.style.display === 'none';
+          content.style.display = hidden ? 'block' : 'none';
+          target.textContent = hidden ? `▼ 原始${title}` : `▶ 原始${title}`;
+        }
+      }}>
+      ▶ 原始{title}
+    </Text>
+    <pre style={{ display: 'none' }}><code>{renderJsonCode(value)}</code></pre>
+  </div>;
+}
+
+function NodeDataDisplay({ node }) {
+  if (!node) return null;
+  const nodeType = node.nodeType || '';
+  const inputContent = renderStructuredInputs(nodeType, node);
+  const outputContent = renderStructuredOutputs(nodeType, node);
+
+  return <Flex vertical gap={12}>
+    {inputContent ? <div className="node-data-section">
+      <Text strong>输入参数</Text>
+      {inputContent}
+      <NodeRawJson title="输入" value={node.inputs} />
+    </div> : null}
+    {outputContent ? <div className="node-data-section">
+      <Text strong>输出结果</Text>
+      {outputContent}
+      <NodeRawJson title="输出" value={node.outputs} />
+    </div> : null}
+    {!inputContent && !outputContent ? <div className="node-data-section">
+      <Text strong>输入参数</Text>
+      {isEmptyValue(node.inputs) ? <Text type="secondary">（无输入）</Text> : <NodeRawJson title="输入" value={node.inputs} />}
+    </div> : null}
+  </Flex>;
+}
+
+/* ---- /节点详情结构化展示 ---- */
+
 function DbNodeDrawer({ node, onClose, loading = false }) {
   const jsonBlock = (title, value) => <section className="db-node-json"><Text strong>{title}</Text><pre><code>{renderJsonCode(value)}</code></pre></section>;
   const isSetVariable = String(node?.nodeType || '').toLowerCase() === 'set_variable';
+  const logsBlock = (title, value) => value != null ? <section className="db-node-json"><Text strong>{title}</Text><pre><code>{renderJsonCode(value)}</code></pre></section> : null;
   const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
     <Space wrap><Tag>{node.nodeType || 'node'}</Tag><Tag color={node.status === 'SUCCESS' ? 'green' : 'red'}>{node.status || '-'}</Tag><Text type="secondary">{node.durationMs || 0} ms</Text></Space>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {jsonBlock('Outputs', node.outputs)}
-    {jsonBlock('Inputs', node.inputs)}
-    {jsonBlock('Logs', node.logs)}
+    <NodeDataDisplay node={node} />
+    {logsBlock('日志', node.logs)}
     {isSetVariable ? jsonBlock('Before Snapshot', node.beforeSnapshot) : null}
     {isSetVariable ? jsonBlock('After Snapshot', node.afterSnapshot) : null}
   </Flex>;
@@ -1239,12 +1577,16 @@ function UpdateDialog({ data }) {
   const modalTitle = check?.updateAvailable
     ? <Flex vertical gap={2} className="update-dialog-title"><Text type="success" strong>发现新版本</Text><Flex align="center" gap={8} wrap><Title level={4}>更新至 v{targetVersion}</Title><Text type="secondary" className="update-dialog-current-version">当前版本 v{currentVersion}</Text></Flex></Flex>
     : '在线更新';
+  const updateConfirmTitle = <Flex vertical gap={4}>
+    <span>更新前会自动备份当前版本，完成后会自动刷新页面；如更新失败，将保留备份用于回退。</span>
+    <span>确认现在更新？</span>
+  </Flex>;
   return <Modal open={data.open} centered className="update-dialog-modal" title={modalTitle} width={760} styles={{ container: { padding: 0 }, header: { marginBottom: 0, padding: '24px 28px 0' }, body: { padding: '24px 28px 0' }, close: { top: 24, right: 24 } }} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
     <Flex vertical gap={24} className="update-dialog-content">
       {!check?.updateAvailable ? <Flex vertical gap={8}><Text strong>当前版本 {currentVersion}</Text><Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'blue' : 'default'} icon={<UpdateSourceIcon sourceKey={source.key} />}>{source.label} · {source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Tag>)}</Space></Flex> : null}
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
-      {check?.updateAvailable ? <Flex vertical gap={24}><Flex vertical gap={12}><Text type="secondary" className="update-source-section-label">选择更新源</Text><Radio.Group className="update-source-grid" value={sourceKey} onChange={event => setSourceKey(event.target.value)}>{sourceStates.map(source => <Radio key={source.key} className={`update-source-card ${sourceKey === source.key ? 'is-selected' : ''}`} value={source.key} disabled={applying || !source.ok || !source.updateAvailable}><Flex className="update-source-card-content" align="center" justify="space-between" gap={16}><Space className="update-source-card-main" size={16}><span className="update-source-brand-icon"><UpdateSourceIcon sourceKey={source.key} /></span><Flex vertical gap={0}><Text strong className="update-source-name">{source.label}</Text><Text type="secondary" className="update-source-version">{source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Text></Flex></Space>{sourceKey === source.key ? <CheckCircleFilled className="update-source-check" aria-hidden="true" /> : <span className="update-source-check update-source-check-empty" aria-hidden="true" />}</Flex></Radio>)}</Radio.Group></Flex><Text type="secondary" className="update-source-hint">将从 {selectedSource?.label || '-'} 更新至 v{targetVersion}。更新前会自动备份，更新完成后服务会自动重启。</Text><Flex className="update-dialog-actions" justify="flex-end" gap={8}><Button disabled={applying} onClick={() => emitListToolbar('close-update-dialog')}>取消</Button><Popconfirm title="更新会先备份源码，随后重启本机服务。确认继续？" okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" loading={applying} disabled={!sourceKey || applying} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
+      {check?.updateAvailable ? <Flex vertical gap={24}><Flex vertical gap={12}><Text type="secondary" className="update-source-section-label">选择更新源</Text><Radio.Group className="update-source-grid" value={sourceKey} onChange={event => setSourceKey(event.target.value)}>{sourceStates.map(source => <Radio key={source.key} className={`update-source-card ${sourceKey === source.key ? 'is-selected' : ''}`} value={source.key} disabled={applying || !source.ok || !source.updateAvailable}><Flex className="update-source-card-content" align="center" justify="space-between" gap={16}><Space className="update-source-card-main" size={16}><span className="update-source-brand-icon"><UpdateSourceIcon sourceKey={source.key} /></span><Flex vertical gap={0}><Text strong className="update-source-name">{source.label}</Text><Text type="secondary" className="update-source-version">{source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Text></Flex></Space>{sourceKey === source.key ? <CheckCircleFilled className="update-source-check" aria-hidden="true" /> : <span className="update-source-check update-source-check-empty" aria-hidden="true" />}</Flex></Radio>)}</Radio.Group></Flex><Text type="secondary" className="update-source-hint">将从 {selectedSource?.label || '-'} 更新至 v{targetVersion}。更新前会自动备份当前版本，完成后会自动刷新页面。</Text><Flex className="update-dialog-actions" justify="flex-end" gap={8}><Button disabled={applying} onClick={() => emitListToolbar('close-update-dialog')}>取消</Button><Popconfirm title={updateConfirmTitle} okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" loading={applying} disabled={!sourceKey || applying} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
     </Flex>
   </Modal>;
 }
