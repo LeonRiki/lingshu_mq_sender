@@ -45,7 +45,7 @@ function sha256(buffer) {
 }
 
 function assertCleanTrackedTree() {
-  const changes = run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: path.resolve(ROOT, '..') }).trim();
+  const changes = run('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ROOT }).trim();
   if (changes) {
     throw new Error('发布前请先提交已跟踪文件的改动，避免发布包与源码提交不一致。');
   }
@@ -64,7 +64,7 @@ function releaseVersion() {
 function assertPreparedRelease(version) {
   runInherited('npm', ['run', 'build']);
   runInherited('npm', ['run', 'release:manifest']);
-  const changes = run('git', ['diff', '--name-only'], { cwd: path.resolve(ROOT, '..') }).trim();
+  const changes = run('git', ['diff', '--name-only'], { cwd: ROOT }).trim();
   if (changes) {
     throw new Error('构建或生成更新清单后产生未提交改动。请先运行 release:prepare-version，提交全部发布代码后再发布。');
   }
@@ -78,7 +78,7 @@ function temporaryOutput(version) {
 }
 
 function githubToken() {
-  const token = run('gh', ['auth', 'token'], { cwd: path.resolve(ROOT, '..') }).trim();
+  const token = run('gh', ['auth', 'token'], { cwd: ROOT }).trim();
   if (!token) throw new Error('未检测到 GitHub 登录状态，请先执行 gh auth login。');
   return token;
 }
@@ -106,6 +106,16 @@ async function githubApi(token, apiPath, options = {}) {
 }
 
 function githubSourceFiles() {
+  const modes = new Map(
+    run('git', ['ls-files', '--stage'])
+      .split('\n')
+      .filter(Boolean)
+      .map(line => {
+        const match = line.match(/^(\d{6})\s+\S+\s+\d+\t(.+)$/);
+        if (!match) throw new Error(`无法解析 Git 文件模式：${line}`);
+        return [match[2], match[1] === '100755' ? '100755' : '100644'];
+      })
+  );
   const paths = run('git', ['ls-files', '-z'], { encoding: 'buffer' })
     .toString('utf8')
     .split('\0')
@@ -117,6 +127,7 @@ function githubSourceFiles() {
   }
   return paths.map(relativePath => ({
     relativePath,
+    mode: modes.get(relativePath) || '100644',
     content: fs.readFileSync(path.join(ROOT, relativePath))
   }));
 }
@@ -131,7 +142,7 @@ async function publishGithubSource(token, version) {
     });
     return {
       path: file.relativePath,
-      mode: '100644',
+      mode: file.mode,
       type: 'blob',
       sha: blob.sha
     };
