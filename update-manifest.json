@@ -9,7 +9,7 @@
     },
     {
       "path": "server.js",
-      "sha256": "9243c90640f2840b44f19da85807f9bd701b40782e0c19dc140275e03007c7ad"
+      "sha256": "3f909de53e3758dccc8c1574e2fd4e25d8f20cae1db0f0d987bf21a8cc62b7e8"
     },
     {
       "path": "version.json",
@@ -33,7 +33,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "92c1ba9394c17dfd89e15107452f6655f3d0a6e3ecf693d89647b91ed2bca996"
+      "sha256": "51684ea8eeba6c4d7ee2b01cfebdfc5453ac3a24b49754e346f409ad1f47ceae"
     },
     {
       "path": "web/favicon.ico",
