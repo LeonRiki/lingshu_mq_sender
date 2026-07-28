@@ -107,7 +107,7 @@ async function githubApi(token, apiPath, options = {}) {
 
 function githubSourceFiles() {
   const modes = new Map(
-    run('git', ['ls-files', '--stage'])
+    run('git', ['-c', 'core.quotepath=false', 'ls-files', '--stage'])
       .split('\n')
       .filter(Boolean)
       .map(line => {
