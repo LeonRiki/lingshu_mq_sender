@@ -569,6 +569,31 @@ function renderDbMessageText(value) {
   return value === null ? 'null' : String(value || '-');
 }
 
+function DbMessageTriggerIdBar({ triggerMessageId }) {
+  const value = String(triggerMessageId || '').trim();
+  if (!value) return null;
+  const stopCardAction = event => event.stopPropagation();
+  return <span className="db-message-trigger-id-row">
+    <span className="db-message-trigger-id" title={value}>{value}</span>
+    <span className="db-message-trigger-copy-zone" onClick={stopCardAction} onMouseDown={stopCardAction} onKeyDown={stopCardAction}>
+      <Tooltip title="复制 triggerMessageId">
+        <Button
+          type="text"
+          size="small"
+          shape="circle"
+          className="db-message-trigger-copy"
+          icon={<CopyOutlined />}
+          aria-label="复制 triggerMessageId"
+          onClick={event => {
+            stopCardAction(event);
+            emitListToolbar('copy-trigger-message-id', { value });
+          }}
+        />
+      </Tooltip>
+    </span>
+  </span>;
+}
+
 function DbConversationActionGroups({ actions }) {
   const actionGroups = [];
   const actionGroupMap = new Map();
@@ -594,9 +619,12 @@ function DbConversationActionGroups({ actions }) {
         <span className="db-message-action-tag-list">
           {group.items.map(action => <Tag key={action.id} className="db-message-action-tag">{action.tagOperateType === 2 ? '-' : '+'}{renderDbMessageText(action.content)}</Tag>)}
         </span>
-      </> : group.items.map(action => {
-        return <span key={action.id} className="db-message-action db-message-action-http-row">{action.nodeName || action.actionLabel || 'HTTP请求'}</span>;
-      })}
+      </> : group.actionType === 'http_request' ? <>
+        <span className="db-message-role">HTTP请求</span>
+        <span className="db-message-action-http-list">
+          {group.items.map(action => <span key={action.id || action.nodeId || action.nodeName} className="db-message-action db-message-action-http-row">{action.nodeName || action.actionLabel || 'HTTP请求'}</span>)}
+        </span>
+      </> : group.items.map(action => <span key={action.id || action.nodeId || action.nodeName} className="db-message-action db-message-action-http-row">{action.nodeName || action.actionLabel || 'HTTP请求'}</span>)}
     </span>)}
   </span>;
 }
@@ -861,7 +889,25 @@ function DbConversationDetailPage({ data }) {
           const assistantMessage = group.assistant;
           const unprocessed = userMessage?.processed === false;
           const noReply = !unprocessed && userMessage?.hasReplyAction === false;
-          return <button key={group.triggerMessageId} className={`db-message-item conversation ${selected ? 'selected' : ''}`} onClick={() => emitListToolbar('select-db-message', { triggerMessageId: group.triggerMessageId })}>
+          const selectMessage = () => emitListToolbar('select-db-message', { triggerMessageId: group.triggerMessageId });
+          const shouldSkipCardSelect = event => event.target?.closest?.('.db-message-trigger-copy-zone');
+          return <div
+            key={group.triggerMessageId}
+            role="button"
+            tabIndex={0}
+            className={`db-message-item conversation ${selected ? 'selected' : ''}`}
+            onClick={event => {
+              if (shouldSkipCardSelect(event)) return;
+              selectMessage();
+            }}
+            onKeyDown={event => {
+              if (shouldSkipCardSelect(event)) return;
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              selectMessage();
+            }}
+          >
+            <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} />
             <span className="db-message-section">
               <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{unprocessed || noReply || hasError ? <span className="db-message-status-tags">{unprocessed ? <Tag color="gold">未处理</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
@@ -871,7 +917,7 @@ function DbConversationDetailPage({ data }) {
               <span className="db-message-meta"><span className="db-message-role">AI回复</span>{assistantMessage?.messageTimestamp ? <span className="db-message-time">{assistantMessage.messageTimestamp}</span> : null}</span>
               <span className="db-message-content">{assistantMessage?.content === '' ? '\u00a0' : renderDbMessageText(assistantMessage?.content)}</span>
             </span> : null}
-          </button>;
+          </div>;
         })}
       </aside>
       <section ref={flowPanelRef} className="db-flow-panel">

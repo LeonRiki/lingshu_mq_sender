@@ -2408,6 +2408,7 @@ function bindEvents() {
       loadDbConversationNodeExecution(workflowId, triggerMessageId, e.detail?.executionId).catch(showError);
     }
     if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
+    if (type === 'copy-trigger-message-id') copyText(value, '已复制 triggerMessageId');
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
     if (type === 'delete-unused-label-items') deleteUnusedLabelItems(labelType).catch(showError);

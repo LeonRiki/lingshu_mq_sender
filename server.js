@@ -1682,6 +1682,27 @@ function dbSetVariableAssignments(execution) {
   return [];
 }
 
+function dbActionEventSignature(event) {
+  return JSON.stringify({
+    actionType: event.actionType || '',
+    nodeId: event.nodeId || '',
+    nodeName: event.nodeName || '',
+    tagOperateType: event.tagOperateType ?? '',
+    content: event.content ?? '',
+    assignments: event.assignments || []
+  });
+}
+
+function dbDeduplicateActionEvents(events = []) {
+  const seen = new Set();
+  return events.filter(event => {
+    const signature = dbActionEventSignature(event);
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+}
+
 function dbExecutionActionEvents(executions = []) {
   const result = new Map();
   const executionsByTrigger = new Map();
@@ -1707,6 +1728,7 @@ function dbExecutionActionEvents(executions = []) {
         events.push({
           actionType: 'set_variable',
           actionLabel: '设置变量',
+          nodeId: dbNodeIdOf(execution),
           nodeName: nodeName || '设置变量',
           assignments: dbSetVariableAssignments(execution),
           startedAt: execution.started_at || ''
@@ -1715,6 +1737,7 @@ function dbExecutionActionEvents(executions = []) {
         events.push({
           actionType: 'http_request',
           actionLabel: 'HTTP请求',
+          nodeId: dbNodeIdOf(execution),
           nodeName: nodeName || 'HTTP请求',
           startedAt: execution.started_at || ''
         });
@@ -1722,7 +1745,8 @@ function dbExecutionActionEvents(executions = []) {
         events.push(...dbSendExecutionActions(execution, executionsByNodeId));
       }
     });
-    result.set(key, events.sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || ''))));
+    result.set(key, dbDeduplicateActionEvents(events)
+      .sort((a, b) => String(a.startedAt || '').localeCompare(String(b.startedAt || ''))));
   });
   return result;
 }
@@ -1756,10 +1780,18 @@ function dbAssistantReplyMap(executions = []) {
       const nodeId = dbNodeIdOf(execution);
       if (nodeId) executionsByNodeId.set(nodeId, execution);
     });
-    items.forEach(execution => {
-      const reply = dbSendExecutionContent(execution, executionsByNodeId);
-      if (reply.found && !result.has(key)) result.set(key, reply.value);
-    });
+    const replies = items
+      .map((execution, index) => ({ execution, index, reply: dbSendExecutionContent(execution, executionsByNodeId) }))
+      .filter(item => item.reply.found)
+      .sort((a, b) => {
+        const aTime = String(a.execution.started_at ?? a.execution.startedAt ?? '');
+        const bTime = String(b.execution.started_at ?? b.execution.startedAt ?? '');
+        const timeOrder = aTime.localeCompare(bTime);
+        return timeOrder || a.index - b.index;
+      });
+    const successfulReplies = replies.filter(item => !executionHasError(item.execution));
+    const selected = successfulReplies.at(-1) || replies.at(-1);
+    if (selected) result.set(key, selected.reply.value);
   });
   return result;
 }
@@ -1838,6 +1870,7 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
         actionType: event.actionType || '',
         actionLabel: event.actionLabel,
         tagOperateType: event.tagOperateType,
+        nodeId: event.nodeId || '',
         nodeName: event.nodeName || '',
         assignments: event.assignments || [],
         content: event.content,
