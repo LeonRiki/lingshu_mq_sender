@@ -1495,7 +1495,40 @@ function parseDbJson(value, fallback = null) {
   try {
     return JSON.parse(String(value));
   } catch (err) {
-    return fallback;
+    try {
+      let inString = false;
+      let escaped = false;
+      let normalized = '';
+      for (const char of String(value)) {
+        if (!inString) {
+          normalized += char;
+          if (char === '"') inString = true;
+          continue;
+        }
+        if (escaped) {
+          normalized += char;
+          escaped = false;
+          continue;
+        }
+        if (char === '\\') {
+          normalized += char;
+          escaped = true;
+          continue;
+        }
+        if (char === '"') {
+          normalized += char;
+          inString = false;
+          continue;
+        }
+        const code = char.charCodeAt(0);
+        normalized += code < 0x20
+          ? `\\u${code.toString(16).padStart(4, '0')}`
+          : char;
+      }
+      return JSON.parse(normalized);
+    } catch (normalizedError) {
+      return fallback;
+    }
   }
 }
 
@@ -1590,11 +1623,22 @@ function dbResolveSendContent(value, localInputs, executionsByNodeId) {
   }).replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
 }
 
+function dbSendContentConfig(execution, inputs) {
+  const logs = parseDbJson(execution?.logs, execution?.logs || []);
+  const messageContent = Array.isArray(logs)
+    ? logs.findLast?.(item => item?.msg === 'Message content' && item?.data?.content)?.data?.content
+      ?? [...logs].reverse().find(item => item?.msg === 'Message content' && item?.data?.content)?.data?.content
+    : '';
+  const resolvedConfig = parseDbJson(messageContent, null);
+  if (resolvedConfig && typeof resolvedConfig === 'object' && resolvedConfig.actions) return resolvedConfig;
+  return parseDbJson(inputs?.content, inputs?.content || null);
+}
+
 function dbSendExecutionContent(execution, executionsByNodeId) {
   if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return { found: false, value: '' };
   const inputs = parseDbJson(execution.inputs, execution.inputs || null);
   if (!inputs || typeof inputs !== 'object') return { found: false, value: '' };
-  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const contentConfig = dbSendContentConfig(execution, inputs);
   const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
   const replyAction = actions.find(action => Number(action?.actionType) === 6);
   if (!replyAction) return { found: false, value: '' };
@@ -1606,7 +1650,7 @@ function dbSendExecutionPreview(execution, executionsByNodeId) {
   if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return { label: '', content: '' };
   const inputs = parseDbJson(execution.inputs, execution.inputs || null);
   if (!inputs || typeof inputs !== 'object') return { label: '', content: '' };
-  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const contentConfig = dbSendContentConfig(execution, inputs);
   const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
   const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
   const replyAction = actions.find(item => Number(item?.actionType) === 6);
@@ -1634,7 +1678,7 @@ function dbSendExecutionActions(execution, executionsByNodeId) {
   if (String(execution.node_type ?? execution.nodeType ?? '') !== 'lingxi_send') return [];
   const inputs = parseDbJson(execution.inputs, execution.inputs || null);
   if (!inputs || typeof inputs !== 'object') return [];
-  const contentConfig = parseDbJson(inputs.content, inputs.content || null);
+  const contentConfig = dbSendContentConfig(execution, inputs);
   const actions = Array.isArray(contentConfig?.actions) ? contentConfig.actions : [contentConfig?.actions].filter(Boolean);
   const localInputs = contentConfig && typeof contentConfig === 'object' ? { ...contentConfig, ...inputs } : inputs;
   return actions
@@ -2608,6 +2652,7 @@ async function dbConversationDetail(url) {
              e.node_type,
              e.node_name,
              CASE WHEN e.node_type IN ('lingxi_send', 'set_variable') THEN e.inputs ELSE NULL END AS inputs,
+             CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
                WHEN e.node_name = '灵犀触发器'
                  THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
