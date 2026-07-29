@@ -2,7 +2,7 @@ import React, { memo, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import { Background, BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getBezierPath } from '@xyflow/react';
 import {
   ApiOutlined,
@@ -37,6 +37,7 @@ import {
   StepBackwardOutlined,
   StepForwardOutlined,
   ThunderboltOutlined,
+  UpOutlined,
   UnorderedListOutlined
 } from '@ant-design/icons';
 const { Title, Text } = Typography;
@@ -545,22 +546,531 @@ function renderJsonCode(value) {
   return tokens;
 }
 
-function DbNodeDrawer({ node, onClose, loading = false }) {
-  const jsonBlock = (title, value) => <section className="db-node-json"><Text strong>{title}</Text><pre><code>{renderJsonCode(value)}</code></pre></section>;
-  const isSetVariable = String(node?.nodeType || '').toLowerCase() === 'set_variable';
-  const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
-    <Space wrap><Tag>{node.nodeType || 'node'}</Tag><Tag color={node.status === 'SUCCESS' ? 'green' : 'red'}>{node.status || '-'}</Tag><Text type="secondary">{node.durationMs || 0} ms</Text></Space>
-    {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {jsonBlock('Outputs', node.outputs)}
-    {jsonBlock('Inputs', node.inputs)}
-    {jsonBlock('Logs', node.logs)}
-    {isSetVariable ? jsonBlock('Before Snapshot', node.beforeSnapshot) : null}
-    {isSetVariable ? jsonBlock('After Snapshot', node.afterSnapshot) : null}
+function dbValuePreview(value, maxLength = 180) {
+  if (value === null) return 'null';
+  if (value === undefined || value === '') return '-';
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const id = value.id ?? value.valueId ?? value.branchId;
+    const label = value.label ?? value.name;
+    if (id !== undefined && id !== null && String(id).trim() && label !== undefined && label !== null && String(label).trim()) {
+      return `${String(id).trim()}-${String(label).trim()}`;
+    }
+  }
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return compactText(text, maxLength);
+}
+
+function dbValueType(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `数组(${value.length})`;
+  if (typeof value === 'object') return `对象(${Object.keys(value).length})`;
+  if (typeof value === 'string') return '文本';
+  if (typeof value === 'number') return '数字';
+  if (typeof value === 'boolean') return '布尔';
+  return typeof value;
+}
+
+function dbValueMode(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const mode = value.valueMode ?? value.mode ?? value.valueType;
+    if (mode !== undefined && mode !== null) {
+      const text = String(mode).trim();
+      if (text) return text;
+    }
+  }
+  return dbValueType(value);
+}
+
+function dbObjectEntries(value, limit = 6) {
+  if (Array.isArray(value)) return value.slice(0, limit).map((item, index) => ({ key: `[${index}]`, value: item }));
+  if (value && typeof value === 'object') return Object.entries(value).slice(0, limit).map(([key, item]) => ({ key, value: item }));
+  return value === undefined || value === null || value === '' ? [] : [{ key: 'value', value }];
+}
+
+function dbCollectionSummary(value) {
+  if (Array.isArray(value)) return `${value.length} 项`;
+  if (value && typeof value === 'object') return `${Object.keys(value).length} 个字段`;
+  if (value === undefined || value === null || value === '') return '无数据';
+  return dbValueType(value);
+}
+
+function dbFindNestedField(value, field, depth = 0) {
+  if (!value || depth > 4) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = dbFindNestedField(item, field, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== 'object') return undefined;
+  if (Object.prototype.hasOwnProperty.call(value, field)) return value[field];
+  for (const item of Object.values(value)) {
+    const found = dbFindNestedField(item, field, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function dbDecodeEscapedText(value) {
+  const text = String(value ?? '');
+  if (!text) return '';
+  return text.replace(/\\(\\|n|r|t|")/g, (_, escape) => {
+    if (escape === '\\') return '\\';
+    if (escape === 'n') return '\n';
+    if (escape === 'r') return '\r';
+    if (escape === 't') return '\t';
+    if (escape === '"') return '"';
+    return escape;
+  });
+}
+
+function dbLingxiSendOutputsSummary(node) {
+  const sourceOutputs = node?.outputs && typeof node.outputs === 'object' && !Array.isArray(node.outputs) ? node.outputs : {};
+  const hiddenKeys = new Set(['eventid', 'tenantid']);
+  const summary = {
+    inputList: dbFindNestedField(node?.outputs, 'inputList') ?? dbFindNestedField(node?.inputs, 'inputList') ?? '',
+    friendNick: dbFindNestedField(node?.outputs, 'friendNick') ?? dbFindNestedField(node?.inputs, 'friendNick') ?? ''
+  };
+  Object.entries(sourceOutputs).forEach(([key, value]) => {
+    const normalizedKey = key.toLowerCase();
+    if (hiddenKeys.has(normalizedKey) || normalizedKey === 'inputlist' || normalizedKey === 'friendnick') return;
+    summary[key] = value;
+  });
+  return summary;
+}
+
+function dbConditionInputsSummary(inputs) {
+  const branches = Array.isArray(inputs?.branches) ? inputs.branches : [];
+  const fieldValues = new Map();
+  const appendValue = (field, value) => {
+    const key = String(field || '').trim();
+    if (key === '@trigger.user_input') return;
+    if (!key || value === undefined || value === null || value === '') return;
+    const values = Array.isArray(value) ? value : [value];
+    if (!fieldValues.has(key)) fieldValues.set(key, []);
+    const target = fieldValues.get(key);
+    values.forEach(item => {
+      const text = dbValuePreview(item, 120);
+      if (text && text !== '-' && !target.includes(text)) target.push(text);
+    });
+  };
+  const collectConditions = conditions => {
+    (Array.isArray(conditions) ? conditions : []).forEach(condition => {
+      if (Array.isArray(condition?.conditions)) collectConditions(condition.conditions);
+      appendValue(condition?.field, condition?.__fieldValue);
+    });
+  };
+  branches.forEach(branch => collectConditions(branch?.conditions));
+  return Object.fromEntries([...fieldValues.entries()].map(([field, values]) => [field, values.join('；') || '-']));
+}
+
+function dbConditionLogicLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['or', 'any', 'any_match', 'first_match', 'some', '||'].includes(normalized)) return 'OR';
+  if (['and', 'all', 'all_match', 'every', '&&'].includes(normalized)) return 'AND';
+  return value ? String(value).toUpperCase() : 'AND';
+}
+
+function dbConditionOperatorLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const labels = {
+    eq: '等于',
+    equal: '等于',
+    equals: '等于',
+    '==': '等于',
+    '===': '等于',
+    ne: '不等于',
+    neq: '不等于',
+    not_equal: '不等于',
+    '!=': '不等于',
+    '!==': '不等于',
+    contains: '包含',
+    not_contains: '不包含',
+    include: '包含',
+    includes: '包含',
+    gt: '大于',
+    '>': '大于',
+    gte: '大于等于',
+    '>=': '大于等于',
+    lt: '小于',
+    '<': '小于',
+    lte: '小于等于',
+    '<=': '小于等于',
+    empty: '为空',
+    is_empty: '为空',
+    not_empty: '不为空',
+    is_not_empty: '不为空',
+    in: '属于',
+    not_in: '不属于',
+    starts_with: '开头为',
+    ends_with: '结尾为',
+    regex: '匹配正则'
+  };
+  return labels[normalized] || value || '判断';
+}
+
+function dbConditionNodeValue(value, maxLength = 160) {
+  if (Array.isArray(value)) return value.map(item => dbValuePreview(item, 60)).join('、') || '-';
+  return dbValuePreview(value, maxLength);
+}
+
+function dbConditionConditionParts(condition) {
+  const field = condition?.field ?? condition?.variableKey ?? condition?.leftValue ?? condition?.left ?? condition?.key ?? '-';
+  const operator = condition?.operator ?? condition?.compareOperator ?? condition?.operation ?? condition?.comparator ?? condition?.condition ?? '';
+  const targetValue = condition?.value ?? condition?.targetValue ?? condition?.rightValue ?? condition?.compareValue ?? condition?.expectedValue ?? condition?.fieldValue ?? '';
+  const runtimeValue = condition?.__fieldValue ?? condition?.fieldValueActual ?? condition?.actualValue;
+  const valueMode = condition?.valueMode ?? condition?.valueType ?? condition?.type;
+  return { field, operator, targetValue, runtimeValue, valueMode };
+}
+
+function dbConditionChildrenOf(item) {
+  if (Array.isArray(item)) return item;
+  if (Array.isArray(item?.conditions)) return item.conditions;
+  if (Array.isArray(item?.children)) return item.children;
+  if (Array.isArray(item?.items)) return item.items;
+  return [];
+}
+
+function dbConditionGroupLogic(item, fallback = 'and') {
+  return item?.logic ?? item?.logicalOperator ?? item?.operator ?? item?.relation ?? item?.combinator ?? item?.matchType ?? item?.mode ?? fallback;
+}
+
+function dbConditionHasOwnRule(condition) {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  return [
+    'field',
+    'variableKey',
+    'leftValue',
+    'left',
+    'key',
+    'operator',
+    'compareOperator',
+    'operation',
+    'comparator',
+    'condition',
+    'value',
+    'targetValue',
+    'rightValue',
+    'compareValue',
+    'expectedValue',
+    'fieldValue'
+  ].some(key => Object.prototype.hasOwnProperty.call(condition, key));
+}
+
+function dbConditionVisibleItems(items) {
+  return (Array.isArray(items) ? items : []).filter(item => dbConditionHasOwnRule(item) || dbConditionVisibleItems(dbConditionChildrenOf(item)).length);
+}
+
+function dbConditionIsGroup(item) {
+  if (Array.isArray(item)) return dbConditionVisibleItems(item).length > 0;
+  if (!item || typeof item !== 'object') return false;
+  const type = String(item.type || '').trim().toLowerCase();
+  const hasChildren = dbConditionVisibleItems(dbConditionChildrenOf(item)).length > 0;
+  return hasChildren && (type === 'group' || !dbConditionHasOwnRule(item));
+}
+
+function dbAgentInputsSummary(inputs) {
+  const source = inputs && typeof inputs === 'object' && !Array.isArray(inputs) ? inputs : {};
+  const excludedKeys = new Set(['outputs', 'maxtokens', 'endpointid']);
+  const orderedEntries = [];
+  const pushEntry = (key, value) => {
+    const normalized = String(key || '').trim();
+    if (!normalized) return;
+    if (excludedKeys.has(normalized.toLowerCase())) return;
+    const decodedValue = ['systemPrompt', 'userPrompt'].includes(normalized) && typeof value === 'string'
+      ? dbDecodeEscapedText(value)
+      : value;
+    orderedEntries.push({ key: normalized, value: decodedValue });
+  };
+  ['systemPrompt', 'userPrompt'].forEach(key => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) pushEntry(key, source[key]);
+  });
+  Object.entries(source).forEach(([key, value]) => {
+    if (['systemPrompt', 'userPrompt'].includes(key)) return;
+    pushEntry(key, value);
+  });
+  return orderedEntries;
+}
+
+function dbSetVariableAssignmentsSummary(source, fieldMap = {}) {
+  const {
+    keyField = 'key',
+    typeField = 'valueType',
+    valueField = 'value'
+  } = fieldMap;
+  const assignments = !source || typeof source !== 'object' || Array.isArray(source) || !Array.isArray(source.assignments)
+    ? []
+    : source.assignments;
+  const rows = [];
+  const seen = new Set();
+  assignments.forEach(item => {
+    const key = String(item?.key || item?.variableKey || item?.name || '').trim();
+    if (!key) return;
+    const value = item?.value ?? item?.variableValue ?? item?.defaultValue ?? '';
+    const valueType = String(item?.valueType || item?.valueMode || item?.type || dbValueType(value)).trim() || dbValueType(value);
+    const marker = `${key}\n${valueType}\n${JSON.stringify(value)}`;
+    if (seen.has(marker)) return;
+    seen.add(marker);
+    rows.push({
+      [keyField]: item?.variableKey || item?.key || item?.name || key,
+      [typeField]: item?.valueMode || item?.valueType || item?.type || valueType,
+      [valueField]: item?.variableValue ?? item?.value ?? item?.defaultValue ?? value
+    });
+  });
+  return rows;
+}
+
+function dbSnapshotChanges(before, after, limit = 8) {
+  if (!before || !after || typeof before !== 'object' || typeof after !== 'object' || Array.isArray(before) || Array.isArray(after)) return [];
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort((left, right) => left.localeCompare(right));
+  return keys
+    .map(key => {
+      const hasBefore = Object.prototype.hasOwnProperty.call(before, key);
+      const hasAfter = Object.prototype.hasOwnProperty.call(after, key);
+      const beforeText = hasBefore ? JSON.stringify(before[key]) : undefined;
+      const afterText = hasAfter ? JSON.stringify(after[key]) : undefined;
+      if (beforeText === afterText) return null;
+      return {
+        key,
+        state: !hasBefore ? 'added' : !hasAfter ? 'removed' : 'changed',
+        before: hasBefore ? before[key] : undefined,
+        after: hasAfter ? after[key] : undefined
+      };
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function dbStatusColor(status) {
+  if (isDbExecutionSuccess(status)) return 'green';
+  if (!status || status === '未执行') return undefined;
+  return 'red';
+}
+
+function DbNodeJsonBlock({ title, value }) {
+  return <section className="db-node-json"><Text strong>{title}</Text><pre><code>{renderJsonCode(value)}</code></pre></section>;
+}
+
+function DbConditionRuleView({ condition, depth = 0 }) {
+  if (dbConditionIsGroup(condition)) return <DbConditionGroupView group={condition} conditions={dbConditionChildrenOf(condition)} depth={depth} />;
+  const parts = dbConditionConditionParts(condition);
+  return <div className="db-condition-rule">
+    <span className="db-condition-rule-field" title={dbConditionNodeValue(parts.field, 400)}>{dbConditionNodeValue(parts.field, 400)}</span>
+    <span className="db-condition-rule-operator">{dbConditionOperatorLabel(parts.operator)}</span>
+    <span className="db-condition-rule-value" title={dbConditionNodeValue(parts.targetValue, 400)}>{dbConditionNodeValue(parts.targetValue, 120)}</span>
+    {parts.runtimeValue !== undefined ? <span className="db-condition-rule-runtime" title={dbConditionNodeValue(parts.runtimeValue, 400)}>传入：{dbConditionNodeValue(parts.runtimeValue, 120)}</span> : null}
+  </div>;
+}
+
+function DbConditionConnector({ logic }) {
+  const label = dbConditionLogicLabel(logic);
+  return <div className={`db-condition-connector ${label.toLowerCase()}`}>
+    <span>{label}</span>
+  </div>;
+}
+
+function DbConditionGroupView({ group, conditions, depth = 0 }) {
+  const visibleConditions = dbConditionVisibleItems(conditions);
+  const fallbackLogic = dbConditionGroupLogic(group);
+  return <div className={`db-condition-group depth-${Math.min(depth, 3)}`}>
+    {depth > 0 ? <div className="db-condition-group-head">
+      <Tag className="db-condition-group-tag" bordered={false}>条件组</Tag>
+      <Text type="secondary">{visibleConditions.length} 个判断</Text>
+    </div> : null}
+    <div className="db-condition-group-body">
+      {visibleConditions.length ? visibleConditions.map((condition, index) => <React.Fragment key={`${index}-${JSON.stringify(condition).slice(0, 80)}`}>
+        {index > 0 ? <DbConditionConnector logic={condition?.logic ?? fallbackLogic} /> : null}
+        <DbConditionRuleView condition={condition} depth={depth + 1} />
+      </React.Fragment>) : <Text type="secondary">暂无判断条件</Text>}
+    </div>
+  </div>;
+}
+
+function DbConditionConfigPanel({ config }) {
+  const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+  const branches = Array.isArray(source.branches) ? source.branches : [];
+  const defaultBranch = source.defaultBranch;
+  return <Flex vertical gap={12}>
+    <section className="db-node-panel db-condition-config-panel">
+      <div className="db-node-panel-title">
+        <span>条件可视化</span>
+        <Text type="secondary">{branches.length ? `${branches.length} 个分支` : '无分支'}</Text>
+      </div>
+      {branches.length ? <div className="db-condition-branch-list">
+        {branches.map((branch, index) => {
+          const conditions = dbConditionVisibleItems(dbConditionChildrenOf(branch));
+          const branchId = String(branch?.id || '').trim();
+          const branchLabel = String(branch?.label || branch?.name || branchId || `分支 ${index + 1}`).trim();
+          return <article key={`${branchId || index}-${branchLabel}`} className="db-condition-branch-card">
+            <div className="db-condition-branch-head">
+              <span className="db-condition-branch-title" title={branchLabel}>{branchLabel}</span>
+              <Space size={6} wrap>
+                <Tag className="db-condition-branch-index" bordered={false}>分支 {index + 1}</Tag>
+                {branchId && branchId !== branchLabel ? <Text type="secondary" className="db-condition-branch-id">{branchId}</Text> : null}
+              </Space>
+            </div>
+            <DbConditionGroupView group={branch} conditions={conditions} />
+          </article>;
+        })}
+        {defaultBranch ? <article className="db-condition-branch-card default">
+          <div className="db-condition-branch-head">
+            <span className="db-condition-branch-title">默认分支</span>
+            <Tag bordered={false}>未命中时进入</Tag>
+          </div>
+          <div className="db-condition-default-target" title={dbConditionNodeValue(defaultBranch, 400)}>{dbConditionNodeValue(defaultBranch, 160)}</div>
+        </article> : null}
+      </div> : <Text type="secondary">暂无条件分支配置。</Text>}
+    </section>
+    <DbNodeJsonBlock title="节点参数配置 JSON" value={config} />
   </Flex>;
-  return <Drawer open={Boolean(node)} width={520} title={node?.nodeName || node?.nodeId || '节点详情'} onClose={onClose} destroyOnHidden>
+}
+
+function DbNodeValuePanel({ title, value, typeLabel = dbValueType }) {
+  const entries = dbObjectEntries(value);
+  return <section className="db-node-panel">
+    <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{dbCollectionSummary(value)}</Text></div>
+    {entries.length ? <div className="db-node-value-list">
+      {entries.map(item => <div key={item.key} className="db-node-value-row">
+        <span className="db-node-value-key" title={item.key}>{item.key}</span>
+        <span className="db-node-value-type">{typeLabel(item.value)}</span>
+        <span className="db-node-value-preview" title={dbValuePreview(item.value, 400)}>{dbValuePreview(item.value)}</span>
+      </div>)}
+    </div> : <Text type="secondary">暂无数据</Text>}
+  </section>;
+}
+
+function DbNodeAgentInputsPanel({ inputs }) {
+  const entries = dbAgentInputsSummary(inputs);
+  const [expandedPrompts, setExpandedPrompts] = useState({ systemPrompt: false, userPrompt: false });
+  useEffect(() => {
+    setExpandedPrompts({ systemPrompt: false, userPrompt: false });
+  }, [inputs]);
+  return <section className="db-node-panel">
+    <div className="db-node-panel-title"><span>Inputs 摘要</span><Text type="secondary">{entries.length ? `${entries.length} 个字段` : '无数据'}</Text></div>
+    {entries.length ? <div className="db-node-agent-input-list">
+      {entries.map(item => {
+        const isPrompt = item.key === 'systemPrompt' || item.key === 'userPrompt';
+        const displayValue = isPrompt ? dbDecodeEscapedText(item.value) : dbValuePreview(item.value, 400);
+        const isExpanded = isPrompt ? Boolean(expandedPrompts[item.key]) : true;
+        return <div key={item.key} className={`db-node-agent-input-row${isPrompt ? ` prompt ${isExpanded ? 'expanded' : 'collapsed'}` : ''}`}>
+          <div className="db-node-agent-input-row-head">
+            <span className="db-node-agent-input-key" title={item.key}>{item.key}</span>
+            {isPrompt ? <Button
+              type="text"
+              size="small"
+              className="db-node-agent-input-toggle"
+              icon={isExpanded ? <UpOutlined /> : <DownOutlined />}
+              onClick={() => setExpandedPrompts(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+            >{isExpanded ? '收起' : '展开'}</Button> : null}
+          </div>
+          <span
+            className={`db-node-agent-input-value${isPrompt ? ' prompt-value' : ''}`}
+            title={isPrompt ? displayValue : typeof item.value === 'string' ? item.value : dbValuePreview(item.value, 400)}
+          >
+            {displayValue || '-'}
+          </span>
+        </div>;
+      })}
+    </div> : <Text type="secondary">暂无数据</Text>}
+  </section>;
+}
+
+function DbNodeAssignmentsPanel({ title, assignments, showValueType = false }) {
+  return <section className="db-node-panel">
+    <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{assignments.length ? `${assignments.length} 个字段` : '无数据'}</Text></div>
+    {assignments.length ? <div className="db-node-assignments-list">
+      {assignments.map(item => {
+        const key = item.key ?? item.variableKey ?? item.name ?? '-';
+        const valueType = item.valueType ?? item.valueMode ?? item.type ?? dbValueType(item.value ?? item.variableValue ?? item.defaultValue);
+        const value = item.value ?? item.variableValue ?? item.defaultValue ?? '';
+        return <div key={`${key}-${valueType || ''}-${JSON.stringify(value)}`} className={`db-node-assignments-row${showValueType ? ' has-type' : ''}`}>
+          <span className="db-node-assignments-key" title={key}>{key}</span>
+          {showValueType ? <span className="db-node-value-type">{valueType}</span> : null}
+          <span className="db-node-assignments-value" title={dbValuePreview(value, 400)}>{dbValuePreview(value, 400)}</span>
+        </div>;
+      })}
+    </div> : <Text type="secondary">暂无数据</Text>}
+  </section>;
+}
+
+function DbNodeSnapshotPanel({ before, after }) {
+  const changes = dbSnapshotChanges(before, after);
+  return <section className="db-node-panel">
+    <div className="db-node-panel-title"><span>变量变化</span><Text type="secondary">{changes.length ? `${changes.length} 处变化` : '无变化'}</Text></div>
+    {changes.length ? <div className="db-node-change-list">
+      {changes.map(change => <div key={change.key} className={`db-node-change-row ${change.state}`}>
+        <span className="db-node-change-key" title={change.key}>{change.key}</span>
+        <Tag className="db-node-change-tag" color={change.state === 'added' ? 'green' : change.state === 'removed' ? 'red' : 'blue'}>{change.state === 'added' ? '新增' : change.state === 'removed' ? '删除' : '变更'}</Tag>
+        <span className="db-node-change-value" title={dbValuePreview(change.before, 400)}>{dbValuePreview(change.before, 90)}</span>
+        <span className="db-node-change-arrow">→</span>
+        <span className="db-node-change-value" title={dbValuePreview(change.after, 400)}>{dbValuePreview(change.after, 90)}</span>
+      </div>)}
+    </div> : <Text type="secondary">Before Snapshot 与 After Snapshot 未发现字段差异。</Text>}
+  </section>;
+}
+
+function DbNodeRawDataCollapse({ node }) {
+  return <Collapse
+    className="db-node-raw-collapse"
+    bordered={false}
+    items={[{
+      key: 'raw',
+      label: '原始数据',
+      children: <Flex vertical gap={12}>
+        <DbNodeJsonBlock title="Inputs" value={node.inputs} />
+        <DbNodeJsonBlock title="Outputs" value={node.outputs} />
+        <DbNodeJsonBlock title="Logs" value={node.logs} />
+      </Flex>
+    }]}
+  />;
+}
+
+function DbNodeDrawerTitle({ node, meta }) {
+  const Icon = meta.icon;
+  const nodeTitle = node?.nodeName || node?.nodeId || '节点详情';
+  const nodeId = node?.nodeId || '-';
+  return <div className="db-node-drawer-title">
+    <span className="db-node-drawer-icon" style={{ backgroundColor: meta.color, color: '#fff' }}><Icon /></span>
+    <span className="db-node-drawer-title-content">
+      <span className="db-node-drawer-name" title={nodeTitle}>{nodeTitle}</span>
+      <span className="db-node-drawer-meta">
+        <span className="db-node-drawer-type">{meta.name}</span>
+        <span className="db-node-drawer-id-label">ID:</span>
+        <span className="db-node-drawer-id" title={nodeId}>{nodeId}</span>
+      </span>
+    </span>
+  </div>;
+}
+
+function DbNodeDrawer({ node, onClose, loading = false }) {
+  const nodeType = String(node?.nodeType || '').toLowerCase();
+  const isSetVariable = nodeType === 'set_variable';
+  const showInputsSummary = nodeType !== 'lingxi_send';
+  const inputsSummary = nodeType === 'condition' ? dbConditionInputsSummary(node?.inputs) : node?.inputs;
+  const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
+  const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.outputs) : [];
+  const outputsSummary = nodeType === 'lingxi_send' ? dbLingxiSendOutputsSummary(node) : node?.outputs;
+  const meta = dbNodeMeta(node?.nodeType);
+  const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
+    <div className="db-node-summary">
+      <div className="db-node-summary-row"><Text type="secondary">运行 ID</Text><Text className="db-node-summary-run-id" copyable ellipsis={{ tooltip: node.runId || '-' }}>{node.runId || '-'}</Text></div>
+      <div className="db-node-summary-row"><Text type="secondary">开始时间</Text><Text>{node.startedAt || '-'}</Text></div>
+      <div className="db-node-summary-row"><Text type="secondary">执行状态</Text><Tag className="db-node-summary-status" color={dbStatusColor(node.status)}>{node.status || '-'}</Tag></div>
+      <div className="db-node-summary-row"><Text type="secondary">运行时间</Text><Text>{node.durationMs || 0} ms</Text></div>
+      {node.errorCode ? <div className="db-node-summary-row"><Text type="secondary">错误码</Text><Tag color="red">{node.errorCode}</Tag></div> : null}
+      {node.errorClass ? <div className="db-node-summary-row"><Text type="secondary">错误类型</Text><Tag color="red">{node.errorClass}</Tag></div> : null}
+    </div>
+    {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
+    {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
+    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} />}
+    {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
+    <DbNodeRawDataCollapse node={node} />
+  </Flex>;
+  return <Drawer className="db-node-drawer" open={Boolean(node)} width={680} title={<DbNodeDrawerTitle node={node} meta={meta} />} onClose={onClose} destroyOnHidden>
     {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="execution" items={[
       { key: 'execution', label: '当前节点执行记录', children: executionContent },
-      { key: 'config', label: '当前节点参数配置', children: jsonBlock('节点参数配置', node.nodeConfig) }
+      { key: 'config', label: '当前节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
     ]} /> : null}
   </Drawer>;
 }
@@ -766,6 +1276,7 @@ function DbConversationDetailPage({ data }) {
       target: edge.target,
       label,
       animated: active,
+      selectable: false,
       markerEnd: { type: MarkerType.ArrowClosed, color: active ? '#10b981' : '#94a3b8' },
       className: active ? 'db-flow-edge active' : 'db-flow-edge idle',
       labelBgPadding: [8, 4],
@@ -783,6 +1294,7 @@ function DbConversationDetailPage({ data }) {
       target: edge.target,
       label,
       animated: active,
+      selectable: false,
       markerEnd: { type: MarkerType.ArrowClosed, color: active ? '#d97706' : '#f59e0b' },
       className: active ? 'db-flow-edge historical active' : 'db-flow-edge historical idle',
       labelBgPadding: [8, 4],
@@ -931,6 +1443,7 @@ function DbConversationDetailPage({ data }) {
           maxZoom={1.6}
           nodesDraggable
           nodesConnectable={false}
+          edgesFocusable={false}
           elementsSelectable
           proOptions={{ hideAttribution: true }}
           onInit={instance => {

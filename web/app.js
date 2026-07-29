@@ -21,6 +21,7 @@ function dbQueryDateBoundary(value, endOfDay = false) {
 const initialDbTimeRange = defaultDbTimeRange();
 const APP_ACTIVE_VIEW_STORAGE_KEY = 'lingxi-mq-active-view';
 const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'labels']);
+const DB_DETAIL_ROUTE_PARAMS = ['dbDetail', 'dbWorkflowId', 'dbConversationId'];
 
 const state = {
   config: null,
@@ -323,7 +324,7 @@ function updateCaseFromForm() {
   return c;
 }
 
-function setView(name) {
+function setView(name, options = {}) {
   const nextView = APP_VIEW_NAMES.has(name) ? name : 'cases';
   try {
     window.localStorage.setItem(APP_ACTIVE_VIEW_STORAGE_KEY, nextView);
@@ -337,16 +338,21 @@ function setView(name) {
   $('labelsView').classList.toggle('active', name === 'labels');
   if (name !== 'cases') document.body.classList.remove('case-detail-open');
   if (name !== 'records') document.body.classList.remove('record-detail-open');
-  if (name !== 'dbRecords') document.body.classList.remove('db-record-detail-open');
+  if (name !== 'dbRecords') {
+    document.body.classList.remove('db-record-detail-open');
+    if (readDbConversationDetailRoute()) clearDbConversationDetailRoute();
+  }
   if (name === 'cases') showCaseList(false);
   if (name === 'records') {
     showRecordList(false);
     loadRecords();
   }
   if (name === 'dbRecords') {
-    showDbConversationList(false);
-    loadDbConfigs().catch(showError);
-    loadDbSavedFilters().catch(showError);
+    showDbConversationList(false, { preserveRoute: Boolean(options.preserveDbRoute) });
+    if (!options.skipDbAutoLoad) {
+      loadDbConfigs().catch(showError);
+      loadDbSavedFilters().catch(showError);
+    }
   }
   renderListToolbars();
 }
@@ -464,10 +470,42 @@ function showRecordDetailPage() {
   $('backToRecordsBtn').classList.add('hidden');
 }
 
-function showDbConversationList(render = true) {
+function readDbConversationDetailRoute() {
+  const params = new URLSearchParams(window.location.search);
+  const workflowId = params.get('dbWorkflowId') || '';
+  const conversationId = params.get('dbConversationId') || '';
+  if (params.get('dbDetail') !== '1' || !workflowId || !conversationId) return null;
+  return { workflowId, conversationId };
+}
+
+function replaceUrlParams(mutator, historyState = history.state || { page: 'case-list' }) {
+  const url = new URL(window.location.href);
+  mutator(url.searchParams);
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  history.replaceState(historyState, '', nextUrl);
+}
+
+function setDbConversationDetailRoute(workflowId, conversationId) {
+  replaceUrlParams(params => {
+    params.set('view', 'dbRecords');
+    params.set('dbDetail', '1');
+    params.set('dbWorkflowId', workflowId);
+    params.set('dbConversationId', conversationId);
+  }, { page: 'db-conversation-detail', workflowId, conversationId });
+}
+
+function clearDbConversationDetailRoute() {
+  replaceUrlParams(params => {
+    DB_DETAIL_ROUTE_PARAMS.forEach(key => params.delete(key));
+    if (params.get('view') === 'dbRecords') params.delete('view');
+  }, { page: 'db-conversation-list' });
+}
+
+function showDbConversationList(render = true, options = {}) {
   state.dbRecordPage = 'list';
   document.body.classList.remove('db-record-detail-open');
   window.renderDbConversationDetailChrome?.(null);
+  if (!options.preserveRoute) clearDbConversationDetailRoute();
   if (render) renderDbRecordsPage();
 }
 
@@ -1007,7 +1045,14 @@ async function loadInitial() {
   } catch {
     // 本地存储不可用时使用默认页。
   }
-  setView(savedView);
+  const dbDetailRoute = readDbConversationDetailRoute();
+  if (dbDetailRoute) savedView = 'dbRecords';
+  setView(savedView, { skipDbAutoLoad: Boolean(dbDetailRoute), preserveDbRoute: Boolean(dbDetailRoute) });
+  if (dbDetailRoute) {
+    await loadDbConfigs();
+    await loadDbSavedFilters();
+    await openDbConversationDetail(dbDetailRoute.workflowId, dbDetailRoute.conversationId, { updateRoute: false });
+  }
 }
 
 async function loadCases() {
@@ -1614,13 +1659,21 @@ function pollDbConnectionStatus() {
   refreshDbConnectionStatus().catch(() => {});
 }
 
-async function changeDbConnection(action) {
+async function ensureDbConnected() {
+  if (state.dbConnection?.status === 'connected') return;
+  if (!state.dbConfigs.length && !state.dbConnection?.configId) await loadDbConfigs();
+  if (state.dbConnection?.status === 'connected') return;
+  await changeDbConnection('connect', { silent: true });
+}
+
+async function changeDbConnection(action, options = {}) {
   state.dbConnectionChanging = true;
   renderDbRecordsPage();
   try {
     const configId = state.dbConnection.configId || state.dbConfigs[0]?.id || '';
     state.dbConnection = await api(`/api/db-configs/${action}`, { method: 'POST', body: JSON.stringify({ configId }) });
-    toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
+    if (!options.silent) toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
+    return state.dbConnection;
   } catch (error) {
     await refreshDbConnectionStatus().catch(() => {});
     throw error;
@@ -1651,6 +1704,7 @@ async function switchDbConnection(configId) {
       state.dbActiveWorkflowId = '';
       state.dbActiveConversationId = '';
       state.dbRecordPage = 'list';
+      clearDbConversationDetailRoute();
     }
     toast(changedConfig ? `已切换至数据库：${state.dbConnection.name}` : '数据库连接正常');
   } catch (error) {
@@ -1720,6 +1774,11 @@ function resetDbConversationFilters() {
   state.dbConversationItems = [];
   state.dbConversationTotal = 0;
   state.dbConversationQueried = false;
+  state.dbConversationDetail = null;
+  state.dbActiveWorkflowId = '';
+  state.dbActiveConversationId = '';
+  state.dbRecordPage = 'list';
+  clearDbConversationDetailRoute();
   renderDbRecordsPage();
 }
 
@@ -1759,6 +1818,7 @@ async function deleteDbConfig(configId) {
     state.dbActiveWorkflowId = '';
     state.dbActiveConversationId = '';
     state.dbRecordPage = 'list';
+    clearDbConversationDetailRoute();
   }
   renderDbRecordsPage();
   toast('数据库配置已删除');
@@ -1791,8 +1851,10 @@ async function queryDbConversations() {
   state.dbActiveWorkflowId = '';
   state.dbActiveConversationId = '';
   state.dbRecordPage = 'list';
+  clearDbConversationDetailRoute();
   renderDbRecordsPage();
   try {
+    await ensureDbConnected();
     const params = new URLSearchParams({
       pageNo: String(state.dbPageNo),
       pageSize: String(state.dbPageSize)
@@ -1814,7 +1876,7 @@ async function queryDbConversations() {
   }
 }
 
-async function openDbConversationDetail(workflowId, conversationId) {
+async function openDbConversationDetail(workflowId, conversationId, options = {}) {
   state.dbConversationDetailLoading = true;
   state.dbConversationDetail = null;
   state.dbSelectedTriggerMessageId = '';
@@ -1824,8 +1886,10 @@ async function openDbConversationDetail(workflowId, conversationId) {
   state.dbNodeExecutionLoadingId = '';
   state.dbActiveWorkflowId = workflowId || '';
   state.dbActiveConversationId = conversationId || '';
+  if (options.updateRoute !== false) setDbConversationDetailRoute(workflowId, conversationId);
   showDbConversationDetailPage();
   try {
+    await ensureDbConnected();
     const params = new URLSearchParams({ workflowId, conversationId });
     appendDbConfigId(params);
     const detail = await api(`/api/db/conversations/detail?${params}`);
