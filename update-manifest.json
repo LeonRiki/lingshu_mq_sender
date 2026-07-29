@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.6",
+  "version": "2.1.7",
   "notes": [],
   "files": [
     {
@@ -13,11 +13,11 @@
     },
     {
       "path": "version.json",
-      "sha256": "071e12d879d724049bb89e0f00a0166f333d7451baedb3bd7e1811621fb017d9"
+      "sha256": "901bbc7289b60f10dcc82d6c3412e32cc116b887fbd6ee6e11c17360d7220910"
     },
     {
       "path": "web/app.js",
-      "sha256": "2a01f9de5ebda87ae6ca7f90d9b6b8ebe00ff731068ab6ec923b03e6090c201a"
+      "sha256": "7f75a36750b8328af700a83083732faa99571d5c5cc35481a40653e1ca358b47"
     },
     {
       "path": "web/assets/github.png",
@@ -33,7 +33,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "51684ea8eeba6c4d7ee2b01cfebdfc5453ac3a24b49754e346f409ad1f47ceae"
+      "sha256": "ca217e73c62dc7b79393e812f0a40132cd3792bd29f4a31ce7420cee392f0c17"
     },
     {
       "path": "web/favicon.ico",
@@ -49,7 +49,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "ca84fb4562bc88fa35fa38af1dfd9f9182b5c2706c5c9ad57cd6254cf2554c9a"
+      "sha256": "df82776e1a02d22a3d7170749fd4c6ea3a437b0d09a9b615bf8099acb1335130"
     },
     {
       "path": "win-启动服务.bat",
