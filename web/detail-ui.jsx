@@ -1356,6 +1356,7 @@ function DbConversationDetailPage({ data }) {
   const detail = data.detail;
   const activeDbConfig = (data.configs || []).find(config => config.id === data.connection?.configId);
   const canSendMessage = activeDbConfig?.environment === 'test';
+  const requiresDbEnvironment = Boolean(activeDbConfig) && !activeDbConfig.environment;
   const [drawerNode, setDrawerNode] = useState(null);
   const [messageOrder, setMessageOrder] = useState('asc');
   const [showActions, setShowActions] = useState(false);
@@ -1762,7 +1763,9 @@ function DbConversationDetailPage({ data }) {
           </div>;
           })}
         </div>
-        {canSendMessage ? <div className="db-message-flow-footer">
+        {requiresDbEnvironment ? <div className="db-message-flow-footer">
+          <Alert type="warning" showIcon message="请先设置数据库环境" description={<>当前数据库配置尚未设置环境。<Button type="link" size="small" onClick={() => emitListToolbar('open-db-settings')}>去数据库配置选择</Button>线上环境或测试环境。</>} />
+        </div> : canSendMessage ? <div className="db-message-flow-footer">
           <Button type="primary" icon={<SendOutlined />} block onClick={() => emitDbConversationMessageAction('open')}>发送新消息</Button>
         </div> : null}
       </aside>

@@ -1198,7 +1198,7 @@ function mqConfig(configId) {
 
 const DB_ENVIRONMENTS = new Set(['production', 'test']);
 
-function dbEnvironmentOf(value, fallback = 'test') {
+function dbEnvironmentOf(value, fallback = 'production') {
   const environment = String(value || '').trim();
   if (!environment) return fallback;
   return DB_ENVIRONMENTS.has(environment) ? environment : fallback;
@@ -1248,7 +1248,7 @@ function publicDbConfig(config) {
     port: config.port,
     database: config.database,
     user: config.user,
-    environment: dbEnvironmentOf(config.environment),
+    environment: DB_ENVIRONMENTS.has(String(config.environment || '').trim()) ? config.environment : '',
     hasPassword: Boolean(config.password)
   };
 }
