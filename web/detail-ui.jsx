@@ -387,7 +387,7 @@ function DbSettingsDialog({ data }) {
   const configs = data.configs || [];
   const selectedId = data.selectedConfigId || configs[0]?.id || '__new__';
   const selected = selectedId === '__new__' ? null : configs.find(config => config.id === selectedId);
-  const emptyForm = { name: '', host: '', port: 5432, database: '', user: '', password: '' };
+  const emptyForm = { name: '', host: '', port: 5432, database: '', user: '', password: '', environment: '' };
   const [form, setForm] = useState(emptyForm);
   useEffect(() => {
     setForm(selected ? { ...selected, password: '' } : emptyForm);
@@ -403,7 +403,7 @@ function DbSettingsDialog({ data }) {
       onDelete={() => emitListToolbar('delete-db-config', { configId: config.id })}
     />
   })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增数据库配置' }];
-  const complete = form.name && form.host && form.port && form.database && form.user && (form.password || selected?.hasPassword);
+  const complete = form.name && form.host && form.port && form.database && form.user && form.environment && (form.password || selected?.hasPassword);
   return <Modal open={data.open} centered title="数据库配置" width={820} onCancel={() => emitListToolbar('close-db-settings')} footer={null} destroyOnHidden>
     <Flex className="mq-settings-layout" gap={16}>
       <aside className="mq-settings-nav"><Menu mode="inline" selectedKeys={[selectedId]} items={menuItems} onClick={({ key }) => emitListToolbar('select-db-config', { value: key })} /></aside>
@@ -422,6 +422,7 @@ function DbSettingsDialog({ data }) {
           <label>Database<Input value={form.database} onChange={setField('database')} /></label>
           <label>User<Input value={form.user} onChange={setField('user')} /></label>
           <label>Password<Input.Password value={form.password} onChange={setField('password')} placeholder={selected?.hasPassword ? '已配置，留空不修改' : ''} /></label>
+          <label>数据库环境<Radio.Group value={form.environment} onChange={setField('environment')} options={[{ label: '线上环境', value: 'production' }, { label: '测试环境', value: 'test' }]} /></label>
         </div>
       </section>
     </Flex>
@@ -1353,6 +1354,8 @@ function DbMessageDrawer({ open, onClose, workflowId, conversationId, onSend, mq
 }
 function DbConversationDetailPage({ data }) {
   const detail = data.detail;
+  const activeDbConfig = (data.configs || []).find(config => config.id === data.connection?.configId);
+  const canSendMessage = activeDbConfig?.environment === 'test';
   const [drawerNode, setDrawerNode] = useState(null);
   const [messageOrder, setMessageOrder] = useState('asc');
   const [showActions, setShowActions] = useState(false);
@@ -1385,14 +1388,17 @@ function DbConversationDetailPage({ data }) {
   }, [data.selectedTriggerMessageId, detail?.selectedTriggerMessageId]);
   useEffect(() => {
     const handleMessageAction = event => {
-      if (event.detail?.type === 'open') {
+      if (event.detail?.type === 'open' && canSendMessage) {
         setMessageDrawerOpen(true);
         emitListToolbar('load-db-conversation-mq-configs');
       }
     };
     document.addEventListener('db-conversation-message-action', handleMessageAction);
     return () => document.removeEventListener('db-conversation-message-action', handleMessageAction);
-  }, []);
+  }, [canSendMessage]);
+  useEffect(() => {
+    if (!canSendMessage) setMessageDrawerOpen(false);
+  }, [canSendMessage]);
   useEffect(() => {
     const persistedMessages = detail?.messages || [];
     setPendingMessages(previous => {
@@ -1756,9 +1762,9 @@ function DbConversationDetailPage({ data }) {
           </div>;
           })}
         </div>
-        <div className="db-message-flow-footer">
+        {canSendMessage ? <div className="db-message-flow-footer">
           <Button type="primary" icon={<SendOutlined />} block onClick={() => emitDbConversationMessageAction('open')}>发送新消息</Button>
-        </div>
+        </div> : null}
       </aside>
       <section ref={flowPanelRef} className="db-flow-panel">
         <ReactFlow
@@ -1821,7 +1827,7 @@ function DbConversationDetailPage({ data }) {
       </section>
     </div>
     <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} />
-    <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} />
+    {canSendMessage ? <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} /> : null}
   </div>;
 }
 

@@ -1196,8 +1196,22 @@ function mqConfig(configId) {
   return environmentMqConfig();
 }
 
+const DB_ENVIRONMENTS = new Set(['production', 'test']);
+
+function dbEnvironmentOf(value, fallback = 'test') {
+  const environment = String(value || '').trim();
+  if (!environment) return fallback;
+  return DB_ENVIRONMENTS.has(environment) ? environment : fallback;
+}
+
 function dbConfigRecord(value, existing = {}) {
   const port = Number(value.port || existing.port || 5432);
+  const inputEnvironment = String(value.environment || '').trim();
+  if (!DB_ENVIRONMENTS.has(inputEnvironment)) {
+    const err = new Error('请选择数据库环境（线上环境或测试环境）');
+    err.statusCode = 400;
+    throw err;
+  }
   const config = {
     id: existing.id || value.id || id('db'),
     name: String(value.name || existing.name || '').trim(),
@@ -1205,7 +1219,8 @@ function dbConfigRecord(value, existing = {}) {
     port: Number.isFinite(port) && port > 0 ? port : 5432,
     database: String(value.database || existing.database || '').trim(),
     user: String(value.user || existing.user || '').trim(),
-    password: String(value.password || existing.password || '')
+    password: String(value.password || existing.password || ''),
+    environment: inputEnvironment
   };
   if (Object.entries(config).some(([key, item]) => !['id', 'password'].includes(key) && !String(item || '').trim())) {
     const err = new Error('数据库配置填写不完整');
@@ -1233,6 +1248,7 @@ function publicDbConfig(config) {
     port: config.port,
     database: config.database,
     user: config.user,
+    environment: dbEnvironmentOf(config.environment),
     hasPassword: Boolean(config.password)
   };
 }
@@ -1342,6 +1358,22 @@ function dbConfig(configId) {
     throw err;
   }
   return selected;
+}
+
+function requireTestDbConversationConfig(configId) {
+  const selectedConfigId = String(configId || '').trim();
+  if (!selectedConfigId) {
+    const err = new Error('缺少数据库配置');
+    err.statusCode = 400;
+    throw err;
+  }
+  const config = dbConfig(selectedConfigId);
+  if (dbEnvironmentOf(config.environment) !== 'test') {
+    const err = new Error('线上环境数据库不允许发送新消息或预览消息 JSON');
+    err.statusCode = 403;
+    throw err;
+  }
+  return config;
 }
 
 function requirePg() {
@@ -2990,6 +3022,8 @@ async function sendDbConversationMessage(req) {
     throw err;
   }
 
+  requireTestDbConversationConfig(configId);
+
   const configuredMqConfigs = readMqConfigs();
   if (!configuredMqConfigs.length) {
     const err = new Error('未配置 MQ，请前往系统设置完成 MQ 配置后再发送');
@@ -3076,6 +3110,8 @@ async function previewDbConversationPayload(url) {
     err.statusCode = 400;
     throw err;
   }
+
+  requireTestDbConversationConfig(configId);
   
   const executions = await withDbClient(configId, async client => {
     const triggerIds = (await client.query(
