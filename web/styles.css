@@ -222,8 +222,68 @@ button:disabled {
   font-size: 13px;
 }
 
+.required-field-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.required-field-label b {
+  display: inline-block;
+  margin-inline-end: var(--ant-margin-xxs, 4px);
+  color: var(--ant-color-error, #ff4d4f);
+  font-size: var(--ant-font-size, 14px);
+  font-family: sans-serif;
+  font-weight: 400;
+  line-height: 1;
+}
+
 .mq-config-parser {
   margin-top: 16px;
+}
+
+.system-settings-tabs > .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.system-settings-tabs .ant-tabs-content-holder {
+  min-height: 480px;
+}
+
+.db-environment-field {
+  grid-column: 1 / -1;
+}
+
+.db-environment-options.ant-radio-group {
+  display: flex;
+  gap: 10px;
+}
+
+.mq-config-grid .db-environment-options .ant-radio-wrapper {
+  display: inline-flex;
+  flex: 1 1 0;
+  flex-direction: row;
+  align-items: center;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.mq-config-grid .db-environment-options .ant-radio-wrapper:hover {
+  border-color: #91caff;
+}
+
+.mq-config-grid .db-environment-options .ant-radio-wrapper-checked {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #1d4ed8;
 }
 
 .update-dialog-content {
@@ -2474,6 +2534,10 @@ main {
   overflow-wrap: anywhere;
 }
 
+.db-node-value-preview-full {
+  white-space: pre-wrap;
+}
+
 .db-node-value-tags {
   display: flex;
   flex-wrap: wrap;
@@ -2499,7 +2563,6 @@ main {
 .db-node-input-list {
   display: grid;
   max-height: 216px;
-  gap: 6px;
   overflow: auto;
   padding: 2px 4px 2px 0;
 }
@@ -2507,6 +2570,29 @@ main {
 .db-node-input-list.expanded {
   max-height: none;
   overflow: visible;
+}
+
+.db-node-input-list-message {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.db-node-input-list-message:last-of-type {
+  border-bottom: 0;
+}
+
+.db-node-input-list-content {
+  min-width: 0;
+  color: #475569;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .db-node-input-latest {
@@ -2531,6 +2617,14 @@ main {
   color: #94a3b8;
   font-size: 11px;
   line-height: 1.4;
+}
+
+.db-node-input-list-message.teacher .db-node-input-message-role {
+  color: #1677ff;
+}
+
+.db-node-input-list-message.student .db-node-input-message-role {
+  color: #52c41a;
 }
 
 .db-node-input-message-bubble {
@@ -2716,7 +2810,7 @@ main {
 .db-node-drawer-tabs .ant-tabs-tab {
   padding: 0 16px 14px;
   color: #64748b;
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
 }
 

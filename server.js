@@ -1125,7 +1125,7 @@ function environmentMqConfig() {
 function mqConfigRecord(value, existing = {}) {
   const config = {
     id: existing.id || value.id || id('mq'),
-    name: String(value.name || existing.name || '').trim(),
+    name: value.name === undefined ? String(existing.name || '').trim() : String(value.name || '').trim(),
     gatewayUrl: String(value.gatewayUrl || existing.gatewayUrl || '').trim().replace(/\/+$/, ''),
     appId: String(value.appId || existing.appId || '').trim(),
     topic: String(value.topic || existing.topic || '').trim(),
@@ -1134,7 +1134,7 @@ function mqConfigRecord(value, existing = {}) {
     nameServer: String(value.nameServer || existing.nameServer || '').trim(),
     messageType: String(value.messageType || existing.messageType || '').trim()
   };
-  if (Object.entries(config).some(([key, value]) => key !== 'id' && !value)) {
+  if (Object.entries(config).some(([key, value]) => !['id', 'name'].includes(key) && !value)) {
     const err = new Error('MQ 配置填写不完整');
     err.statusCode = 400;
     throw err;
@@ -1165,7 +1165,7 @@ function saveMqConfig(value) {
   const configs = readMqConfigs();
   const existingIndex = value.id ? configs.findIndex(config => config.id === value.id) : -1;
   const config = mqConfigRecord(value, existingIndex >= 0 ? configs[existingIndex] : {});
-  if (configs.some(item => item.id !== config.id && item.name === config.name)) {
+  if (config.name && configs.some(item => item.id !== config.id && item.name === config.name)) {
     const err = new Error('MQ 配置名称已存在');
     err.statusCode = 400;
     throw err;
@@ -1214,7 +1214,7 @@ function dbConfigRecord(value, existing = {}) {
   }
   const config = {
     id: existing.id || value.id || id('db'),
-    name: String(value.name || existing.name || '').trim(),
+    name: value.name === undefined ? String(existing.name || '').trim() : String(value.name || '').trim(),
     host: String(value.host || existing.host || '').trim(),
     port: Number.isFinite(port) && port > 0 ? port : 5432,
     database: String(value.database || existing.database || '').trim(),
@@ -1222,7 +1222,7 @@ function dbConfigRecord(value, existing = {}) {
     password: String(value.password || existing.password || ''),
     environment: inputEnvironment
   };
-  if (Object.entries(config).some(([key, item]) => !['id', 'password'].includes(key) && !String(item || '').trim())) {
+  if (Object.entries(config).some(([key, item]) => !['id', 'name', 'password'].includes(key) && !String(item || '').trim())) {
     const err = new Error('数据库配置填写不完整');
     err.statusCode = 400;
     throw err;
@@ -1257,7 +1257,7 @@ function saveDbConfig(value) {
   const configs = readDbConfigs();
   const existingIndex = value.id ? configs.findIndex(config => config.id === value.id) : -1;
   const config = dbConfigRecord(value, existingIndex >= 0 ? configs[existingIndex] : {});
-  if (configs.some(item => item.id !== config.id && item.name === config.name)) {
+  if (config.name && configs.some(item => item.id !== config.id && item.name === config.name)) {
     const err = new Error('数据库配置名称已存在');
     err.statusCode = 400;
     throw err;
@@ -1926,16 +1926,21 @@ function dbExecutionFailed(execution) {
 
 function dbWorkflowTerminalNodeIds(workflowGraph = {}) {
   const nodes = Array.isArray(workflowGraph.nodes) ? workflowGraph.nodes : [];
-  const sourceNodeIds = new Set((Array.isArray(workflowGraph.edges) ? workflowGraph.edges : [])
-    .map(edge => String(edge.source || ''))
-    .filter(Boolean));
   return new Set(nodes
     .filter(node => {
-      const nodeId = String(node.id || '');
       const nodeType = String(node.type || node.nodeType || node.data?.nodeType || '').toLowerCase();
-      return nodeType === 'output' || (nodeId && !sourceNodeIds.has(nodeId));
+      return nodeType === 'output';
     })
     .map(node => String(node.id)));
+}
+
+const DB_REPLY_SETTLE_MS = 15000;
+
+function dbExecutionTimeMs(execution) {
+  const value = execution.completed_at ?? execution.started_at ?? execution.completedAt ?? execution.startedAt;
+  if (value instanceof Date) return value.getTime();
+  const timestamp = Date.parse(String(value || '').replace(' ', 'T'));
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function dbTriggerExecutionStates(executions = [], terminalNodeIds = new Set()) {
@@ -1943,13 +1948,22 @@ function dbTriggerExecutionStates(executions = [], terminalNodeIds = new Set()) 
   executions.forEach(execution => {
     const key = dbTriggerKeyOf(execution);
     if (!key) return;
-    const state = states.get(key) || { started: false, finished: false, failed: false };
+    const state = states.get(key) || { started: false, finished: false, settled: false, failed: false, lastExecutionAt: 0, lastExecutionIsOutput: false };
     state.started = true;
     state.failed ||= dbExecutionFailed(execution);
     const nodeId = dbNodeIdOf(execution);
     const nodeType = String(execution.node_type || execution.nodeType || '').toLowerCase();
-    if (nodeType === 'output' || terminalNodeIds.has(nodeId)) state.finished = true;
+    const executionTime = dbExecutionTimeMs(execution);
+    if (executionTime >= state.lastExecutionAt) {
+      state.lastExecutionAt = executionTime;
+      state.lastExecutionIsOutput = nodeType === 'output' || terminalNodeIds.has(nodeId);
+    }
     states.set(key, state);
+  });
+  const now = Date.now();
+  states.forEach(state => {
+    state.finished = state.lastExecutionIsOutput;
+    state.settled = state.finished && state.lastExecutionAt > 0 && now - state.lastExecutionAt >= DB_REPLY_SETTLE_MS;
   });
   return states;
 }
@@ -1968,10 +1982,15 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
     .filter(message => String(message.role || '').toUpperCase() === 'USER' && dbTriggerIdOf(message))
     .flatMap(message => {
       const key = dbTriggerKeyOf(message);
-      const executionState = executionStates.get(key) || { started: false, finished: false, failed: false };
+      const executionState = executionStates.get(key) || { started: false, finished: false, settled: false, failed: false };
       const assistantMessage = assistantMessagesByTrigger.get(key);
-      const hasReplyAction = assistantReplies.has(key);
-      const assistantContent = hasReplyAction ? assistantReplies.get(key) : '';
+      const hasReplyAction = assistantReplies.has(key) || Boolean(assistantMessage);
+      const assistantContent = assistantReplies.has(key) ? assistantReplies.get(key) : String(assistantMessage?.content || '');
+      const waitingForReply = executionState.started
+        && executionState.finished
+        && !executionState.failed
+        && !hasReplyAction
+        && !executionState.settled;
       const actionEvents = (actionEventsByTrigger.get(key) || []).map((event, index) => ({
         id: `${dbTriggerIdOf(message)}:action:${index}`,
         triggerMessageId: dbTriggerIdOf(message),
@@ -1996,7 +2015,7 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
           conversationId: message.conversation_id || '',
           role: message.role || 'USER',
           processed: executionState.started,
-          processing: executionState.started && !executionState.finished && !executionState.failed,
+          processing: executionState.started && !executionState.failed && (!executionState.finished || waitingForReply),
           failed: executionState.failed,
           hasReplyAction,
           content: dbMessageDisplayContent(message, triggerInputs, assistantReplies),
@@ -2826,8 +2845,47 @@ async function listDbConversations(url) {
   });
 }
 
+async function dbConversationConfigIdForRoute(workflowId, conversationId) {
+  const configs = readDbConfigs();
+  if (!configs.length) {
+    const err = new Error('请先配置数据库连接');
+    err.statusCode = 400;
+    throw err;
+  }
+  const activeConfigId = dbConnectionStatus().configId;
+  const candidates = [
+    ...configs.filter(config => config.id === activeConfigId),
+    ...configs.filter(config => config.id !== activeConfigId)
+  ];
+  const { Pool } = requirePg();
+  for (const config of candidates) {
+    const pool = new Pool({
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      password: config.password,
+      max: 1,
+      connectionTimeoutMillis: 5000
+    });
+    try {
+      const result = await pool.query(
+        'SELECT 1 FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL LIMIT 1',
+        [workflowId, conversationId]
+      );
+      if (result.rowCount) return config.id;
+    } catch {
+      // A stale or unavailable alternative configuration must not prevent the
+      // currently selected database from opening its own detail page.
+    } finally {
+      await pool.end().catch(() => {});
+    }
+  }
+  return activeConfigId || configs[0].id;
+}
+
 async function dbConversationDetail(url) {
-  const configId = url.searchParams.get('configId') || '';
+  const requestedConfigId = String(url.searchParams.get('configId') || '').trim();
   const workflowId = String(url.searchParams.get('workflowId') || '').trim();
   const conversationId = String(url.searchParams.get('conversationId') || '').trim();
   if (!workflowId || !conversationId) {
@@ -2835,6 +2893,7 @@ async function dbConversationDetail(url) {
     err.statusCode = 400;
     throw err;
   }
+  const configId = requestedConfigId || await dbConversationConfigIdForRoute(workflowId, conversationId);
   return withDbClient(configId, async client => {
     const [workflow, messages, variables] = await Promise.all([
       client.query('SELECT * FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
@@ -2911,13 +2970,16 @@ async function dbConversationDetail(url) {
         if (outputs !== undefined) execution.outputs = outputs;
       });
     }
-    return buildDbConversationDetail({
+    return {
+      ...buildDbConversationDetail({
       workflow: workflow.rows[0] || null,
       messages: messages.rows,
       variables: variables.rows,
       executions
-    });
-  });
+      }),
+      configId
+    };
+  }, { allowConnect: !requestedConfigId });
 }
 
 async function dbConversationNodeExecution(url) {
@@ -3093,6 +3155,9 @@ async function sendDbConversationMessage(req) {
   
   return {
     success: sentSnapshot.mqResult?.success || false,
+    // The workflow persists this requestId as trigger_message_id. Returning it lets
+    // the UI correlate the optimistic message with the exact database record.
+    triggerMessageId: payload.requestId,
     snapshot: sentSnapshot,
     ...summary
   };
