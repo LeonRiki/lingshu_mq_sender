@@ -21,7 +21,7 @@ function dbQueryDateBoundary(value, endOfDay = false) {
 const initialDbTimeRange = defaultDbTimeRange();
 const APP_ACTIVE_VIEW_STORAGE_KEY = 'lingxi-mq-active-view';
 const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'labels']);
-const DB_DETAIL_ROUTE_PARAMS = ['dbDetail', 'dbWorkflowId', 'dbConversationId'];
+const DB_DETAIL_ROUTE_PARAMS = ['dbDetail', 'dbWorkflowId', 'dbConversationId', 'dbConfigId'];
 
 const state = {
   config: null,
@@ -44,7 +44,6 @@ const state = {
   dbActiveWorkflowId: '',
   dbActiveConversationId: '',
   dbRecordPage: 'list',
-  dbSettingsOpen: false,
   dbSettingsSelectedId: null,
   dbSettingsTesting: false,
   dbSelectedTriggerMessageId: '',
@@ -64,8 +63,9 @@ const state = {
   editorRevision: 0,
   sendTarget: null,
   mqConfigs: [],
-  mqSettingsOpen: false,
   mqSettingsSelectedId: null,
+  systemSettingsOpen: false,
+  systemSettingsTab: 'mq',
   updateStatus: { currentVersion: '', sources: [] },
   updateCheck: null,
   updateDialogOpen: false,
@@ -445,7 +445,7 @@ function showCaseDetail(historyMode = 'none') {
   if (historyMode === 'push') history.pushState(historyState, '', window.location.href);
   if (historyMode === 'replace') history.replaceState(historyState, '', window.location.href);
   document.body.classList.add('case-detail-open');
-  window.renderMqSettingsButton?.({ visible: false });
+  window.renderSystemSettingsButton?.({ visible: false });
   $('casesView').classList.add('detail');
   $('casesView').classList.remove('list');
   renderEditor();
@@ -464,7 +464,7 @@ function showRecordList(render = true) {
 function showRecordDetailPage() {
   state.recordPage = 'detail';
   document.body.classList.add('record-detail-open');
-  window.renderMqSettingsButton?.({ visible: false });
+  window.renderSystemSettingsButton?.({ visible: false });
   $('recordsView').classList.add('detail');
   $('recordsView').classList.remove('list');
   $('backToRecordsBtn').classList.add('hidden');
@@ -475,7 +475,7 @@ function readDbConversationDetailRoute() {
   const workflowId = params.get('dbWorkflowId') || '';
   const conversationId = params.get('dbConversationId') || '';
   if (params.get('dbDetail') !== '1' || !workflowId || !conversationId) return null;
-  return { workflowId, conversationId };
+  return { workflowId, conversationId, configId: params.get('dbConfigId') || '' };
 }
 
 function replaceUrlParams(mutator, historyState = history.state || { page: 'case-list' }) {
@@ -485,12 +485,14 @@ function replaceUrlParams(mutator, historyState = history.state || { page: 'case
   history.replaceState(historyState, '', nextUrl);
 }
 
-function setDbConversationDetailRoute(workflowId, conversationId) {
+function setDbConversationDetailRoute(workflowId, conversationId, configId = state.dbConnection?.configId || '') {
   replaceUrlParams(params => {
     params.set('view', 'dbRecords');
     params.set('dbDetail', '1');
     params.set('dbWorkflowId', workflowId);
     params.set('dbConversationId', conversationId);
+    if (configId) params.set('dbConfigId', configId);
+    else params.delete('dbConfigId');
   }, { page: 'db-conversation-detail', workflowId, conversationId });
 }
 
@@ -512,13 +514,13 @@ function showDbConversationList(render = true, options = {}) {
 function showDbConversationDetailPage() {
   state.dbRecordPage = 'detail';
   document.body.classList.add('db-record-detail-open');
-  window.renderMqSettingsButton?.({ visible: false });
+  window.renderSystemSettingsButton?.({ visible: false });
   renderDbRecordsPage();
 }
 
 function renderListToolbars() {
   const visible = !document.body.classList.contains('case-detail-open') && !document.body.classList.contains('record-detail-open') && !document.body.classList.contains('db-record-detail-open');
-  window.renderMqSettingsButton?.({ visible });
+  window.renderSystemSettingsButton?.({ visible });
   window.renderUpdateManagerButton?.({ visible, currentVersion: state.updateStatus.currentVersion, updateAvailable: state.updateCheck?.updateAvailable });
   if (!window.renderAntListPages) return;
   window.renderAntListPages({
@@ -1051,7 +1053,11 @@ async function loadInitial() {
   if (dbDetailRoute) {
     await loadDbConfigs();
     await loadDbSavedFilters();
-    await openDbConversationDetail(dbDetailRoute.workflowId, dbDetailRoute.conversationId, { updateRoute: false });
+    await openDbConversationDetail(dbDetailRoute.workflowId, dbDetailRoute.conversationId, {
+      updateRoute: false,
+      configId: dbDetailRoute.configId,
+      resolveConfig: !dbDetailRoute.configId
+    });
   }
 }
 
@@ -1188,24 +1194,30 @@ async function loadMqConfigs() {
   return state.mqConfigs;
 }
 
-function renderMqSettingsDialog() {
-  window.renderMqSettings?.({
-    open: state.mqSettingsOpen,
-    configs: state.mqConfigs,
-    selectedId: state.mqSettingsSelectedId
+function renderSystemSettingsDialog() {
+  window.renderSystemSettings?.({
+    open: state.systemSettingsOpen,
+    activeTab: state.systemSettingsTab,
+    mqConfigs: state.mqConfigs,
+    mqSelectedId: state.mqSettingsSelectedId,
+    dbConfigs: state.dbConfigs,
+    dbSelectedId: state.dbSettingsSelectedId,
+    dbTesting: state.dbSettingsTesting
   });
 }
 
-async function openMqSettings() {
-  await loadMqConfigs();
-  state.mqSettingsOpen = true;
+async function openSystemSettings(tab = 'mq') {
+  await Promise.all([loadMqConfigs(), loadDbConfigs()]);
+  state.systemSettingsOpen = true;
+  state.systemSettingsTab = tab === 'database' ? 'database' : 'mq';
   state.mqSettingsSelectedId ||= state.mqConfigs[0]?.id || null;
-  renderMqSettingsDialog();
+  state.dbSettingsSelectedId ||= state.dbConfigs[0]?.id || '__new__';
+  renderSystemSettingsDialog();
 }
 
-function closeMqSettings() {
-  state.mqSettingsOpen = false;
-  renderMqSettingsDialog();
+function closeSystemSettings() {
+  state.systemSettingsOpen = false;
+  renderSystemSettingsDialog();
 }
 
 async function saveMqConfig(config) {
@@ -1214,7 +1226,7 @@ async function saveMqConfig(config) {
   const saved = await api(path, { method, body: JSON.stringify(config) });
   await loadMqConfigs();
   state.mqSettingsSelectedId = saved.id;
-  renderMqSettingsDialog();
+  renderSystemSettingsDialog();
   toast('MQ 配置已保存');
 }
 
@@ -1224,7 +1236,7 @@ async function deleteMqConfig(configId) {
   await api(`/api/mq-configs/${encodeURIComponent(targetConfigId)}`, { method: 'DELETE' });
   await loadMqConfigs();
   state.mqSettingsSelectedId = state.mqConfigs[0]?.id || null;
-  renderMqSettingsDialog();
+  renderSystemSettingsDialog();
   toast('MQ 配置已删除');
 }
 
@@ -1580,12 +1592,10 @@ function dbRecordPageData() {
   return {
     page: state.dbRecordPage,
     configs: state.dbConfigs,
+    mqConfigs: state.mqConfigs,
     connection: state.dbConnection,
     connectionChanging: state.dbConnectionChanging,
     savedFilters: state.dbSavedFilters,
-    settingsOpen: state.dbSettingsOpen,
-    selectedConfigId: state.dbSettingsSelectedId,
-    testing: state.dbSettingsTesting,
     filters: {
       workflowId: state.dbWorkflowId,
       conversationId: state.dbConversationId,
@@ -1647,6 +1657,16 @@ async function loadDbConfigs() {
   renderDbRecordsPage();
 }
 
+async function ensureDbEnvironmentConfigured() {
+  if (!state.dbConfigs.length && !state.dbConnection?.configId) await loadDbConfigs();
+  const configId = String(state.dbConnection?.configId || state.dbConfigs[0]?.id || '').trim();
+  const config = state.dbConfigs.find(item => item.id === configId);
+  if (!config || config.environment) return true;
+  if (window.showDbEnvironmentRequiredDialog) window.showDbEnvironmentRequiredDialog();
+  else toast('请先在系统设置中选择数据库环境', 'warning');
+  return false;
+}
+
 async function refreshDbConnectionStatus() {
   const nextConnection = await api('/api/db-configs/status');
   const changed = JSON.stringify(nextConnection) !== JSON.stringify(state.dbConnection);
@@ -1659,18 +1679,18 @@ function pollDbConnectionStatus() {
   refreshDbConnectionStatus().catch(() => {});
 }
 
-async function ensureDbConnected() {
-  if (state.dbConnection?.status === 'connected') return;
+async function ensureDbConnected(configId = '') {
   if (!state.dbConfigs.length && !state.dbConnection?.configId) await loadDbConfigs();
-  if (state.dbConnection?.status === 'connected') return;
-  await changeDbConnection('connect', { silent: true });
+  const targetConfigId = String(configId || state.dbConnection?.configId || state.dbConfigs[0]?.id || '').trim();
+  if (state.dbConnection?.status === 'connected' && state.dbConnection?.configId === targetConfigId) return;
+  await changeDbConnection('connect', { silent: true, configId: targetConfigId });
 }
 
 async function changeDbConnection(action, options = {}) {
   state.dbConnectionChanging = true;
   renderDbRecordsPage();
   try {
-    const configId = state.dbConnection.configId || state.dbConfigs[0]?.id || '';
+    const configId = options.configId || state.dbConnection.configId || state.dbConfigs[0]?.id || '';
     state.dbConnection = await api(`/api/db-configs/${action}`, { method: 'POST', body: JSON.stringify({ configId }) });
     if (!options.silent) toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
     return state.dbConnection;
@@ -1782,22 +1802,12 @@ function resetDbConversationFilters() {
   renderDbRecordsPage();
 }
 
-function openDbSettings() {
-  state.dbSettingsOpen = true;
-  state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
-  renderDbRecordsPage();
-}
-
-function closeDbSettings() {
-  state.dbSettingsOpen = false;
-  renderDbRecordsPage();
-}
-
 async function saveDbConfig(config) {
   const path = config.id ? `/api/db-configs/${encodeURIComponent(config.id)}` : '/api/db-configs';
   const saved = await api(path, { method: config.id ? 'PUT' : 'POST', body: JSON.stringify(config) });
   await loadDbConfigs();
   state.dbSettingsSelectedId = saved.id;
+  renderSystemSettingsDialog();
   toast('数据库配置已保存');
 }
 
@@ -1821,12 +1831,14 @@ async function deleteDbConfig(configId) {
     clearDbConversationDetailRoute();
   }
   renderDbRecordsPage();
+  renderSystemSettingsDialog();
   toast('数据库配置已删除');
 }
 
 async function testDbConfig(configId) {
   state.dbSettingsTesting = true;
   renderDbRecordsPage();
+  renderSystemSettingsDialog();
   try {
     await api('/api/db-configs/test', { method: 'POST', body: JSON.stringify({ configId }) });
     await refreshDbConnectionStatus();
@@ -1837,6 +1849,7 @@ async function testDbConfig(configId) {
   } finally {
     state.dbSettingsTesting = false;
     renderDbRecordsPage();
+    renderSystemSettingsDialog();
   }
 }
 
@@ -1845,6 +1858,7 @@ async function queryDbConversations() {
     toast('请填写工作流ID和时间范围后再查询', 'warning');
     return;
   }
+  if (!await ensureDbEnvironmentConfigured()) return;
   state.dbConversationLoading = true;
   state.dbConversationQueried = true;
   state.dbConversationDetail = null;
@@ -1877,27 +1891,49 @@ async function queryDbConversations() {
 }
 
 async function openDbConversationDetail(workflowId, conversationId, options = {}) {
-  state.dbConversationDetailLoading = true;
-  state.dbConversationDetail = null;
-  state.dbSelectedTriggerMessageId = '';
-  state.dbHistoricalFocusNodeId = '';
-  state.dbHistoricalLoadingNodeId = '';
-  state.dbNodeExecutionDetails = {};
-  state.dbNodeExecutionLoadingId = '';
+  if (!await ensureDbEnvironmentConfigured()) return;
+  const preserveDetail = Boolean(options.preserveDetail);
+  const requestedConfigId = String(options.configId || '').trim();
+  const resolveConfig = Boolean(options.resolveConfig);
+  if (!preserveDetail) {
+    state.dbConversationDetailLoading = true;
+    state.dbConversationDetail = null;
+    state.dbSelectedTriggerMessageId = '';
+    state.dbHistoricalFocusNodeId = '';
+    state.dbHistoricalLoadingNodeId = '';
+    state.dbNodeExecutionDetails = {};
+    state.dbNodeExecutionLoadingId = '';
+  }
   state.dbActiveWorkflowId = workflowId || '';
   state.dbActiveConversationId = conversationId || '';
-  if (options.updateRoute !== false) setDbConversationDetailRoute(workflowId, conversationId);
+  if (options.updateRoute !== false) setDbConversationDetailRoute(workflowId, conversationId, requestedConfigId || state.dbConnection?.configId);
   showDbConversationDetailPage();
   try {
-    await ensureDbConnected();
+    await ensureDbConnected(requestedConfigId);
     const params = new URLSearchParams({ workflowId, conversationId });
-    appendDbConfigId(params);
+    if (requestedConfigId) params.set('configId', requestedConfigId);
+    else if (!resolveConfig) appendDbConfigId(params);
     const detail = await api(`/api/db/conversations/detail?${params}`);
+    const resolvedConfigId = String(detail.configId || requestedConfigId || state.dbConnection?.configId || '').trim();
+    if (resolvedConfigId && resolvedConfigId !== state.dbConnection?.configId) {
+      state.dbConnection = await api(`/api/db-configs/status?configId=${encodeURIComponent(resolvedConfigId)}`);
+    }
     state.dbConversationDetail = detail;
-    state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
+    if (!preserveDetail) state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
+    if (resolvedConfigId) setDbConversationDetailRoute(workflowId, conversationId, resolvedConfigId);
   } finally {
-    state.dbConversationDetailLoading = false;
+    if (!preserveDetail) state.dbConversationDetailLoading = false;
     renderDbRecordsPage();
+  }
+}
+
+async function pollDbConversationDetail(workflowId, conversationId) {
+  try {
+    await openDbConversationDetail(workflowId, conversationId, { updateRoute: false, preserveDetail: true });
+    document.dispatchEvent(new CustomEvent('db-conversation-poll-finished', { detail: { workflowId, conversationId, success: true } }));
+  } catch (error) {
+    document.dispatchEvent(new CustomEvent('db-conversation-poll-finished', { detail: { workflowId, conversationId, success: false } }));
+    throw error;
   }
 }
 
@@ -2425,8 +2461,9 @@ function bindEvents() {
     if (type === 'switch-view') requestViewChange(value).catch(showError);
     if (type === 'open-case') switchCaseEditor(id).catch(showError);
     if (type === 'send-case') requestSendCaseById(id).catch(showError);
-    if (type === 'open-mq-settings') openMqSettings().catch(showError);
-    if (type === 'close-mq-settings') closeMqSettings();
+    if (type === 'open-system-settings') openSystemSettings().catch(showError);
+    if (type === 'open-mq-settings') openSystemSettings('mq').catch(showError);
+    if (type === 'close-system-settings') closeSystemSettings();
     if (type === 'save-mq-config') saveMqConfig(config).catch(showError);
     if (type === 'delete-mq-config') deleteMqConfig(configId).catch(showError);
     if (type === 'open-update-dialog') openUpdateDialog().catch(showError);
@@ -2435,11 +2472,15 @@ function bindEvents() {
     if (type === 'check-update-from-version') checkForUpdate({ notify: true, openWhenAvailable: true }).catch(showError);
     if (type === 'apply-online-update') applyOnlineUpdate(e.detail?.sourceKey).catch(showError);
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
-    if (type === 'open-db-settings') openDbSettings();
-    if (type === 'close-db-settings') closeDbSettings();
+    if (type === 'open-db-settings') openSystemSettings('database').catch(showError);
+    if (type === 'set-system-settings-tab') {
+      state.systemSettingsTab = value === 'database' ? 'database' : 'mq';
+      renderSystemSettingsDialog();
+    }
     if (type === 'select-db-config') {
       state.dbSettingsSelectedId = value;
       renderDbRecordsPage();
+      renderSystemSettingsDialog();
     }
     if (type === 'save-db-config') saveDbConfig(config).catch(showError);
     if (type === 'delete-db-config') deleteDbConfig(configId).catch(showError);
@@ -2457,6 +2498,9 @@ function bindEvents() {
     if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
     if (type === 'apply-db-filter') applyDbSavedFilter(filters);
     if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'load-db-conversation-detail') openDbConversationDetail(workflowId, conversationId, { updateRoute: false }).catch(showError);
+    if (type === 'poll-db-conversation-detail') pollDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'load-db-conversation-mq-configs') loadMqConfigs().then(renderDbRecordsPage).catch(showError);
     if (type === 'open-db-conversation-variables') openDbConversationVariables(workflowId, conversationId).catch(showError);
     if (type === 'close-db-conversation-variables') closeDbConversationVariables();
     if (type === 'back-db-conversations') showDbConversationList();

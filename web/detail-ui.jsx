@@ -11,6 +11,7 @@ import {
   BookOutlined,
   BranchesOutlined,
   CheckCircleFilled,
+  CloseCircleFilled,
   CodeOutlined,
   CopyOutlined,
   DatabaseOutlined,
@@ -58,6 +59,10 @@ function emitListToolbar(type, detail = {}) {
   document.dispatchEvent(new CustomEvent('list-toolbar-action', { detail: { type, ...detail } }));
 }
 
+function emitDbConversationMessageAction(type) {
+  document.dispatchEvent(new CustomEvent('db-conversation-message-action', { detail: { type } }));
+}
+
 function emitListToolbarChange(type, value) {
   document.dispatchEvent(new CustomEvent('list-toolbar-change', { detail: { type, value } }));
 }
@@ -74,6 +79,10 @@ function SettingsMenuLabel({ name, deleteTitle, deleteDescription, deleteAriaLab
       <Button type="text" danger size="small" shape="circle" className="settings-menu-delete" icon={<DeleteOutlined />} aria-label={deleteAriaLabel} onClick={stopMenuEvent} onMouseDown={stopMenuEvent} />
     </Popconfirm>
   </span>;
+}
+
+function RequiredFieldLabel({ children }) {
+  return <span className="required-field-label"><b aria-hidden="true">*</b>{children}</span>;
 }
 
 function renderTriggerMessages(values) {
@@ -195,6 +204,13 @@ function dbNodeSummary(node) {
 function isDbExecutionSuccess(status) {
   return ['SUCCESS', 'COMPLETED'].includes(String(status || '').toUpperCase());
 }
+
+function isDbExecutionFailure(status) {
+  return ['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'TIMEOUT', 'ABORTED'].includes(String(status || '').toUpperCase());
+}
+
+const DB_CONVERSATION_POLL_INTERVAL_MS = 3000;
+const DB_CONVERSATION_POLL_TIMEOUT_MS = 60000;
 
 function dbEdgeLabel(edge, nodeById) {
   const handle = String(edge.label || edge.sourceHandle || '').trim();
@@ -371,11 +387,11 @@ function RecordListPage({ data }) {
   </div>;
 }
 
-function DbSettingsDialog({ data }) {
-  const configs = data.configs || [];
-  const selectedId = data.selectedConfigId || configs[0]?.id || '__new__';
+function DbSettingsPanel({ data }) {
+  const configs = data.dbConfigs || [];
+  const selectedId = data.dbSelectedId || configs[0]?.id || '__new__';
   const selected = selectedId === '__new__' ? null : configs.find(config => config.id === selectedId);
-  const emptyForm = { name: '', host: '', port: 5432, database: '', user: '', password: '' };
+  const emptyForm = { name: '', host: '', port: 5432, database: '', user: '', password: '', environment: '' };
   const [form, setForm] = useState(emptyForm);
   useEffect(() => {
     setForm(selected ? { ...selected, password: '' } : emptyForm);
@@ -384,36 +400,40 @@ function DbSettingsDialog({ data }) {
   const menuItems = [...configs.map(config => ({
     key: config.id,
     label: <SettingsMenuLabel
-      name={config.name}
+      name={config.name || '未命名数据库'}
       deleteTitle={`删除数据库配置“${config.name || '未命名数据库'}”？`}
       deleteDescription="删除后将无法恢复，若当前正在使用该配置会同时断开连接。"
       deleteAriaLabel={`删除数据库配置 ${config.name || '未命名数据库'}`}
       onDelete={() => emitListToolbar('delete-db-config', { configId: config.id })}
     />
   })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增数据库配置' }];
-  const complete = form.name && form.host && form.port && form.database && form.user && (form.password || selected?.hasPassword);
-  return <Modal open={data.open} centered title="数据库配置" width={820} onCancel={() => emitListToolbar('close-db-settings')} footer={null} destroyOnHidden>
-    <Flex className="mq-settings-layout" gap={16}>
+  const complete = form.host && form.port && form.database && form.user && form.environment && (form.password || selected?.hasPassword);
+  return <Flex className="mq-settings-layout" gap={16}>
       <aside className="mq-settings-nav"><Menu mode="inline" selectedKeys={[selectedId]} items={menuItems} onClick={({ key }) => emitListToolbar('select-db-config', { value: key })} /></aside>
-      <section className="mq-settings-form">
-        <Flex justify="space-between" align="center">
-          <Title level={5} style={{ margin: 0 }}>{selectedId === '__new__' ? '新增数据库配置' : '数据库配置'}</Title>
-          <Space>
-            <Button disabled={!selected?.id} loading={data.testing} onClick={() => emitListToolbar('test-db-config', { configId: selected.id })}>测试连接</Button>
-            <Button type="primary" disabled={!complete} onClick={() => emitListToolbar('save-db-config', { config: { ...form, id: selectedId === '__new__' ? undefined : selectedId } })}>保存配置</Button>
-          </Space>
-        </Flex>
-        <div className="mq-config-grid">
-          <label>配置名称<Input value={form.name} onChange={setField('name')} /></label>
-          <label>Host<Input value={form.host} onChange={setField('host')} /></label>
-          <label>Port<Input value={form.port} onChange={setField('port')} /></label>
-          <label>Database<Input value={form.database} onChange={setField('database')} /></label>
-          <label>User<Input value={form.user} onChange={setField('user')} /></label>
-          <label>Password<Input.Password value={form.password} onChange={setField('password')} placeholder={selected?.hasPassword ? '已配置，留空不修改' : ''} /></label>
-        </div>
-      </section>
-    </Flex>
-  </Modal>;
+    <section className="mq-settings-form">
+      <Flex justify="space-between" align="center">
+        <Title level={5} style={{ margin: 0 }}>{selectedId === '__new__' ? '新增数据库配置' : '数据库配置'}</Title>
+        <Space>
+          <Button disabled={!selected?.id} loading={data.dbTesting} onClick={() => emitListToolbar('test-db-config', { configId: selected.id })}>测试连接</Button>
+          <Button type="primary" disabled={!complete} onClick={() => emitListToolbar('save-db-config', { config: { ...form, id: selectedId === '__new__' ? undefined : selectedId } })}>保存配置</Button>
+        </Space>
+      </Flex>
+      <div className="mq-config-grid">
+        <label>配置名称<Input value={form.name} onChange={setField('name')} /></label>
+        <label><RequiredFieldLabel>Host</RequiredFieldLabel><Input value={form.host} onChange={setField('host')} /></label>
+        <label><RequiredFieldLabel>Port</RequiredFieldLabel><Input value={form.port} onChange={setField('port')} /></label>
+        <label><RequiredFieldLabel>Database</RequiredFieldLabel><Input value={form.database} onChange={setField('database')} /></label>
+        <label><RequiredFieldLabel>User</RequiredFieldLabel><Input value={form.user} onChange={setField('user')} /></label>
+        <label><RequiredFieldLabel>Password</RequiredFieldLabel><Input.Password value={form.password} onChange={setField('password')} placeholder={selected?.hasPassword ? '已配置，留空不修改' : ''} /></label>
+        <label className="db-environment-field"><RequiredFieldLabel>数据库环境</RequiredFieldLabel>
+          <Radio.Group className="db-environment-options" value={form.environment} onChange={setField('environment')}>
+            <Radio value="production">线上环境</Radio>
+            <Radio value="test">测试环境</Radio>
+          </Radio.Group>
+        </label>
+      </div>
+    </section>
+  </Flex>;
 }
 
 function DbConversationListPage({ data }) {
@@ -515,17 +535,15 @@ function DbConversationListPage({ data }) {
         </Space>
       </div>
     </div>
-    <div className="db-record-list-header"><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button><Button type="link" icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>去管理配置</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Button icon={<SettingOutlined />} onClick={() => emitListToolbar('open-db-settings')}>数据库配置</Button><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
+    <div className="db-record-list-header"><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
     {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: 'calc(100vh - 344px)', x: 1260 }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize }) }} />}
-    <DbSettingsDialog data={{ open: data.settingsOpen, configs: data.configs, selectedConfigId: data.selectedConfigId, testing: data.testing }} />
     <Modal open={saveFilterOpen} title="保存筛选条件" okText="保存" cancelText="取消" onCancel={() => { setSaveFilterOpen(false); setFilterName(''); }} onOk={saveCurrentFilter} destroyOnHidden>
       <Input autoFocus value={filterName} onChange={event => setFilterName(event.target.value)} onPressEnter={saveCurrentFilter} placeholder="请输入筛选条件名称" maxLength={40} />
     </Modal>
   </div>;
 }
 
-function renderJsonCode(value) {
-  const json = JSON.stringify(value ?? null, null, 2);
+function renderJsonTokens(json) {
   const tokenPattern = /"(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}\[\],:]/g;
   const tokens = [];
   let lastIndex = 0;
@@ -546,6 +564,14 @@ function renderJsonCode(value) {
   return tokens;
 }
 
+function renderJsonCode(value) {
+  return renderJsonTokens(JSON.stringify(value ?? null, null, 2));
+}
+
+function renderJsonPreviewCode(value) {
+  return renderJsonTokens(String(value || ''));
+}
+
 function dbValuePreview(value, maxLength = 180) {
   if (value === null) return 'null';
   if (value === undefined || value === '') return '-';
@@ -558,6 +584,12 @@ function dbValuePreview(value, maxLength = 180) {
   }
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   return compactText(text, maxLength);
+}
+
+function dbValueFullText(value) {
+  if (value === null) return 'null';
+  if (value === undefined || value === '') return '-';
+  return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
 function dbValueType(value) {
@@ -640,6 +672,16 @@ function dbLingxiSendOutputsSummary(node) {
   return summary;
 }
 
+function dbNodeOutputsSummary(outputs, preferredKeys = [], excludedKeys = []) {
+  if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) return outputs;
+  const hiddenKeys = new Set(['eventid', 'tenantid', ...excludedKeys.map(key => String(key).toLowerCase())]);
+  const entries = Object.entries(outputs).filter(([key]) => !hiddenKeys.has(String(key).toLowerCase()));
+  const priority = preferredKeys.map(key => String(key).toLowerCase());
+  const orderedEntries = priority.flatMap(key => entries.filter(([entryKey]) => String(entryKey).toLowerCase() === key));
+  const remainingEntries = entries.filter(([entryKey]) => !priority.includes(String(entryKey).toLowerCase()));
+  return Object.fromEntries([...orderedEntries, ...remainingEntries]);
+}
+
 function dbConditionInputsSummary(inputs) {
   const branches = Array.isArray(inputs?.branches) ? inputs.branches : [];
   const fieldValues = new Map();
@@ -715,6 +757,12 @@ function dbConditionNodeValue(value, maxLength = 160) {
   return dbValuePreview(value, maxLength);
 }
 
+function dbVariableLabel(value, maxLength = 160) {
+  return dbConditionNodeValue(value, maxLength)
+    .replace(/^@trigger\./, '触发数据/')
+    .replace(/^@conversation\./, '会话变量/');
+}
+
 function dbConditionConditionParts(condition) {
   const field = condition?.field ?? condition?.variableKey ?? condition?.leftValue ?? condition?.left ?? condition?.key ?? '-';
   const operator = condition?.operator ?? condition?.compareOperator ?? condition?.operation ?? condition?.comparator ?? condition?.condition ?? '';
@@ -772,7 +820,7 @@ function dbConditionIsGroup(item) {
 
 function dbAgentInputsSummary(inputs) {
   const source = inputs && typeof inputs === 'object' && !Array.isArray(inputs) ? inputs : {};
-  const excludedKeys = new Set(['outputs', 'maxtokens', 'endpointid']);
+  const excludedKeys = new Set(['outputs', 'maxtokens', 'endpointid', 'outputschema']);
   const orderedEntries = [];
   const pushEntry = (key, value) => {
     const normalized = String(key || '').trim();
@@ -856,7 +904,7 @@ function DbConditionRuleView({ condition, depth = 0 }) {
   if (dbConditionIsGroup(condition)) return <DbConditionGroupView group={condition} conditions={dbConditionChildrenOf(condition)} depth={depth} />;
   const parts = dbConditionConditionParts(condition);
   return <div className="db-condition-rule">
-    <span className="db-condition-rule-field" title={dbConditionNodeValue(parts.field, 400)}>{dbConditionNodeValue(parts.field, 400)}</span>
+    <span className="db-condition-rule-field" title={dbConditionNodeValue(parts.field, 400)}>{dbVariableLabel(parts.field, 400)}</span>
     <span className="db-condition-rule-operator">{dbConditionOperatorLabel(parts.operator)}</span>
     <span className="db-condition-rule-value" title={dbConditionNodeValue(parts.targetValue, 400)}>{dbConditionNodeValue(parts.targetValue, 120)}</span>
     {parts.runtimeValue !== undefined ? <span className="db-condition-rule-runtime" title={dbConditionNodeValue(parts.runtimeValue, 400)}>传入：{dbConditionNodeValue(parts.runtimeValue, 120)}</span> : null}
@@ -926,15 +974,61 @@ function DbConditionConfigPanel({ config }) {
   </Flex>;
 }
 
-function DbNodeValuePanel({ title, value, typeLabel = dbValueType }) {
+function dbInputListMessage(value) {
+  const raw = String(value ?? '');
+  const delimiter = raw.indexOf(':');
+  const messageId = delimiter >= 0 ? raw.slice(0, delimiter).trim() : '';
+  const content = delimiter >= 0 ? raw.slice(delimiter + 1) : raw;
+  const firstCharacter = messageId.charAt(0);
+  const role = firstCharacter === '1' ? 'teacher' : 'student';
+  return { messageId, content, role };
+}
+
+function DbNodeInputListPreview({ value }) {
+  const messages = (Array.isArray(value) ? value : []).map(dbInputListMessage).filter(message => message.content.trim());
+  const [expanded, setExpanded] = useState(false);
+  const visibleMessages = expanded ? messages : messages.slice(-3);
+  const canExpand = messages.length > 3;
+  return <div className={`db-node-input-list${expanded ? ' expanded' : ''}`} aria-label="历史聊天记录">
+    {visibleMessages.map((message, index) => <div key={`${message.messageId}-${index}`} className={`db-node-input-list-message ${message.role}`}>
+      <span className="db-node-input-message-role">{message.role === 'teacher' ? '老师' : '学员'}</span>
+      <span className="db-node-input-list-content" title={message.messageId || undefined}>{message.content}</span>
+    </div>)}
+    {canExpand ? <Button
+      type="link"
+      size="small"
+      className="db-node-input-list-toggle"
+      icon={expanded ? <UpOutlined /> : <DownOutlined />}
+      onClick={() => setExpanded(current => !current)}
+    >{expanded ? '收起聊天记录' : `展开全部聊天记录（共 ${messages.length} 条）`}</Button> : null}
+  </div>;
+}
+
+function DbNodeLatestInputPreview({ value }) {
+  const messages = (Array.isArray(value) ? value : [value]).map(item => dbValuePreview(item, 400)).filter(item => item && item !== '-');
+  return <div className="db-node-input-latest" aria-label="学员最新消息">
+    {messages.map((message, index) => <div key={`${index}-${message}`} className="db-node-input-message student">
+      <span className="db-node-input-message-bubble">{message}</span>
+    </div>)}
+  </div>;
+}
+
+function DbNodeValuePanel({ title, value, typeLabel = dbValueType, showType = true, arrayAsTags = false, inputListAsMessages = false, inputAsStudentMessage = false, fullValueKeys = [] }) {
   const entries = dbObjectEntries(value);
+  const orderedEntries = inputListAsMessages
+    ? [...entries].sort((left, right) => Number(String(left.key).toLowerCase() === 'inputlist') - Number(String(right.key).toLowerCase() === 'inputlist'))
+    : entries;
+  const parseVariableLabel = title === 'Inputs 摘要';
+  const fullValueKeySet = new Set(fullValueKeys.map(key => String(key).toLowerCase()));
   return <section className="db-node-panel">
     <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{dbCollectionSummary(value)}</Text></div>
     {entries.length ? <div className="db-node-value-list">
-      {entries.map(item => <div key={item.key} className="db-node-value-row">
-        <span className="db-node-value-key" title={item.key}>{item.key}</span>
-        <span className="db-node-value-type">{typeLabel(item.value)}</span>
-        <span className="db-node-value-preview" title={dbValuePreview(item.value, 400)}>{dbValuePreview(item.value)}</span>
+      {orderedEntries.map(item => <div key={item.key} className={`db-node-value-row${showType ? '' : ' without-type'}`}>
+        <span className="db-node-value-key" title={item.key}>{parseVariableLabel ? dbVariableLabel(item.key, 160) : item.key}</span>
+        {showType ? <span className="db-node-value-type">{typeLabel(item.value)}</span> : null}
+        {inputListAsMessages && String(item.key).toLowerCase() === 'inputlist' && Array.isArray(item.value) ? <DbNodeInputListPreview value={item.value} /> : inputAsStudentMessage && String(item.key).toLowerCase() === 'input' ? <DbNodeLatestInputPreview value={item.value} /> : arrayAsTags && Array.isArray(item.value) ? <span className="db-node-value-preview db-node-value-tags" title={dbValuePreview(item.value, 400)}>
+          {item.value.length ? item.value.map((value, index) => <Tag key={`${index}-${dbValuePreview(value, 120)}`} bordered={false}>{dbValuePreview(value, 120)}</Tag>) : '-'}
+        </span> : fullValueKeySet.has(String(item.key).toLowerCase()) ? <span className="db-node-value-preview db-node-value-preview-full" title={dbValueFullText(item.value)}>{dbValueFullText(item.value)}</span> : <span className="db-node-value-preview" title={dbValuePreview(item.value, 400)}>{dbValuePreview(item.value)}</span>}
       </div>)}
     </div> : <Text type="secondary">暂无数据</Text>}
   </section>;
@@ -955,7 +1049,7 @@ function DbNodeAgentInputsPanel({ inputs }) {
         const isExpanded = isPrompt ? Boolean(expandedPrompts[item.key]) : true;
         return <div key={item.key} className={`db-node-agent-input-row${isPrompt ? ` prompt ${isExpanded ? 'expanded' : 'collapsed'}` : ''}`}>
           <div className="db-node-agent-input-row-head">
-            <span className="db-node-agent-input-key" title={item.key}>{item.key}</span>
+            <span className="db-node-agent-input-key" title={item.key}>{dbVariableLabel(item.key, 160)}</span>
             {isPrompt ? <Button
               type="text"
               size="small"
@@ -977,6 +1071,7 @@ function DbNodeAgentInputsPanel({ inputs }) {
 }
 
 function DbNodeAssignmentsPanel({ title, assignments, showValueType = false }) {
+  const parseVariableLabel = title === 'Inputs 摘要';
   return <section className="db-node-panel">
     <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{assignments.length ? `${assignments.length} 个字段` : '无数据'}</Text></div>
     {assignments.length ? <div className="db-node-assignments-list">
@@ -985,7 +1080,7 @@ function DbNodeAssignmentsPanel({ title, assignments, showValueType = false }) {
         const valueType = item.valueType ?? item.valueMode ?? item.type ?? dbValueType(item.value ?? item.variableValue ?? item.defaultValue);
         const value = item.value ?? item.variableValue ?? item.defaultValue ?? '';
         return <div key={`${key}-${valueType || ''}-${JSON.stringify(value)}`} className={`db-node-assignments-row${showValueType ? ' has-type' : ''}`}>
-          <span className="db-node-assignments-key" title={key}>{key}</span>
+          <span className="db-node-assignments-key" title={key}>{parseVariableLabel ? dbVariableLabel(key, 160) : key}</span>
           {showValueType ? <span className="db-node-value-type">{valueType}</span> : null}
           <span className="db-node-assignments-value" title={dbValuePreview(value, 400)}>{dbValuePreview(value, 400)}</span>
         </div>;
@@ -1026,6 +1121,14 @@ function DbNodeRawDataCollapse({ node }) {
   />;
 }
 
+function DbNodeRunId({ runId }) {
+  if (!runId) return null;
+  return <div className="db-node-run-id-footer">
+    <Text type="secondary">运行 ID</Text>
+    <Text className="db-node-summary-run-id" copyable ellipsis={{ tooltip: runId }}>{runId}</Text>
+  </div>;
+}
+
 function DbNodeDrawerTitle({ node, meta }) {
   const Icon = meta.icon;
   const nodeTitle = node?.nodeName || node?.nodeId || '节点详情';
@@ -1046,31 +1149,36 @@ function DbNodeDrawerTitle({ node, meta }) {
 function DbNodeDrawer({ node, onClose, loading = false }) {
   const nodeType = String(node?.nodeType || '').toLowerCase();
   const isSetVariable = nodeType === 'set_variable';
-  const showInputsSummary = nodeType !== 'lingxi_send';
+  const showInputsSummary = !['lingxi_send', 'lingxi_trigger'].includes(nodeType);
   const inputsSummary = nodeType === 'condition' ? dbConditionInputsSummary(node?.inputs) : node?.inputs;
   const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
   const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.outputs) : [];
-  const outputsSummary = nodeType === 'lingxi_send' ? dbLingxiSendOutputsSummary(node) : node?.outputs;
+  const outputsSummary = nodeType === 'lingxi_send'
+    ? dbLingxiSendOutputsSummary(node)
+    : dbNodeOutputsSummary(node?.outputs, nodeType === 'lingxi_trigger' ? ['agentId', 'friendNick', 'latestMsgTime', 'input', 'tagList', 'inputList'] : ['inputList'], nodeType === 'lingxi_trigger' ? ['addTime'] : []);
   const meta = dbNodeMeta(node?.nodeType);
+  const isSuccess = isDbExecutionSuccess(node?.status);
+  const statusText = node?.status || '-';
+  const statusDetail = isSuccess ? <>{node?.durationMs || 0}<small> ms</small></> : node?.errorClass || node?.errorCode || '-';
   const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
-    <div className="db-node-summary">
-      <div className="db-node-summary-row"><Text type="secondary">运行 ID</Text><Text className="db-node-summary-run-id" copyable ellipsis={{ tooltip: node.runId || '-' }}>{node.runId || '-'}</Text></div>
+    <div className={`db-node-summary ${isSuccess ? 'success' : 'failed'}`}>
+      <div className="db-node-summary-result">
+        {isSuccess ? <CheckCircleFilled /> : <CloseCircleFilled />}
+        <div><span className="db-node-summary-status-text">{statusText}</span><strong className={isSuccess ? '' : 'failure-detail'}>{statusDetail}</strong></div>
+      </div>
       <div className="db-node-summary-row"><Text type="secondary">开始时间</Text><Text>{node.startedAt || '-'}</Text></div>
-      <div className="db-node-summary-row"><Text type="secondary">执行状态</Text><Tag className="db-node-summary-status" color={dbStatusColor(node.status)}>{node.status || '-'}</Tag></div>
-      <div className="db-node-summary-row"><Text type="secondary">运行时间</Text><Text>{node.durationMs || 0} ms</Text></div>
-      {node.errorCode ? <div className="db-node-summary-row"><Text type="secondary">错误码</Text><Tag color="red">{node.errorCode}</Tag></div> : null}
-      {node.errorClass ? <div className="db-node-summary-row"><Text type="secondary">错误类型</Text><Tag color="red">{node.errorClass}</Tag></div> : null}
     </div>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
+    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} />}
     {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
-    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} />}
     {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
     <DbNodeRawDataCollapse node={node} />
+    <DbNodeRunId runId={node.runId} />
   </Flex>;
   return <Drawer className="db-node-drawer" open={Boolean(node)} width={680} title={<DbNodeDrawerTitle node={node} meta={meta} />} onClose={onClose} destroyOnHidden>
     {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="execution" items={[
-      { key: 'execution', label: '当前节点执行记录', children: executionContent },
-      { key: 'config', label: '当前节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
+      { key: 'execution', label: '执行详情', children: executionContent },
+      { key: 'config', label: '节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
     ]} /> : null}
   </Drawer>;
 }
@@ -1139,8 +1247,139 @@ function DbConversationActionGroups({ actions }) {
   </span>;
 }
 
+function DbMessageDrawer({ open, onClose, workflowId, conversationId, onSend, mqConfigs, lastUsedMqConfigId, configId }) {
+  const [message, setMessage] = useState("");
+  const [selectedMqConfigId, setSelectedMqConfigId] = useState("");
+  const [sending, setSending] = useState(false);
+  const [composerMode, setComposerMode] = useState('input');
+  const [previewJson, setPreviewJson] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const mqConfigOptions = (Array.isArray(mqConfigs) ? mqConfigs : []).map(config => ({
+    value: String(config.id),
+    label: config.name || config.gatewayUrl || config.id
+  }));
+
+  useEffect(() => {
+    const availableConfigIds = new Set(mqConfigOptions.map(config => config.value));
+    const storedConfigId = String(window.localStorage?.getItem('db-conversation-last-mq-config-id') || '');
+    const preferredConfigId = [String(lastUsedMqConfigId || ''), storedConfigId, mqConfigOptions[0]?.value]
+      .find(configIdValue => availableConfigIds.has(configIdValue));
+    setSelectedMqConfigId(currentConfigId => availableConfigIds.has(currentConfigId) ? currentConfigId : (preferredConfigId || ''));
+  }, [open, lastUsedMqConfigId, mqConfigs]);
+
+  const handleMqConfigChange = value => {
+    const nextConfigId = String(value || '');
+    setSelectedMqConfigId(nextConfigId);
+    if (nextConfigId) window.localStorage?.setItem('db-conversation-last-mq-config-id', nextConfigId);
+    else window.localStorage?.removeItem('db-conversation-last-mq-config-id');
+  };
+
+  const loadPreview = async () => {
+    if (!message.trim()) return;
+    setPreviewLoading(true);
+    try {
+      const params = new URLSearchParams({
+        workflowId,
+        conversationId,
+        message: message.trim(),
+        mqConfigId: selectedMqConfigId || ""
+      });
+      if (configId) params.set("configId", configId);
+      const result = await api("/api/db/conversations/preview?" + params.toString());
+      setPreviewJson(JSON.stringify(result.payload, null, 2));
+    } catch (err) {
+      setPreviewJson("// Error: " + err.message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const changeComposerMode = async mode => {
+    setComposerMode(mode);
+    if (mode === 'preview') await loadPreview();
+  };
+
+  const handleSend = async () => {
+    if (!message.trim() || sending) return;
+    if (!mqConfigOptions.length) {
+      window.showGlobalMessage?.('未配置 MQ，请前往系统设置完成 MQ 配置后再发送', 'warning');
+      return;
+    }
+    if (!selectedMqConfigId) {
+      window.showGlobalMessage?.('请选择 MQ 配置后再发送', 'warning');
+      return;
+    }
+    setSending(true);
+    try {
+      const result = await onSend({
+        message: message.trim(),
+        mqConfigId: selectedMqConfigId,
+        configId
+      });
+      if (!result?.success) {
+        throw new Error(result?.snapshot?.mqResult?.error || result?.status || 'MQ 发送失败');
+      }
+      setMessage("");
+      setComposerMode('input');
+      window.localStorage?.setItem('db-conversation-last-mq-config-id', selectedMqConfigId);
+      onClose();
+      window.showGlobalMessage?.('消息已发送，等待处理结果', 'success');
+    } catch (err) {
+      window.showGlobalMessage?.(err?.message || 'MQ 发送失败', 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return <Drawer
+    title="发送新消息"
+    open={open}
+    placement="right"
+    width={480}
+    onClose={onClose}
+    destroyOnHidden={false}
+    footer={<Flex justify="flex-end" gap={8}><Button onClick={onClose} disabled={sending}>取消</Button><Button type="primary" onClick={handleSend} disabled={!message.trim() || sending} loading={sending}>发送</Button></Flex>}
+  >
+    <div className="db-message-drawer-content">
+      <div className="db-message-drawer-composer-header">
+        <Text strong>学员消息</Text>
+        <Space.Compact>
+          <Button type={composerMode === 'input' ? 'primary' : 'default'} onClick={() => changeComposerMode('input')}>文本输入</Button>
+          <Button type={composerMode === 'preview' ? 'primary' : 'default'} onClick={() => changeComposerMode('preview')} disabled={!message.trim()}>预览 JSON</Button>
+        </Space.Compact>
+      </div>
+      {composerMode === 'input' ? <Input.TextArea
+        className="db-message-drawer-textarea"
+        value={message}
+        onChange={event => setMessage(event.target.value)}
+        placeholder="输入新的学员消息..."
+        autoSize={{ minRows: 10, maxRows: 18 }}
+        disabled={sending}
+      /> :
+        <Spin spinning={previewLoading}>
+          <pre className="db-message-input-json"><code>{renderJsonPreviewCode(previewJson)}</code></pre>
+        </Spin>
+      }
+      <div className="db-message-drawer-config">
+        <Text strong>MQ 配置</Text>
+        <Select
+          className="db-message-drawer-config-select"
+          placeholder={mqConfigOptions.length ? '选择 MQ 配置' : '暂无 MQ 配置'}
+          options={mqConfigOptions}
+          value={selectedMqConfigId || undefined}
+          onChange={handleMqConfigChange}
+          disabled={!mqConfigOptions.length || sending}
+          allowClear
+        />
+      </div>
+    </div>
+  </Drawer>;
+}
 function DbConversationDetailPage({ data }) {
   const detail = data.detail;
+  const activeDbConfig = (data.configs || []).find(config => config.id === data.connection?.configId);
+  const canSendMessage = activeDbConfig?.environment === 'test';
   const [drawerNode, setDrawerNode] = useState(null);
   const [messageOrder, setMessageOrder] = useState('asc');
   const [showActions, setShowActions] = useState(false);
@@ -1151,15 +1390,121 @@ function DbConversationDetailPage({ data }) {
   const flowPanelRef = useRef(null);
   const messageFlowRef = useRef(null);
   const historicalFocusNodeRef = useRef('');
+  const [lastUsedMqConfigId, setLastUsedMqConfigId] = useState('');
+  const [pendingMessages, setPendingMessages] = useState([]);
+  const [pollingTriggerMessageIds, setPollingTriggerMessageIds] = useState([]);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [pollUntil, setPollUntil] = useState(0);
+  const [pollVersion, setPollVersion] = useState(0);
   const messageScrollKeyRef = useRef('');
+  const pendingMessageFocusRef = useRef('');
+  const pollInFlightRef = useRef(false);
+  const hasPollableMessage = pollingTriggerMessageIds.length > 0;
   useEffect(() => {
     setNodePositionOverrides({});
     setShowActions(false);
     historicalFocusNodeRef.current = '';
+    pollInFlightRef.current = false;
+    setPollUntil(0);
+    setPendingMessages([]);
+    setPollingTriggerMessageIds([]);
   }, [data.activeWorkflowId, data.activeConversationId]);
   useEffect(() => {
     setActiveExecutionIndex(0);
   }, [data.selectedTriggerMessageId, detail?.selectedTriggerMessageId]);
+  useEffect(() => {
+    const handleMessageAction = event => {
+      if (event.detail?.type === 'open' && canSendMessage) {
+        setMessageDrawerOpen(true);
+        emitListToolbar('load-db-conversation-mq-configs');
+      }
+    };
+    document.addEventListener('db-conversation-message-action', handleMessageAction);
+    return () => document.removeEventListener('db-conversation-message-action', handleMessageAction);
+  }, [canSendMessage]);
+  useEffect(() => {
+    if (!canSendMessage) setMessageDrawerOpen(false);
+  }, [canSendMessage]);
+  useEffect(() => {
+    const persistedMessages = detail?.messages || [];
+    setPendingMessages(previous => {
+      const next = previous.filter(pending => !persistedMessages.some(message =>
+        String(message.role || '').toUpperCase() === 'USER'
+        && String(message.triggerMessageId || message.id || '') === pending.triggerMessageId
+      ));
+      return next.length === previous.length ? previous : next;
+    });
+    setPollingTriggerMessageIds(previous => {
+      const next = previous.filter(triggerMessageId => {
+        const message = persistedMessages.find(item =>
+          String(item.role || '').toUpperCase() === 'USER'
+          && String(item.triggerMessageId || item.id || '') === triggerMessageId
+        );
+        return !message || (message.processed === false || message.processing === true);
+      });
+      return next.length === previous.length ? previous : next;
+    });
+  }, [detail?.messages]);
+  useEffect(() => {
+    const selectedPending = pendingMessages.find(message => message.triggerMessageId === data.selectedTriggerMessageId);
+    if (!selectedPending) return;
+    const persistedMessage = (detail?.messages || []).find(message =>
+      String(message.role || '').toUpperCase() === 'USER'
+      && String(message.triggerMessageId || message.id || '') === selectedPending.triggerMessageId
+    );
+    const triggerMessageId = persistedMessage?.triggerMessageId || persistedMessage?.id;
+    if (triggerMessageId && triggerMessageId !== data.selectedTriggerMessageId) {
+      emitListToolbar('select-db-message', { triggerMessageId });
+    }
+  }, [data.selectedTriggerMessageId, detail?.messages, pendingMessages]);
+  useEffect(() => {
+    const triggerMessageId = pendingMessageFocusRef.current;
+    const list = messageFlowRef.current;
+    if (!triggerMessageId || !list) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const item = [...list.querySelectorAll('[data-trigger-message-id]')]
+        .find(element => element.dataset.triggerMessageId === triggerMessageId);
+      if (!item) return;
+      item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      pendingMessageFocusRef.current = '';
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [data.selectedTriggerMessageId, detail?.messages, pendingMessages]);
+  useEffect(() => {
+    const handlePollFinished = event => {
+      const { workflowId, conversationId, success } = event.detail || {};
+      if (String(workflowId || '') !== String(data.activeWorkflowId || '') || String(conversationId || '') !== String(data.activeConversationId || '')) return;
+      pollInFlightRef.current = false;
+      if (!success) {
+        setPollUntil(0);
+        return;
+      }
+      setPollVersion(version => version + 1);
+    };
+    document.addEventListener('db-conversation-poll-finished', handlePollFinished);
+    return () => document.removeEventListener('db-conversation-poll-finished', handlePollFinished);
+  }, [data.activeWorkflowId, data.activeConversationId]);
+  useEffect(() => {
+    if (!pollUntil) return undefined;
+    if (!hasPollableMessage || !data.activeWorkflowId || !data.activeConversationId) {
+      setPollUntil(0);
+      return undefined;
+    }
+    const remainingMs = pollUntil - Date.now();
+    if (remainingMs <= 0) {
+      setPollUntil(0);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      emitListToolbar('poll-db-conversation-detail', {
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId
+      });
+    }, Math.min(DB_CONVERSATION_POLL_INTERVAL_MS, remainingMs));
+    return () => window.clearTimeout(timer);
+  }, [data.activeWorkflowId, data.activeConversationId, detail, hasPollableMessage, pollUntil, pollVersion]);
   useEffect(() => {
     if (data.detailLoading || !detail || !messageFlowRef.current) return undefined;
     const key = `${data.activeWorkflowId}\n${data.activeConversationId}`;
@@ -1188,9 +1533,62 @@ function DbConversationDetailPage({ data }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [data.historicalFocusNodeId, flowInstance, detail, flowZoom]);
+  
+  const handleSendMessage = async ({ message, mqConfigId, configId }) => {
+    const result = await api('/api/db/conversations/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId,
+        message,
+        mqConfigId,
+        configId: configId || data.connection?.configId || ''
+      })
+    });
+    if (result.success) {
+      setLastUsedMqConfigId(mqConfigId);
+      const pendingTriggerMessageId = String(result.triggerMessageId || result.snapshot?.payload?.requestId || `pending_${Date.now()}`);
+      const pendingMsg = {
+        id: pendingTriggerMessageId,
+        triggerMessageId: pendingTriggerMessageId,
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId,
+        role: 'USER',
+        processed: false,
+        processing: false,
+        hasReplyAction: false,
+        content: message,
+        contentType: 'TEXT',
+        messageTimestamp: new Date().toLocaleString('zh-CN'),
+        isPending: true
+      };
+      pendingMessageFocusRef.current = pendingTriggerMessageId;
+      setPendingMessages(prev => [...prev, pendingMsg]);
+      setPollingTriggerMessageIds(prev => prev.includes(pendingTriggerMessageId) ? prev : [...prev, pendingTriggerMessageId]);
+      emitListToolbar('select-db-message', { triggerMessageId: pendingTriggerMessageId });
+      setPollUntil(Date.now() + DB_CONVERSATION_POLL_TIMEOUT_MS);
+    }
+    return result;
+  };
+  
+  // Handle refresh
+  const handleRefresh = () => {
+    emitListToolbar('load-db-conversation-detail', {
+      workflowId: data.activeWorkflowId,
+      conversationId: data.activeConversationId
+    });
+  };
+  
   if (data.detailLoading) return <div className="db-record-detail-loading"><Spin description="正在加载会话详情" /></div>;
   if (!detail) return <div className="db-record-empty"><Text type="secondary">暂无详情</Text></div>;
-  const messages = detail.messages || [];
+  const persistedMessages = detail.messages || [];
+  const messages = [
+    ...persistedMessages,
+    ...pendingMessages.filter(pending => !persistedMessages.some(message =>
+      String(message.role || '').toUpperCase() === 'USER'
+      && String(message.triggerMessageId || message.id || '') === pending.triggerMessageId
+    ))
+  ];
   const selectedTrigger = data.selectedTriggerMessageId || detail.selectedTriggerMessageId || '';
   const executions = detail.executionsByTrigger?.[selectedTrigger] || [];
   const executionStepIndex = Math.min(Math.max(activeExecutionIndex, 0), Math.max(executions.length - 1, 0));
@@ -1223,7 +1621,7 @@ function DbConversationDetailPage({ data }) {
   const nodeById = new Map(rawNodes.map(node => [node.id, node]));
   const executionMap = new Map(executions.map(item => [item.nodeId, item]));
   const errorTriggerMessageIds = new Set(Object.entries(detail.executionsByTrigger || {})
-    .filter(([, triggerExecutions]) => triggerExecutions.some(execution => !isDbExecutionSuccess(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
+    .filter(([, triggerExecutions]) => triggerExecutions.some(execution => isDbExecutionFailure(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
     .map(([triggerMessageId]) => triggerMessageId));
   const rawMinX = currentRawNodes.length ? Math.min(...currentRawNodes.map(node => Number(node.position?.x || 0))) : 0;
   const rawMinY = currentRawNodes.length ? Math.min(...currentRawNodes.map(node => Number(node.position?.y || 0))) : 0;
@@ -1389,25 +1787,32 @@ function DbConversationDetailPage({ data }) {
   };
   return <div className="db-record-detail-page">
     <div className="db-record-detail-layout">
-      <aside ref={messageFlowRef} className="db-message-flow">
+      <aside className="db-message-flow">
         <div className="db-message-flow-toolbar">
-          <Space size={4}><span className="db-message-flow-title">消息记录</span><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: data.activeWorkflowId, conversationId: data.activeConversationId })}>会话变量</Button><span className="db-message-action-switch"><span>展示动作</span><Switch size="small" checked={showActions} onChange={setShowActions} /></span></Space>
-          <Tooltip title={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'}><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={messageOrder === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />} aria-label={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'} onClick={() => setMessageOrder(order => order === 'asc' ? 'desc' : 'asc')} /></Tooltip>
+          <Space size={4} align="center"><span className="db-message-flow-title">消息记录</span><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: data.activeWorkflowId, conversationId: data.activeConversationId })}>会话变量</Button><span className="db-message-action-switch"><span>展示动作</span><Switch size="small" checked={showActions} onChange={setShowActions} /></span></Space>
+          <Space size={8} align="center">
+            <Tooltip title="刷新消息"><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={<ReloadOutlined />} aria-label="刷新消息" onClick={handleRefresh} /></Tooltip>
+            <Tooltip title={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'}><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={messageOrder === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />} aria-label={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'} onClick={() => setMessageOrder(order => order === 'asc' ? 'desc' : 'asc')} /></Tooltip>
+          </Space>
         </div>
-        {orderedMessageGroups.map(group => {
+        <div ref={messageFlowRef} className="db-message-flow-list">
+          {orderedMessageGroups.map(group => {
           const selected = group.triggerMessageId === selectedTrigger;
           const hasError = errorTriggerMessageIds.has(group.triggerMessageId);
           const userMessage = group.user || group.assistant;
           const assistantMessage = group.assistant;
-          const unprocessed = userMessage?.processed === false;
-          const noReply = !unprocessed && userMessage?.hasReplyAction === false;
+          const processing = userMessage?.processing === true;
+          const pending = !processing && (userMessage?.isPending === true || userMessage?.processed === false);
+          const noReply = !hasError && !pending && !processing && !userMessage?.failed && userMessage?.hasReplyAction === false;
+          const isPending = userMessage?.isPending === true;
           const selectMessage = () => emitListToolbar('select-db-message', { triggerMessageId: group.triggerMessageId });
           const shouldSkipCardSelect = event => event.target?.closest?.('.db-message-trigger-copy-zone');
           return <div
             key={group.triggerMessageId}
             role="button"
             tabIndex={0}
-            className={`db-message-item conversation ${selected ? 'selected' : ''}`}
+            data-trigger-message-id={group.triggerMessageId}
+            className={`db-message-item conversation ${selected ? 'selected' : ''} ${isPending ? 'pending' : ''}`}
             onClick={event => {
               if (shouldSkipCardSelect(event)) return;
               selectMessage();
@@ -1421,7 +1826,7 @@ function DbConversationDetailPage({ data }) {
           >
             <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} />
             <span className="db-message-section">
-              <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{unprocessed || noReply || hasError ? <span className="db-message-status-tags">{unprocessed ? <Tag color="gold">未处理</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+              <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
             </span>
             {showActions ? <DbConversationActionGroups actions={group.actions} /> : null}
@@ -1430,7 +1835,11 @@ function DbConversationDetailPage({ data }) {
               <span className="db-message-content">{assistantMessage?.content === '' ? '\u00a0' : renderDbMessageText(assistantMessage?.content)}</span>
             </span> : null}
           </div>;
-        })}
+          })}
+        </div>
+        {canSendMessage ? <div className="db-message-flow-footer">
+          <Button type="primary" icon={<SendOutlined />} block onClick={() => emitDbConversationMessageAction('open')}>发送新消息</Button>
+        </div> : null}
       </aside>
       <section ref={flowPanelRef} className="db-flow-panel">
         <ReactFlow
@@ -1493,6 +1902,7 @@ function DbConversationDetailPage({ data }) {
       </section>
     </div>
     <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} />
+    {canSendMessage ? <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} /> : null}
   </div>;
 }
 
@@ -1620,9 +2030,9 @@ function emptyMqConfig() {
   return { name: '', gatewayUrl: '', appId: '', topic: '', producerGroup: '', secretKey: '', nameServer: '', messageType: 'ROCKETMQ_COMMON_TYPE', hasSecretKey: false };
 }
 
-function MqSettingsDialog({ data }) {
-  const configs = data.configs || [];
-  const [selectedId, setSelectedId] = useState(data.selectedId || configs[0]?.id || '__new__');
+function MqSettingsPanel({ data }) {
+  const configs = data.mqConfigs || [];
+  const [selectedId, setSelectedId] = useState(data.mqSelectedId || configs[0]?.id || '__new__');
   const [form, setForm] = useState(emptyMqConfig);
   const [parseText, setParseText] = useState('');
   const [parseError, setParseError] = useState('');
@@ -1635,8 +2045,8 @@ function MqSettingsDialog({ data }) {
   };
   useEffect(() => {
     if (!data.open) return;
-    selectConfig(data.selectedId || configs[0]?.id || '__new__');
-  }, [data.open, data.selectedId, configs]);
+    selectConfig(data.mqSelectedId || configs[0]?.id || '__new__');
+  }, [data.open, data.mqSelectedId, configs]);
   const setField = field => event => setForm(current => ({ ...current, [field]: event.target.value }));
   const parseConfigText = () => {
     try {
@@ -1686,36 +2096,44 @@ function MqSettingsDialog({ data }) {
   const menuItems = [...configs.map(config => ({
     key: config.id,
     label: <SettingsMenuLabel
-      name={config.name}
+      name={config.name || '未命名 MQ 配置'}
       deleteTitle={`删除 MQ 配置“${config.name || '未命名配置'}”？`}
       deleteDescription="删除后将无法恢复。"
       deleteAriaLabel={`删除 MQ 配置 ${config.name || '未命名配置'}`}
       onDelete={() => emitListToolbar('delete-mq-config', { configId: config.id })}
     />
   })), { type: 'divider' }, { key: '__new__', icon: <PlusOutlined />, label: '新增 MQ 配置' }];
-  return <Modal open={data.open} centered title="MQ 配置" width={880} onCancel={() => emitListToolbar('close-mq-settings')} footer={null} destroyOnHidden>
-    <Flex className="mq-settings-layout" gap={16}>
-      <aside className="mq-settings-nav"><Menu mode="inline" selectedKeys={[selectedId]} items={menuItems} onClick={({ key }) => selectConfig(key)} /></aside>
-      <section className="mq-settings-form">
-        <Flex justify="space-between" align="center"><Title level={5} style={{ margin: 0 }}>{selectedId === '__new__' ? '新增 MQ 配置' : 'MQ 配置'}</Title><Space><Button type="link" onClick={copyConfigText}>复制配置信息</Button><Button type="primary" onClick={() => emitListToolbar('save-mq-config', { config: { ...form, id: selectedId === '__new__' ? undefined : selectedId } })}>保存配置</Button></Space></Flex>
-        <div className="mq-config-grid">
-          <label>MQ 配置名称<Input value={form.name} onChange={setField('name')} /></label>
-          <label>网关地址<Input value={form.gatewayUrl} onChange={setField('gatewayUrl')} placeholder="http://host:port" /></label>
-          <label>App ID<Input value={form.appId} onChange={setField('appId')} /></label>
-          <label>Topic<Input value={form.topic} onChange={setField('topic')} /></label>
-          <label>Producer Group<Input value={form.producerGroup} onChange={setField('producerGroup')} /></label>
-          <label>NameServer<Input value={form.nameServer} onChange={setField('nameServer')} /></label>
-          <label>Message Type<Input value={form.messageType} onChange={setField('messageType')} /></label>
-          <label>Secret Key<Input.Password value={form.secretKey} onChange={setField('secretKey')} placeholder={form.hasSecretKey ? '已配置，留空不修改' : ''} /></label>
-        </div>
-        <label className="mq-config-parser">解析配置文本<Input.TextArea value={parseText} onChange={event => setParseText(event.target.value)} autoSize={{ minRows: 4, maxRows: 8 }} /><Flex justify="space-between" align="center"><Text type="danger">{parseError}</Text><Button onClick={parseConfigText}>解析并填入</Button></Flex></label>
-      </section>
-    </Flex>
+  const complete = form.gatewayUrl && form.appId && form.topic && form.producerGroup && form.nameServer && form.messageType && (form.secretKey || form.hasSecretKey);
+  return <Flex className="mq-settings-layout" gap={16}>
+    <aside className="mq-settings-nav"><Menu mode="inline" selectedKeys={[selectedId]} items={menuItems} onClick={({ key }) => selectConfig(key)} /></aside>
+    <section className="mq-settings-form">
+      <Flex justify="space-between" align="center"><Title level={5} style={{ margin: 0 }}>{selectedId === '__new__' ? '新增 MQ 配置' : 'MQ 配置'}</Title><Space><Button type="link" onClick={copyConfigText}>复制配置信息</Button><Button type="primary" disabled={!complete} onClick={() => emitListToolbar('save-mq-config', { config: { ...form, id: selectedId === '__new__' ? undefined : selectedId } })}>保存配置</Button></Space></Flex>
+      <div className="mq-config-grid">
+        <label>MQ 配置名称<Input value={form.name} onChange={setField('name')} /></label>
+        <label><RequiredFieldLabel>网关地址</RequiredFieldLabel><Input value={form.gatewayUrl} onChange={setField('gatewayUrl')} placeholder="http://host:port" /></label>
+        <label><RequiredFieldLabel>App ID</RequiredFieldLabel><Input value={form.appId} onChange={setField('appId')} /></label>
+        <label><RequiredFieldLabel>Topic</RequiredFieldLabel><Input value={form.topic} onChange={setField('topic')} /></label>
+        <label><RequiredFieldLabel>Producer Group</RequiredFieldLabel><Input value={form.producerGroup} onChange={setField('producerGroup')} /></label>
+        <label><RequiredFieldLabel>NameServer</RequiredFieldLabel><Input value={form.nameServer} onChange={setField('nameServer')} /></label>
+        <label><RequiredFieldLabel>Message Type</RequiredFieldLabel><Input value={form.messageType} onChange={setField('messageType')} /></label>
+        <label><RequiredFieldLabel>Secret Key</RequiredFieldLabel><Input.Password value={form.secretKey} onChange={setField('secretKey')} placeholder={form.hasSecretKey ? '已配置，留空不修改' : ''} /></label>
+      </div>
+      <label className="mq-config-parser">解析配置文本<Input.TextArea value={parseText} onChange={event => setParseText(event.target.value)} autoSize={{ minRows: 4, maxRows: 8 }} /><Flex justify="space-between" align="center"><Text type="danger">{parseError}</Text><Button onClick={parseConfigText}>解析并填入</Button></Flex></label>
+    </section>
+  </Flex>;
+}
+
+function SystemSettingsDialog({ data }) {
+  return <Modal open={data.open} centered title="系统设置" width={920} onCancel={() => emitListToolbar('close-system-settings')} footer={null} destroyOnHidden>
+    <Tabs className="system-settings-tabs" activeKey={data.activeTab || 'mq'} onChange={value => emitListToolbar('set-system-settings-tab', { value })} items={[
+      { key: 'mq', label: 'MQ 发送配置', children: <MqSettingsPanel data={data} /> },
+      { key: 'database', label: '数据库配置', children: <DbSettingsPanel data={data} /> }
+    ]} />
   </Modal>;
 }
 
-function MqSettingsButton({ visible }) {
-  return visible ? <Tooltip title="MQ 发送配置"><Button type="text" icon={<SettingOutlined />} aria-label="MQ 发送配置" onClick={() => emitListToolbar('open-mq-settings')}>MQ发送配置</Button></Tooltip> : null;
+function SystemSettingsButton({ visible }) {
+  return visible ? <Tooltip title="系统设置"><Button type="text" icon={<SettingOutlined />} aria-label="系统设置" onClick={() => emitListToolbar('open-system-settings')}>系统设置</Button></Tooltip> : null;
 }
 
 function UpdateSourceIcon({ sourceKey }) {
@@ -1752,16 +2170,12 @@ function UpdateDialog({ data }) {
   const modalTitle = check?.updateAvailable
     ? <Flex vertical gap={2} className="update-dialog-title"><Text type="success" strong>发现新版本</Text><Flex align="center" gap={8} wrap><Title level={4}>更新至 v{targetVersion}</Title><Text type="secondary" className="update-dialog-current-version">当前版本 v{currentVersion}</Text></Flex></Flex>
     : '在线更新';
-  const updateConfirmTitle = <Flex vertical gap={4}>
-    <span>更新前会自动备份当前版本，完成后会自动刷新页面；如更新失败，将保留备份用于回退。</span>
-    <span>确认现在更新？</span>
-  </Flex>;
   return <Modal open={data.open} centered className="update-dialog-modal" title={modalTitle} width={760} styles={{ container: { padding: 0 }, header: { marginBottom: 0, padding: '24px 28px 0' }, body: { padding: '24px 28px 0' }, close: { top: 24, right: 24 } }} onCancel={() => emitListToolbar('close-update-dialog')} footer={null} destroyOnHidden>
     <Flex vertical gap={24} className="update-dialog-content">
       {!check?.updateAvailable ? <Flex vertical gap={8}><Text strong>当前版本 {currentVersion}</Text><Space size={[4, 4]} wrap>{sourceStates.map(source => <Tag key={source.key} color={source.ok === false ? 'red' : source.ok ? 'blue' : 'default'} icon={<UpdateSourceIcon sourceKey={source.key} />}>{source.label} · {source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Tag>)}</Space></Flex> : null}
       {checkSummary}
       {release?.notes?.length ? <Flex vertical gap={4}><Text strong>更新说明</Text>{release.notes.map((note, index) => <Text key={`${note}-${index}`}>- {note}</Text>)}</Flex> : null}
-      {check?.updateAvailable ? <Flex vertical gap={24}><Flex vertical gap={12}><Text type="secondary" className="update-source-section-label">选择更新源</Text><Radio.Group className="update-source-grid" value={sourceKey} onChange={event => setSourceKey(event.target.value)}>{sourceStates.map(source => <Radio key={source.key} className={`update-source-card ${sourceKey === source.key ? 'is-selected' : ''}`} value={source.key} disabled={applying || !source.ok || !source.updateAvailable}><Flex className="update-source-card-content" align="center" justify="space-between" gap={16}><Space className="update-source-card-main" size={16}><span className="update-source-brand-icon"><UpdateSourceIcon sourceKey={source.key} /></span><Flex vertical gap={0}><Text strong className="update-source-name">{source.label}</Text><Text type="secondary" className="update-source-version">{source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Text></Flex></Space>{sourceKey === source.key ? <CheckCircleFilled className="update-source-check" aria-hidden="true" /> : <span className="update-source-check update-source-check-empty" aria-hidden="true" />}</Flex></Radio>)}</Radio.Group></Flex><Text type="secondary" className="update-source-hint">将从 {selectedSource?.label || '-'} 更新至 v{targetVersion}。更新前会自动备份当前版本，完成后会自动刷新页面。</Text><Flex className="update-dialog-actions" justify="flex-end" gap={8}><Button disabled={applying} onClick={() => emitListToolbar('close-update-dialog')}>取消</Button><Popconfirm title={updateConfirmTitle} okText="立即更新" cancelText="取消" onConfirm={() => emitListToolbar('apply-online-update', { sourceKey })}><Button type="primary" loading={applying} disabled={!sourceKey || applying} icon={<ReloadOutlined />}>立即更新</Button></Popconfirm></Flex></Flex> : null}
+      {check?.updateAvailable ? <Flex vertical gap={24}><Flex vertical gap={12}><Text type="secondary" className="update-source-section-label">选择更新源</Text><Radio.Group className="update-source-grid" value={sourceKey} onChange={event => setSourceKey(event.target.value)}>{sourceStates.map(source => <Radio key={source.key} className={`update-source-card ${sourceKey === source.key ? 'is-selected' : ''}`} value={source.key} disabled={applying || !source.ok || !source.updateAvailable}><Flex className="update-source-card-content" align="center" justify="space-between" gap={16}><Space className="update-source-card-main" size={16}><span className="update-source-brand-icon"><UpdateSourceIcon sourceKey={source.key} /></span><Flex vertical gap={0}><Text strong className="update-source-name">{source.label}</Text><Text type="secondary" className="update-source-version">{source.ok === false ? '暂不可用' : source.version ? `v${source.version}` : '未发现版本'}</Text></Flex></Space>{sourceKey === source.key ? <CheckCircleFilled className="update-source-check" aria-hidden="true" /> : <span className="update-source-check update-source-check-empty" aria-hidden="true" />}</Flex></Radio>)}</Radio.Group></Flex><Text type="secondary" className="update-source-hint">将从 {selectedSource?.label || '-'} 更新至 v{targetVersion}。更新前会自动备份当前版本，完成后会自动刷新页面。</Text><Flex className="update-dialog-actions" justify="flex-end" gap={8}><Button disabled={applying} onClick={() => emitListToolbar('close-update-dialog')}>取消</Button><Button type="primary" loading={applying} disabled={!sourceKey || applying} icon={<ReloadOutlined />} onClick={() => emitListToolbar('apply-online-update', { sourceKey })}>立即更新</Button></Flex></Flex> : null}
     </Flex>
   </Modal>;
 }
@@ -1889,13 +2303,15 @@ function RecordDetailHeader() {
 function DbConversationDetailHeader({ detail }) {
   const title = detail?.loading ? '会话记录详情' : `${detail?.workflowId || '-'} · ${detail?.conversationId || '-'}`;
   return (
-    <Flex className="antd-detail-header" align="center" justify="flex-start" gap={12}>
-      <Tooltip title="返回会话记录列表">
-        <Button type="text" shape="circle" icon={<ArrowLeftOutlined />} aria-label="返回会话记录列表" onClick={() => emitListToolbar('back-db-conversations')} />
-      </Tooltip>
-      <Flex className="antd-detail-summary" vertical gap={2}>
-        <Title level={5} style={{ margin: 0 }}>{title}</Title>
-        {detail?.workflowName ? <Text type="secondary">{detail.workflowName}</Text> : null}
+    <Flex className="antd-detail-header db-conversation-detail-header" align="center" justify="flex-start" gap={12}>
+      <Flex align="center" gap={12}>
+        <Tooltip title="返回会话记录列表">
+          <Button type="text" shape="circle" icon={<ArrowLeftOutlined />} aria-label="返回会话记录列表" onClick={() => emitListToolbar('back-db-conversations')} />
+        </Tooltip>
+        <Flex className="antd-detail-summary" vertical gap={2}>
+          <Title level={5} style={{ margin: 0 }}>{title}</Title>
+          {detail?.workflowName ? <Text type="secondary">{detail.workflowName}</Text> : null}
+        </Flex>
       </Flex>
     </Flex>
   );
@@ -1922,8 +2338,8 @@ let sendDialogRoot;
 let importCaseRoot;
 let batchEditRoot;
 let appendRecordMessageRoot;
-let mqSettingsButtonRoot;
-let mqSettingsRoot;
+let systemSettingsButtonRoot;
+let systemSettingsRoot;
 let appVersionRoot;
 let updateManagerButtonRoot;
 let updateDialogRoot;
@@ -1992,6 +2408,14 @@ window.renderDbConversationDetailChrome = detail => {
 };
 window.showUnsavedCaseChangesDialog = showUnsavedCaseChangesDialog;
 window.showBatchDeleteConfirm = showBatchDeleteConfirm;
+window.showDbEnvironmentRequiredDialog = () => {
+  Modal.warning({
+    title: '请先设置数据库环境',
+    content: '当前数据库配置尚未设置环境，请在系统设置中选择线上环境或测试环境。',
+    okText: '去系统设置',
+    onOk: () => emitListToolbar('open-db-settings')
+  });
+};
 
 window.showBatchEditDialog = data => {
   const host = document.getElementById('batchEditDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'batchEditDialog' }));
@@ -2055,17 +2479,17 @@ window.renderSendDialog = data => {
   sendDialogRoot.render(<ConfigProvider componentSize="middle"><SendDialog data={data} /></ConfigProvider>);
 };
 
-window.renderMqSettingsButton = data => {
-  const host = document.getElementById('mqSettingsApp');
+window.renderSystemSettingsButton = data => {
+  const host = document.getElementById('systemSettingsApp');
   if (!host) return;
-  mqSettingsButtonRoot ||= createRoot(host);
-  mqSettingsButtonRoot.render(<ConfigProvider componentSize="middle"><MqSettingsButton visible={data.visible} /></ConfigProvider>);
+  systemSettingsButtonRoot ||= createRoot(host);
+  systemSettingsButtonRoot.render(<ConfigProvider componentSize="middle"><SystemSettingsButton visible={data.visible} /></ConfigProvider>);
 };
 
-window.renderMqSettings = data => {
-  const host = document.getElementById('mqSettingsDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'mqSettingsDialog' }));
-  mqSettingsRoot ||= createRoot(host);
-  mqSettingsRoot.render(<ConfigProvider componentSize="middle"><MqSettingsDialog data={data} /></ConfigProvider>);
+window.renderSystemSettings = data => {
+  const host = document.getElementById('systemSettingsDialog') || document.body.appendChild(Object.assign(document.createElement('div'), { id: 'systemSettingsDialog' }));
+  systemSettingsRoot ||= createRoot(host);
+  systemSettingsRoot.render(<ConfigProvider componentSize="middle"><SystemSettingsDialog data={data} /></ConfigProvider>);
 };
 
 window.renderUpdateManagerButton = data => {
