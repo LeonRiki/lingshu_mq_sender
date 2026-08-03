@@ -2234,21 +2234,96 @@ main {
 
 .db-node-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 14px;
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
+  grid-template-columns: minmax(176px, .85fr) minmax(0, 1.15fr);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e7edf4;
   border-radius: 8px;
-  background: #f8fafc;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .03);
 }
 
-.db-node-summary > div {
+.db-node-summary-result {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 16px;
+}
+
+.db-node-summary-result > svg {
+  flex: 0 0 auto;
+  font-size: 22px;
+}
+
+.db-node-summary.success .db-node-summary-result > svg,
+.db-node-summary.success .db-node-summary-result .anticon,
+.db-node-summary.success .db-node-summary-status-text {
+  color: #16a34a;
+}
+
+.db-node-summary.failed .db-node-summary-result > svg,
+.db-node-summary.failed .db-node-summary-result .anticon,
+.db-node-summary.failed .db-node-summary-status-text {
+  color: #dc2626;
+}
+
+.db-node-summary-result > div {
+  display: grid;
+  gap: 1px;
+}
+
+.db-node-summary-status-text {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-node-summary-result strong {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.db-node-summary-result strong.failure-detail {
+  color: #dc2626;
+}
+
+.db-node-summary-result small {
+  margin-left: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.db-node-summary-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  min-height: 26px;
+  align-content: center;
+  gap: 5px;
+  padding: 13px 16px;
+  border-left: 1px solid #edf1f5;
+}
+
+.db-node-summary-row > .ant-typography:first-child {
+  color: #8a94a6;
+  font-size: 12px;
+}
+
+.db-node-summary-row > .ant-typography:last-child {
+  color: #253043;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.db-node-summary-row.error-info {
+  grid-column: span 1;
+  padding-block: 12px;
 }
 
 .db-node-summary .ant-typography {
@@ -2276,9 +2351,26 @@ main {
   white-space: nowrap;
 }
 
-.db-node-summary-status {
-  width: fit-content;
-  margin-inline-end: 0;
+.db-node-run-id-footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.db-node-run-id-footer > .ant-typography:first-child {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.db-node-run-id-footer .db-node-summary-run-id {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .db-node-panel {
@@ -2345,6 +2437,10 @@ main {
   background: #f8fafc;
 }
 
+.db-node-value-row.without-type {
+  grid-template-columns: minmax(96px, .65fr) minmax(0, 1.35fr);
+}
+
 .db-node-value-key,
 .db-node-change-key {
   min-width: 0;
@@ -2376,6 +2472,93 @@ main {
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.db-node-value-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-block: 1px;
+}
+
+.db-node-value-tags .ant-tag {
+  max-width: 100%;
+  margin-inline-end: 0;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-node-input-list {
+  display: grid;
+  max-height: 216px;
+  gap: 6px;
+  overflow: auto;
+  padding: 2px 4px 2px 0;
+}
+
+.db-node-input-list.expanded {
+  max-height: none;
+  overflow: visible;
+}
+
+.db-node-input-latest {
+  display: grid;
+  gap: 6px;
+}
+
+.db-node-input-message {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.db-node-input-message.student {
+  justify-content: flex-start;
+}
+
+.db-node-input-message-role {
+  flex: 0 0 auto;
+  padding-top: 4px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.db-node-input-message-bubble {
+  max-width: min(88%, 480px);
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.db-node-input-message.student .db-node-input-message-bubble {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1e4f8d;
+}
+
+.db-node-input-list-toggle {
+  justify-self: start;
+  height: auto;
+  padding-inline: 0;
+  color: #2563eb;
+  font-size: 12px;
 }
 
 .db-node-agent-input-list {
@@ -2527,11 +2710,28 @@ main {
 }
 
 .db-node-drawer-tabs > .ant-tabs-nav {
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .db-node-drawer-tabs .ant-tabs-tab {
-  padding-inline: 4px;
+  padding: 0 16px 14px;
+  color: #64748b;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.db-node-drawer-tabs .ant-tabs-tab:first-child {
+  padding-left: 4px;
+}
+
+.db-node-drawer-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1677ff;
+  font-weight: 700;
+}
+
+.db-node-drawer-tabs .ant-tabs-ink-bar {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
 }
 
 .db-condition-config-panel {
@@ -2787,6 +2987,16 @@ main {
   .db-node-change-row,
   .db-condition-rule {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .db-node-summary-row {
+    padding: 14px 18px;
+    border-top: 1px solid #edf1f5;
+    border-left: 0;
+  }
+
+  .db-node-summary-result {
+    padding: 20px 18px;
   }
 
   .db-node-value-key,

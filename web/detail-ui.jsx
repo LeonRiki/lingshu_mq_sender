@@ -11,6 +11,7 @@ import {
   BookOutlined,
   BranchesOutlined,
   CheckCircleFilled,
+  CloseCircleFilled,
   CodeOutlined,
   CopyOutlined,
   DatabaseOutlined,
@@ -658,6 +659,16 @@ function dbLingxiSendOutputsSummary(node) {
   return summary;
 }
 
+function dbNodeOutputsSummary(outputs, preferredKeys = []) {
+  if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) return outputs;
+  const hiddenKeys = new Set(['eventid', 'tenantid']);
+  const entries = Object.entries(outputs).filter(([key]) => !hiddenKeys.has(String(key).toLowerCase()));
+  const priority = preferredKeys.map(key => String(key).toLowerCase());
+  const orderedEntries = priority.flatMap(key => entries.filter(([entryKey]) => String(entryKey).toLowerCase() === key));
+  const remainingEntries = entries.filter(([entryKey]) => !priority.includes(String(entryKey).toLowerCase()));
+  return Object.fromEntries([...orderedEntries, ...remainingEntries]);
+}
+
 function dbConditionInputsSummary(inputs) {
   const branches = Array.isArray(inputs?.branches) ? inputs.branches : [];
   const fieldValues = new Map();
@@ -944,15 +955,56 @@ function DbConditionConfigPanel({ config }) {
   </Flex>;
 }
 
-function DbNodeValuePanel({ title, value, typeLabel = dbValueType }) {
+function dbInputListMessage(value) {
+  const raw = String(value ?? '');
+  const delimiter = raw.indexOf(':');
+  const messageId = delimiter >= 0 ? raw.slice(0, delimiter).trim() : '';
+  const content = delimiter >= 0 ? raw.slice(delimiter + 1) : raw;
+  const firstCharacter = messageId.charAt(0);
+  const role = firstCharacter === '1' ? 'teacher' : 'student';
+  return { messageId, content, role };
+}
+
+function DbNodeInputListPreview({ value }) {
+  const messages = (Array.isArray(value) ? value : []).map(dbInputListMessage).filter(message => message.content.trim());
+  const [expanded, setExpanded] = useState(false);
+  const visibleMessages = expanded ? messages : messages.slice(-3);
+  const canExpand = messages.length > 3;
+  return <div className={`db-node-input-list${expanded ? ' expanded' : ''}`} aria-label="历史聊天记录">
+    {visibleMessages.map((message, index) => <div key={`${message.messageId}-${index}`} className={`db-node-input-message ${message.role}`}>
+      <span className="db-node-input-message-role">{message.role === 'teacher' ? '老师' : '学员'}</span>
+      <span className="db-node-input-message-bubble" title={message.messageId || undefined}>{message.content}</span>
+    </div>)}
+    {canExpand ? <Button
+      type="link"
+      size="small"
+      className="db-node-input-list-toggle"
+      icon={expanded ? <UpOutlined /> : <DownOutlined />}
+      onClick={() => setExpanded(current => !current)}
+    >{expanded ? '收起聊天记录' : `展开全部聊天记录（共 ${messages.length} 条）`}</Button> : null}
+  </div>;
+}
+
+function DbNodeLatestInputPreview({ value }) {
+  const messages = (Array.isArray(value) ? value : [value]).map(item => dbValuePreview(item, 400)).filter(item => item && item !== '-');
+  return <div className="db-node-input-latest" aria-label="学员最新消息">
+    {messages.map((message, index) => <div key={`${index}-${message}`} className="db-node-input-message student">
+      <span className="db-node-input-message-bubble">{message}</span>
+    </div>)}
+  </div>;
+}
+
+function DbNodeValuePanel({ title, value, typeLabel = dbValueType, showType = true, arrayAsTags = false, inputListAsMessages = false, inputAsStudentMessage = false }) {
   const entries = dbObjectEntries(value);
   return <section className="db-node-panel">
     <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{dbCollectionSummary(value)}</Text></div>
     {entries.length ? <div className="db-node-value-list">
-      {entries.map(item => <div key={item.key} className="db-node-value-row">
+      {entries.map(item => <div key={item.key} className={`db-node-value-row${showType ? '' : ' without-type'}`}>
         <span className="db-node-value-key" title={item.key}>{item.key}</span>
-        <span className="db-node-value-type">{typeLabel(item.value)}</span>
-        <span className="db-node-value-preview" title={dbValuePreview(item.value, 400)}>{dbValuePreview(item.value)}</span>
+        {showType ? <span className="db-node-value-type">{typeLabel(item.value)}</span> : null}
+        {inputListAsMessages && String(item.key).toLowerCase() === 'inputlist' && Array.isArray(item.value) ? <DbNodeInputListPreview value={item.value} /> : inputAsStudentMessage && String(item.key).toLowerCase() === 'input' ? <DbNodeLatestInputPreview value={item.value} /> : arrayAsTags && Array.isArray(item.value) ? <span className="db-node-value-preview db-node-value-tags" title={dbValuePreview(item.value, 400)}>
+          {item.value.length ? item.value.map((value, index) => <Tag key={`${index}-${dbValuePreview(value, 120)}`} bordered={false}>{dbValuePreview(value, 120)}</Tag>) : '-'}
+        </span> : <span className="db-node-value-preview" title={dbValuePreview(item.value, 400)}>{dbValuePreview(item.value)}</span>}
       </div>)}
     </div> : <Text type="secondary">暂无数据</Text>}
   </section>;
@@ -1044,6 +1096,14 @@ function DbNodeRawDataCollapse({ node }) {
   />;
 }
 
+function DbNodeRunId({ runId }) {
+  if (!runId) return null;
+  return <div className="db-node-run-id-footer">
+    <Text type="secondary">运行 ID</Text>
+    <Text className="db-node-summary-run-id" copyable ellipsis={{ tooltip: runId }}>{runId}</Text>
+  </div>;
+}
+
 function DbNodeDrawerTitle({ node, meta }) {
   const Icon = meta.icon;
   const nodeTitle = node?.nodeName || node?.nodeId || '节点详情';
@@ -1064,31 +1124,36 @@ function DbNodeDrawerTitle({ node, meta }) {
 function DbNodeDrawer({ node, onClose, loading = false }) {
   const nodeType = String(node?.nodeType || '').toLowerCase();
   const isSetVariable = nodeType === 'set_variable';
-  const showInputsSummary = nodeType !== 'lingxi_send';
+  const showInputsSummary = !['lingxi_send', 'lingxi_trigger'].includes(nodeType);
   const inputsSummary = nodeType === 'condition' ? dbConditionInputsSummary(node?.inputs) : node?.inputs;
   const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
   const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.outputs) : [];
-  const outputsSummary = nodeType === 'lingxi_send' ? dbLingxiSendOutputsSummary(node) : node?.outputs;
+  const outputsSummary = nodeType === 'lingxi_send'
+    ? dbLingxiSendOutputsSummary(node)
+    : dbNodeOutputsSummary(node?.outputs, nodeType === 'lingxi_trigger' ? ['input', 'tagList', 'inputList', 'addTime', 'friendNick', 'agentId'] : ['inputList']);
   const meta = dbNodeMeta(node?.nodeType);
+  const isSuccess = isDbExecutionSuccess(node?.status);
+  const statusText = node?.status || '-';
+  const statusDetail = isSuccess ? <>{node?.durationMs || 0}<small> ms</small></> : node?.errorClass || node?.errorCode || '-';
   const executionContent = !node ? null : loading ? <Flex justify="center" style={{ padding: '48px 0' }}><Spin description="正在加载节点执行详情" /></Flex> : !node.detailsLoaded && node.id ? <Text type="secondary">节点执行详情暂不可用</Text> : !node.id ? <Text type="secondary">该节点未参与本次执行</Text> : <Flex vertical gap={12}>
-    <div className="db-node-summary">
-      <div className="db-node-summary-row"><Text type="secondary">运行 ID</Text><Text className="db-node-summary-run-id" copyable ellipsis={{ tooltip: node.runId || '-' }}>{node.runId || '-'}</Text></div>
+    <div className={`db-node-summary ${isSuccess ? 'success' : 'failed'}`}>
+      <div className="db-node-summary-result">
+        {isSuccess ? <CheckCircleFilled /> : <CloseCircleFilled />}
+        <div><span className="db-node-summary-status-text">{statusText}</span><strong className={isSuccess ? '' : 'failure-detail'}>{statusDetail}</strong></div>
+      </div>
       <div className="db-node-summary-row"><Text type="secondary">开始时间</Text><Text>{node.startedAt || '-'}</Text></div>
-      <div className="db-node-summary-row"><Text type="secondary">执行状态</Text><Tag className="db-node-summary-status" color={dbStatusColor(node.status)}>{node.status || '-'}</Tag></div>
-      <div className="db-node-summary-row"><Text type="secondary">运行时间</Text><Text>{node.durationMs || 0} ms</Text></div>
-      {node.errorCode ? <div className="db-node-summary-row"><Text type="secondary">错误码</Text><Tag color="red">{node.errorCode}</Tag></div> : null}
-      {node.errorClass ? <div className="db-node-summary-row"><Text type="secondary">错误类型</Text><Tag color="red">{node.errorClass}</Tag></div> : null}
     </div>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} />}
+    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} />}
     {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
     {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
     <DbNodeRawDataCollapse node={node} />
+    <DbNodeRunId runId={node.runId} />
   </Flex>;
   return <Drawer className="db-node-drawer" open={Boolean(node)} width={680} title={<DbNodeDrawerTitle node={node} meta={meta} />} onClose={onClose} destroyOnHidden>
     {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="execution" items={[
-      { key: 'execution', label: '当前节点执行记录', children: executionContent },
-      { key: 'config', label: '当前节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
+      { key: 'execution', label: '执行详情', children: executionContent },
+      { key: 'config', label: '节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
     ]} /> : null}
   </Drawer>;
 }
