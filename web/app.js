@@ -1580,6 +1580,7 @@ function dbRecordPageData() {
   return {
     page: state.dbRecordPage,
     configs: state.dbConfigs,
+    mqConfigs: state.mqConfigs,
     connection: state.dbConnection,
     connectionChanging: state.dbConnectionChanging,
     savedFilters: state.dbSavedFilters,
@@ -1877,13 +1878,16 @@ async function queryDbConversations() {
 }
 
 async function openDbConversationDetail(workflowId, conversationId, options = {}) {
-  state.dbConversationDetailLoading = true;
-  state.dbConversationDetail = null;
-  state.dbSelectedTriggerMessageId = '';
-  state.dbHistoricalFocusNodeId = '';
-  state.dbHistoricalLoadingNodeId = '';
-  state.dbNodeExecutionDetails = {};
-  state.dbNodeExecutionLoadingId = '';
+  const preserveDetail = Boolean(options.preserveDetail);
+  if (!preserveDetail) {
+    state.dbConversationDetailLoading = true;
+    state.dbConversationDetail = null;
+    state.dbSelectedTriggerMessageId = '';
+    state.dbHistoricalFocusNodeId = '';
+    state.dbHistoricalLoadingNodeId = '';
+    state.dbNodeExecutionDetails = {};
+    state.dbNodeExecutionLoadingId = '';
+  }
   state.dbActiveWorkflowId = workflowId || '';
   state.dbActiveConversationId = conversationId || '';
   if (options.updateRoute !== false) setDbConversationDetailRoute(workflowId, conversationId);
@@ -1894,10 +1898,20 @@ async function openDbConversationDetail(workflowId, conversationId, options = {}
     appendDbConfigId(params);
     const detail = await api(`/api/db/conversations/detail?${params}`);
     state.dbConversationDetail = detail;
-    state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
+    if (!preserveDetail) state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
   } finally {
-    state.dbConversationDetailLoading = false;
+    if (!preserveDetail) state.dbConversationDetailLoading = false;
     renderDbRecordsPage();
+  }
+}
+
+async function pollDbConversationDetail(workflowId, conversationId) {
+  try {
+    await openDbConversationDetail(workflowId, conversationId, { updateRoute: false, preserveDetail: true });
+    document.dispatchEvent(new CustomEvent('db-conversation-poll-finished', { detail: { workflowId, conversationId, success: true } }));
+  } catch (error) {
+    document.dispatchEvent(new CustomEvent('db-conversation-poll-finished', { detail: { workflowId, conversationId, success: false } }));
+    throw error;
   }
 }
 
@@ -2457,6 +2471,9 @@ function bindEvents() {
     if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
     if (type === 'apply-db-filter') applyDbSavedFilter(filters);
     if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'load-db-conversation-detail') openDbConversationDetail(workflowId, conversationId, { updateRoute: false }).catch(showError);
+    if (type === 'poll-db-conversation-detail') pollDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'load-db-conversation-mq-configs') loadMqConfigs().then(renderDbRecordsPage).catch(showError);
     if (type === 'open-db-conversation-variables') openDbConversationVariables(workflowId, conversationId).catch(showError);
     if (type === 'close-db-conversation-variables') closeDbConversationVariables();
     if (type === 'back-db-conversations') showDbConversationList();
