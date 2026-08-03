@@ -58,6 +58,10 @@ function emitListToolbar(type, detail = {}) {
   document.dispatchEvent(new CustomEvent('list-toolbar-action', { detail: { type, ...detail } }));
 }
 
+function emitDbConversationMessageAction(type) {
+  document.dispatchEvent(new CustomEvent('db-conversation-message-action', { detail: { type } }));
+}
+
 function emitListToolbarChange(type, value) {
   document.dispatchEvent(new CustomEvent('list-toolbar-change', { detail: { type, value } }));
 }
@@ -195,6 +199,13 @@ function dbNodeSummary(node) {
 function isDbExecutionSuccess(status) {
   return ['SUCCESS', 'COMPLETED'].includes(String(status || '').toUpperCase());
 }
+
+function isDbExecutionFailure(status) {
+  return ['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'TIMEOUT', 'ABORTED'].includes(String(status || '').toUpperCase());
+}
+
+const DB_CONVERSATION_POLL_INTERVAL_MS = 3000;
+const DB_CONVERSATION_POLL_TIMEOUT_MS = 60000;
 
 function dbEdgeLabel(edge, nodeById) {
   const handle = String(edge.label || edge.sourceHandle || '').trim();
@@ -524,8 +535,7 @@ function DbConversationListPage({ data }) {
   </div>;
 }
 
-function renderJsonCode(value) {
-  const json = JSON.stringify(value ?? null, null, 2);
+function renderJsonTokens(json) {
   const tokenPattern = /"(?:\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\b(?:true|false|null)\b|[{}\[\],:]/g;
   const tokens = [];
   let lastIndex = 0;
@@ -544,6 +554,14 @@ function renderJsonCode(value) {
   }
   if (lastIndex < json.length) tokens.push(json.slice(lastIndex));
   return tokens;
+}
+
+function renderJsonCode(value) {
+  return renderJsonTokens(JSON.stringify(value ?? null, null, 2));
+}
+
+function renderJsonPreviewCode(value) {
+  return renderJsonTokens(String(value || ''));
 }
 
 function dbValuePreview(value, maxLength = 180) {
@@ -1062,8 +1080,8 @@ function DbNodeDrawer({ node, onClose, loading = false }) {
       {node.errorClass ? <div className="db-node-summary-row"><Text type="secondary">错误类型</Text><Tag color="red">{node.errorClass}</Tag></div> : null}
     </div>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
     {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} />}
+    {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
     {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
     <DbNodeRawDataCollapse node={node} />
   </Flex>;
@@ -1139,6 +1157,135 @@ function DbConversationActionGroups({ actions }) {
   </span>;
 }
 
+function DbMessageDrawer({ open, onClose, workflowId, conversationId, onSend, mqConfigs, lastUsedMqConfigId, configId }) {
+  const [message, setMessage] = useState("");
+  const [selectedMqConfigId, setSelectedMqConfigId] = useState("");
+  const [sending, setSending] = useState(false);
+  const [composerMode, setComposerMode] = useState('input');
+  const [previewJson, setPreviewJson] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const mqConfigOptions = (Array.isArray(mqConfigs) ? mqConfigs : []).map(config => ({
+    value: String(config.id),
+    label: config.name || config.gatewayUrl || config.id
+  }));
+
+  useEffect(() => {
+    const availableConfigIds = new Set(mqConfigOptions.map(config => config.value));
+    const storedConfigId = String(window.localStorage?.getItem('db-conversation-last-mq-config-id') || '');
+    const preferredConfigId = [String(lastUsedMqConfigId || ''), storedConfigId, mqConfigOptions[0]?.value]
+      .find(configIdValue => availableConfigIds.has(configIdValue));
+    setSelectedMqConfigId(currentConfigId => availableConfigIds.has(currentConfigId) ? currentConfigId : (preferredConfigId || ''));
+  }, [open, lastUsedMqConfigId, mqConfigs]);
+
+  const handleMqConfigChange = value => {
+    const nextConfigId = String(value || '');
+    setSelectedMqConfigId(nextConfigId);
+    if (nextConfigId) window.localStorage?.setItem('db-conversation-last-mq-config-id', nextConfigId);
+    else window.localStorage?.removeItem('db-conversation-last-mq-config-id');
+  };
+
+  const loadPreview = async () => {
+    if (!message.trim()) return;
+    setPreviewLoading(true);
+    try {
+      const params = new URLSearchParams({
+        workflowId,
+        conversationId,
+        message: message.trim(),
+        mqConfigId: selectedMqConfigId || ""
+      });
+      if (configId) params.set("configId", configId);
+      const result = await api("/api/db/conversations/preview?" + params.toString());
+      setPreviewJson(JSON.stringify(result.payload, null, 2));
+    } catch (err) {
+      setPreviewJson("// Error: " + err.message);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const changeComposerMode = async mode => {
+    setComposerMode(mode);
+    if (mode === 'preview') await loadPreview();
+  };
+
+  const handleSend = async () => {
+    if (!message.trim() || sending) return;
+    if (!mqConfigOptions.length) {
+      window.showGlobalMessage?.('未配置 MQ，请前往系统设置完成 MQ 配置后再发送', 'warning');
+      return;
+    }
+    if (!selectedMqConfigId) {
+      window.showGlobalMessage?.('请选择 MQ 配置后再发送', 'warning');
+      return;
+    }
+    setSending(true);
+    try {
+      const result = await onSend({
+        message: message.trim(),
+        mqConfigId: selectedMqConfigId,
+        configId
+      });
+      if (!result?.success) {
+        throw new Error(result?.snapshot?.mqResult?.error || result?.status || 'MQ 发送失败');
+      }
+      setMessage("");
+      setComposerMode('input');
+      window.localStorage?.setItem('db-conversation-last-mq-config-id', selectedMqConfigId);
+      onClose();
+      window.showGlobalMessage?.('消息已发送，等待处理结果', 'success');
+    } catch (err) {
+      window.showGlobalMessage?.(err?.message || 'MQ 发送失败', 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return <Drawer
+    title="发送新消息"
+    open={open}
+    placement="right"
+    width={480}
+    onClose={onClose}
+    destroyOnHidden={false}
+    footer={<Flex justify="flex-end" gap={8}><Button onClick={onClose} disabled={sending}>取消</Button><Button type="primary" onClick={handleSend} disabled={!message.trim() || sending} loading={sending}>发送</Button></Flex>}
+  >
+    <div className="db-message-drawer-content">
+      <div className="db-message-drawer-composer-header">
+        <Text strong>学员消息</Text>
+        <Space.Compact>
+          <Button type={composerMode === 'input' ? 'primary' : 'default'} onClick={() => changeComposerMode('input')}>文本输入</Button>
+          <Button type={composerMode === 'preview' ? 'primary' : 'default'} onClick={() => changeComposerMode('preview')} disabled={!message.trim()}>预览 JSON</Button>
+        </Space.Compact>
+      </div>
+      {composerMode === 'input' ? <Input.TextArea
+        className="db-message-drawer-textarea"
+        value={message}
+        onChange={event => setMessage(event.target.value)}
+        placeholder="输入新的学员消息..."
+        autoSize={{ minRows: 10, maxRows: 18 }}
+        disabled={sending}
+      /> :
+        <Spin spinning={previewLoading}>
+          <pre className="db-message-input-json"><code>{renderJsonPreviewCode(previewJson)}</code></pre>
+        </Spin>
+      }
+      <div className="db-message-drawer-config">
+        <Text strong>MQ 配置</Text>
+        <Select
+          className="db-message-drawer-config-select"
+          placeholder={mqConfigOptions.length ? '选择 MQ 配置' : '暂无 MQ 配置'}
+          options={mqConfigOptions}
+          value={selectedMqConfigId || undefined}
+          onChange={handleMqConfigChange}
+          disabled={!mqConfigOptions.length || sending}
+          allowClear
+        />
+      </div>
+    </div>
+  </Drawer>;
+}
 function DbConversationDetailPage({ data }) {
   const detail = data.detail;
   const [drawerNode, setDrawerNode] = useState(null);
@@ -1151,15 +1298,80 @@ function DbConversationDetailPage({ data }) {
   const flowPanelRef = useRef(null);
   const messageFlowRef = useRef(null);
   const historicalFocusNodeRef = useRef('');
+  const [lastUsedMqConfigId, setLastUsedMqConfigId] = useState('');
+  const [pendingMessages, setPendingMessages] = useState([]);
+  const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
+  const [pollUntil, setPollUntil] = useState(0);
+  const [pollVersion, setPollVersion] = useState(0);
   const messageScrollKeyRef = useRef('');
+  const pollInFlightRef = useRef(false);
+  const hasPollableMessage = pendingMessages.length > 0 || (detail?.messages || []).some(item =>
+    String(item.role || '').toUpperCase() === 'USER' && (item.processed === false || item.processing === true)
+  );
   useEffect(() => {
     setNodePositionOverrides({});
     setShowActions(false);
     historicalFocusNodeRef.current = '';
+    pollInFlightRef.current = false;
+    setPollUntil(0);
   }, [data.activeWorkflowId, data.activeConversationId]);
   useEffect(() => {
     setActiveExecutionIndex(0);
   }, [data.selectedTriggerMessageId, detail?.selectedTriggerMessageId]);
+  useEffect(() => {
+    const handleMessageAction = event => {
+      if (event.detail?.type === 'open') {
+        setMessageDrawerOpen(true);
+        emitListToolbar('load-db-conversation-mq-configs');
+      }
+    };
+    document.addEventListener('db-conversation-message-action', handleMessageAction);
+    return () => document.removeEventListener('db-conversation-message-action', handleMessageAction);
+  }, []);
+  useEffect(() => {
+    const persistedMessages = detail?.messages || [];
+    setPendingMessages(previous => {
+      const next = previous.filter(pending => !persistedMessages.some(message =>
+        String(message.role || '').toUpperCase() === 'USER' && message.content === pending.content
+      ));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [detail?.messages]);
+  useEffect(() => {
+    const handlePollFinished = event => {
+      const { workflowId, conversationId, success } = event.detail || {};
+      if (String(workflowId || '') !== String(data.activeWorkflowId || '') || String(conversationId || '') !== String(data.activeConversationId || '')) return;
+      pollInFlightRef.current = false;
+      if (!success) {
+        setPollUntil(0);
+        return;
+      }
+      setPollVersion(version => version + 1);
+    };
+    document.addEventListener('db-conversation-poll-finished', handlePollFinished);
+    return () => document.removeEventListener('db-conversation-poll-finished', handlePollFinished);
+  }, [data.activeWorkflowId, data.activeConversationId]);
+  useEffect(() => {
+    if (!pollUntil) return undefined;
+    if (!hasPollableMessage || !data.activeWorkflowId || !data.activeConversationId) {
+      setPollUntil(0);
+      return undefined;
+    }
+    const remainingMs = pollUntil - Date.now();
+    if (remainingMs <= 0) {
+      setPollUntil(0);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      emitListToolbar('poll-db-conversation-detail', {
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId
+      });
+    }, Math.min(DB_CONVERSATION_POLL_INTERVAL_MS, remainingMs));
+    return () => window.clearTimeout(timer);
+  }, [data.activeWorkflowId, data.activeConversationId, detail, hasPollableMessage, pollUntil, pollVersion]);
   useEffect(() => {
     if (data.detailLoading || !detail || !messageFlowRef.current) return undefined;
     const key = `${data.activeWorkflowId}\n${data.activeConversationId}`;
@@ -1188,9 +1400,50 @@ function DbConversationDetailPage({ data }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [data.historicalFocusNodeId, flowInstance, detail, flowZoom]);
+  
+  const handleSendMessage = async ({ message, mqConfigId, configId }) => {
+    const result = await api('/api/db/conversations/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId,
+        message,
+        mqConfigId,
+        configId: configId || data.connection?.configId || ''
+      })
+    });
+    if (result.success) {
+      setLastUsedMqConfigId(mqConfigId);
+      const pendingMsg = {
+        id: 'pending_' + Date.now(),
+        triggerMessageId: 'pending_' + Date.now(),
+        workflowId: data.activeWorkflowId,
+        conversationId: data.activeConversationId,
+        role: 'USER',
+        processed: false,
+        hasReplyAction: false,
+        content: message,
+        contentType: 'TEXT',
+        messageTimestamp: new Date().toLocaleString('zh-CN'),
+        isPending: true
+      };
+      setPendingMessages(prev => [...prev, pendingMsg]);
+      setPollUntil(Date.now() + DB_CONVERSATION_POLL_TIMEOUT_MS);
+    }
+    return result;
+  };
+  
+  // Handle refresh
+  const handleRefresh = () => {
+    emitListToolbar('load-db-conversation-detail', {
+      workflowId: data.activeWorkflowId,
+      conversationId: data.activeConversationId
+    });
+  };
+  
   if (data.detailLoading) return <div className="db-record-detail-loading"><Spin description="正在加载会话详情" /></div>;
   if (!detail) return <div className="db-record-empty"><Text type="secondary">暂无详情</Text></div>;
-  const messages = detail.messages || [];
+  const messages = [...(detail.messages || []), ...pendingMessages];
   const selectedTrigger = data.selectedTriggerMessageId || detail.selectedTriggerMessageId || '';
   const executions = detail.executionsByTrigger?.[selectedTrigger] || [];
   const executionStepIndex = Math.min(Math.max(activeExecutionIndex, 0), Math.max(executions.length - 1, 0));
@@ -1223,7 +1476,7 @@ function DbConversationDetailPage({ data }) {
   const nodeById = new Map(rawNodes.map(node => [node.id, node]));
   const executionMap = new Map(executions.map(item => [item.nodeId, item]));
   const errorTriggerMessageIds = new Set(Object.entries(detail.executionsByTrigger || {})
-    .filter(([, triggerExecutions]) => triggerExecutions.some(execution => !isDbExecutionSuccess(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
+    .filter(([, triggerExecutions]) => triggerExecutions.some(execution => isDbExecutionFailure(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
     .map(([triggerMessageId]) => triggerMessageId));
   const rawMinX = currentRawNodes.length ? Math.min(...currentRawNodes.map(node => Number(node.position?.x || 0))) : 0;
   const rawMinY = currentRawNodes.length ? Math.min(...currentRawNodes.map(node => Number(node.position?.y || 0))) : 0;
@@ -1389,25 +1642,31 @@ function DbConversationDetailPage({ data }) {
   };
   return <div className="db-record-detail-page">
     <div className="db-record-detail-layout">
-      <aside ref={messageFlowRef} className="db-message-flow">
+      <aside className="db-message-flow">
         <div className="db-message-flow-toolbar">
-          <Space size={4}><span className="db-message-flow-title">消息记录</span><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: data.activeWorkflowId, conversationId: data.activeConversationId })}>会话变量</Button><span className="db-message-action-switch"><span>展示动作</span><Switch size="small" checked={showActions} onChange={setShowActions} /></span></Space>
-          <Tooltip title={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'}><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={messageOrder === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />} aria-label={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'} onClick={() => setMessageOrder(order => order === 'asc' ? 'desc' : 'asc')} /></Tooltip>
+          <Space size={4} align="center"><span className="db-message-flow-title">消息记录</span><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: data.activeWorkflowId, conversationId: data.activeConversationId })}>会话变量</Button><span className="db-message-action-switch"><span>展示动作</span><Switch size="small" checked={showActions} onChange={setShowActions} /></span></Space>
+          <Space size={8} align="center">
+            <Tooltip title="刷新消息"><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={<ReloadOutlined />} aria-label="刷新消息" onClick={handleRefresh} /></Tooltip>
+            <Tooltip title={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'}><Button className="db-message-sort-button" type="text" shape="circle" size="small" icon={messageOrder === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />} aria-label={messageOrder === 'asc' ? '切换为倒序' : '切换为正序'} onClick={() => setMessageOrder(order => order === 'asc' ? 'desc' : 'asc')} /></Tooltip>
+          </Space>
         </div>
-        {orderedMessageGroups.map(group => {
+        <div ref={messageFlowRef} className="db-message-flow-list">
+          {orderedMessageGroups.map(group => {
           const selected = group.triggerMessageId === selectedTrigger;
           const hasError = errorTriggerMessageIds.has(group.triggerMessageId);
           const userMessage = group.user || group.assistant;
           const assistantMessage = group.assistant;
-          const unprocessed = userMessage?.processed === false;
-          const noReply = !unprocessed && userMessage?.hasReplyAction === false;
+          const pending = userMessage?.isPending === true || userMessage?.processed === false;
+          const processing = userMessage?.processing === true;
+          const noReply = !pending && !processing && !userMessage?.failed && userMessage?.hasReplyAction === false;
+          const isPending = userMessage?.isPending === true;
           const selectMessage = () => emitListToolbar('select-db-message', { triggerMessageId: group.triggerMessageId });
           const shouldSkipCardSelect = event => event.target?.closest?.('.db-message-trigger-copy-zone');
           return <div
             key={group.triggerMessageId}
             role="button"
             tabIndex={0}
-            className={`db-message-item conversation ${selected ? 'selected' : ''}`}
+            className={`db-message-item conversation ${selected ? 'selected' : ''} ${isPending ? 'pending' : ''}`}
             onClick={event => {
               if (shouldSkipCardSelect(event)) return;
               selectMessage();
@@ -1421,7 +1680,7 @@ function DbConversationDetailPage({ data }) {
           >
             <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} />
             <span className="db-message-section">
-              <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{unprocessed || noReply || hasError ? <span className="db-message-status-tags">{unprocessed ? <Tag color="gold">未处理</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+              <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
             </span>
             {showActions ? <DbConversationActionGroups actions={group.actions} /> : null}
@@ -1430,7 +1689,11 @@ function DbConversationDetailPage({ data }) {
               <span className="db-message-content">{assistantMessage?.content === '' ? '\u00a0' : renderDbMessageText(assistantMessage?.content)}</span>
             </span> : null}
           </div>;
-        })}
+          })}
+        </div>
+        <div className="db-message-flow-footer">
+          <Button type="primary" icon={<SendOutlined />} block onClick={() => emitDbConversationMessageAction('open')}>发送新消息</Button>
+        </div>
       </aside>
       <section ref={flowPanelRef} className="db-flow-panel">
         <ReactFlow
@@ -1493,6 +1756,7 @@ function DbConversationDetailPage({ data }) {
       </section>
     </div>
     <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} />
+    <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} />
   </div>;
 }
 
@@ -1889,13 +2153,15 @@ function RecordDetailHeader() {
 function DbConversationDetailHeader({ detail }) {
   const title = detail?.loading ? '会话记录详情' : `${detail?.workflowId || '-'} · ${detail?.conversationId || '-'}`;
   return (
-    <Flex className="antd-detail-header" align="center" justify="flex-start" gap={12}>
-      <Tooltip title="返回会话记录列表">
-        <Button type="text" shape="circle" icon={<ArrowLeftOutlined />} aria-label="返回会话记录列表" onClick={() => emitListToolbar('back-db-conversations')} />
-      </Tooltip>
-      <Flex className="antd-detail-summary" vertical gap={2}>
-        <Title level={5} style={{ margin: 0 }}>{title}</Title>
-        {detail?.workflowName ? <Text type="secondary">{detail.workflowName}</Text> : null}
+    <Flex className="antd-detail-header db-conversation-detail-header" align="center" justify="flex-start" gap={12}>
+      <Flex align="center" gap={12}>
+        <Tooltip title="返回会话记录列表">
+          <Button type="text" shape="circle" icon={<ArrowLeftOutlined />} aria-label="返回会话记录列表" onClick={() => emitListToolbar('back-db-conversations')} />
+        </Tooltip>
+        <Flex className="antd-detail-summary" vertical gap={2}>
+          <Title level={5} style={{ margin: 0 }}>{title}</Title>
+          {detail?.workflowName ? <Text type="secondary">{detail.workflowName}</Text> : null}
+        </Flex>
       </Flex>
     </Flex>
   );

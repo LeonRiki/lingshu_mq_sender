@@ -1886,11 +1886,45 @@ function dbConversationFriendNick(executions = []) {
   return '';
 }
 
-function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies) {
+function dbExecutionFailed(execution) {
+  const status = String(execution.status || '').toUpperCase();
+  return Boolean(execution.error_message || execution.error_class || execution.error_code)
+    || ['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'TIMEOUT', 'ABORTED'].includes(status);
+}
+
+function dbWorkflowTerminalNodeIds(workflowGraph = {}) {
+  const nodes = Array.isArray(workflowGraph.nodes) ? workflowGraph.nodes : [];
+  const sourceNodeIds = new Set((Array.isArray(workflowGraph.edges) ? workflowGraph.edges : [])
+    .map(edge => String(edge.source || ''))
+    .filter(Boolean));
+  return new Set(nodes
+    .filter(node => {
+      const nodeId = String(node.id || '');
+      const nodeType = String(node.type || node.nodeType || node.data?.nodeType || '').toLowerCase();
+      return nodeType === 'output' || (nodeId && !sourceNodeIds.has(nodeId));
+    })
+    .map(node => String(node.id)));
+}
+
+function dbTriggerExecutionStates(executions = [], terminalNodeIds = new Set()) {
+  const states = new Map();
+  executions.forEach(execution => {
+    const key = dbTriggerKeyOf(execution);
+    if (!key) return;
+    const state = states.get(key) || { started: false, finished: false, failed: false };
+    state.started = true;
+    state.failed ||= dbExecutionFailed(execution);
+    const nodeId = dbNodeIdOf(execution);
+    const nodeType = String(execution.node_type || execution.nodeType || '').toLowerCase();
+    if (nodeType === 'output' || terminalNodeIds.has(nodeId)) state.finished = true;
+    states.set(key, state);
+  });
+  return states;
+}
+
+function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds) {
   const actionEventsByTrigger = dbExecutionActionEvents(executions);
-  const processedTriggerKeys = new Set(executions
-    .filter(execution => dbWorkflowIdOf(execution) && dbTriggerIdOf(execution))
-    .map(dbTriggerKeyOf));
+  const executionStates = dbTriggerExecutionStates(executions, terminalNodeIds);
   const assistantMessagesByTrigger = new Map();
   sortedMessages
     .filter(message => String(message.role || '').toUpperCase() === 'ASSISTANT' && dbTriggerIdOf(message))
@@ -1902,6 +1936,7 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
     .filter(message => String(message.role || '').toUpperCase() === 'USER' && dbTriggerIdOf(message))
     .flatMap(message => {
       const key = dbTriggerKeyOf(message);
+      const executionState = executionStates.get(key) || { started: false, finished: false, failed: false };
       const assistantMessage = assistantMessagesByTrigger.get(key);
       const hasReplyAction = assistantReplies.has(key);
       const assistantContent = hasReplyAction ? assistantReplies.get(key) : '';
@@ -1928,7 +1963,9 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
           workflowId: String(message.workflow_id || ''),
           conversationId: message.conversation_id || '',
           role: message.role || 'USER',
-          processed: processedTriggerKeys.has(key),
+          processed: executionState.started,
+          processing: executionState.started && !executionState.finished && !executionState.failed,
+          failed: executionState.failed,
           hasReplyAction,
           content: dbMessageDisplayContent(message, triggerInputs, assistantReplies),
           contentType: message.content_type || '',
@@ -2252,6 +2289,7 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
     return result;
   }, {});
   const workflowGraph = parseDbJson(workflow?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
+  const terminalNodeIds = dbWorkflowTerminalNodeIds(workflowGraph);
   return {
     workflow: workflow ? {
       id: String(workflow.id || workflow.workflow_id || ''),
@@ -2262,13 +2300,153 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
     workflowGraph,
     historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
     friendNick: dbConversationFriendNick(executions),
-    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies),
+    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds),
     variables: normalizeDbConversationVariables(variables),
     selectedTriggerMessageId,
     executionsByTrigger
   };
 }
 
+
+function dbTriggerPayload(execution) {
+  const inputs = parseDbJson(execution.inputs, null) || {};
+  const outputs = parseDbJson(execution.outputs, null) || {};
+  return { ...inputs, ...outputs };
+}
+
+function extractDbConversationIdentity(triggerExecution) {
+  const payload = dbTriggerPayload(triggerExecution);
+  return {
+    weworkCorpId: String(payload.weworkCorpId || ""),
+    weworkAccount: String(payload.weworkAccount || ""),
+    friendExternalId: String(payload.friendExternalId || ""),
+    friendRemoteId: String(payload.friendRemoteId || ""),
+    agentId: String(payload.agentId || ""),
+    lingxiAccount: String(payload.lingxiAccount || ""),
+    friendNick: String(payload.friendNick || ""),
+    weworkAccountAlias: String(payload.weworkAccountAlias || "")
+  };
+}
+
+function aggregateDbConversationTagList(firstTriggerExecution, executions) {
+  const firstPayload = dbTriggerPayload(firstTriggerExecution);
+  const tags = new Set(Array.isArray(firstPayload.tagList) ? firstPayload.tagList : []);
+  const executionsByTrigger = new Map();
+  executions.forEach(execution => {
+    const triggerId = dbTriggerIdOf(execution);
+    if (!triggerId) return;
+    if (!executionsByTrigger.has(triggerId)) executionsByTrigger.set(triggerId, []);
+    executionsByTrigger.get(triggerId).push(execution);
+  });
+  const tagEvents = [];
+  executionsByTrigger.forEach(items => {
+    const executionsByNodeId = new Map(items
+      .map(execution => [dbNodeIdOf(execution), execution])
+      .filter(([nodeId]) => Boolean(nodeId)));
+    items.forEach(execution => {
+      tagEvents.push(...dbSendExecutionActions(execution, executionsByNodeId));
+    });
+  });
+  tagEvents
+    .sort((left, right) => String(left.startedAt || '').localeCompare(String(right.startedAt || '')))
+    .forEach(event => {
+      const tag = dbInputText(event.content).trim();
+      if (!tag) return;
+      if (event.tagOperateType === 2) tags.delete(tag);
+      else tags.add(tag);
+    });
+  return [...tags];
+}
+
+function buildDbConversationInputList(latestTriggerExecution, executions) {
+  const triggerPayload = dbTriggerPayload(latestTriggerExecution);
+  const inputList = Array.isArray(triggerPayload.inputList) ? [...triggerPayload.inputList] : [];
+  const friendRemoteId = String(triggerPayload.friendRemoteId || '').trim();
+  const latestStudentInputs = Array.isArray(triggerPayload.input) ? triggerPayload.input : [triggerPayload.input];
+  latestStudentInputs
+    .map(dbInputText)
+    .map(value => value.trim())
+    .filter(Boolean)
+    .forEach(value => {
+      const message = friendRemoteId ? `${friendRemoteId}:${value}` : value;
+      if (!inputList.includes(message)) inputList.push(message);
+    });
+  const triggerId = dbTriggerIdOf(latestTriggerExecution);
+  const triggerExecutions = executions.filter(execution => dbTriggerIdOf(execution) === triggerId);
+  const executionsByNodeId = new Map(triggerExecutions
+    .map(execution => [dbNodeIdOf(execution), execution])
+    .filter(([nodeId]) => Boolean(nodeId)));
+  const lingxiSendExecutions = triggerExecutions
+    .filter(execution => String(execution.node_type || execution.nodeType || '') === 'lingxi_send')
+    .sort((left, right) => String(left.started_at || '').localeCompare(String(right.started_at || '')));
+  for (const execution of lingxiSendExecutions.reverse()) {
+    const aiReply = dbSendExecutionContent(execution, executionsByNodeId);
+    if (!aiReply.found || !aiReply.value) continue;
+    const teacherId = String(triggerPayload.teacherId || triggerPayload.teacher_id || triggerPayload.lingxiAccount || '').trim()
+      || inputList.slice().reverse().map(item => String(item).split(':', 1)[0]).find(prefix => prefix && prefix !== friendRemoteId)
+      || 'mqSender';
+    const message = `${teacherId}:${aiReply.value}`;
+    if (!inputList.includes(message)) inputList.push(message);
+    break;
+  }
+  return inputList;
+}
+
+// Prepare full payload for sending DB conversation message
+function prepareDbConversationPayload({
+  workflowId,
+  conversationId,
+  message,
+  executions,
+  agentId,
+  mqConfigId
+}) {
+  // Sort executions by time
+  const sortedExecutions = [...executions].sort((a, b) => 
+    String(a.started_at || "").localeCompare(String(b.started_at || ""))
+  );
+  
+  // Find trigger executions
+  const triggerExecutions = sortedExecutions.filter(e => {
+    const nodeType = String(e.node_type || e.nodeType || "");
+    const nodeName = String(e.node_name || e.nodeName || "");
+    return nodeType === "lingxi_trigger" || nodeName === "灵犀触发器";
+  });
+  
+  if (!triggerExecutions.length) {
+    throw new Error("未找到触发器执行记录");
+  }
+  
+  // Get latest trigger for identity and inputList
+  const latestTrigger = triggerExecutions.at(-1);
+  const identity = extractDbConversationIdentity(latestTrigger);
+  
+  // Get first trigger for initial tagList
+  const firstTrigger = triggerExecutions[0];
+  const tagList = aggregateDbConversationTagList(firstTrigger, sortedExecutions);
+  
+  // Build inputList
+  const inputList = buildDbConversationInputList(latestTrigger, sortedExecutions);
+  
+  // Build payload
+  const now = nowIsoLocal();
+  return {
+    requestId: randomRequestId(identity.weworkCorpId, 1),
+    input: [message],
+    inputList,
+    latestMsgTime: now,
+    weworkCorpId: identity.weworkCorpId,
+    agentId: agentId || identity.agentId || loadConfig().defaultAgentId,
+    addTime: now,
+    weworkAccount: identity.weworkAccount,
+    friendNick: identity.friendNick || randomNick(),
+    friendExternalId: identity.friendExternalId,
+    tagList,
+    weworkAccountAlias: identity.weworkAccountAlias || loadConfig().defaultAlias,
+    friendRemoteId: identity.friendRemoteId,
+    lingxiAccount: identity.lingxiAccount || "mqSender"
+  };
+}
 async function testDbConnection(configId) {
   return withDbClientQueue(async () => {
     const config = dbConfig(configId);
@@ -2590,8 +2768,12 @@ async function listDbConversations(url) {
              CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
                THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_name = '灵犀触发器'
-               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
-               ELSE e.outputs
+               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
+               WHEN e.node_type = 'agent'
+                 THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
+               WHEN e.node_type IN ('condition', 'set_variable')
+                 THEN e.outputs
+               ELSE NULL
              END AS outputs,
              e.status,
              e.error_message,
@@ -2651,11 +2833,11 @@ async function dbConversationDetail(url) {
              e.node_id,
              e.node_type,
              e.node_name,
-             CASE WHEN e.node_type IN ('lingxi_send', 'set_variable') THEN e.inputs ELSE NULL END AS inputs,
+             CASE WHEN e.node_type IN ('lingxi_send', 'set_variable', 'lingxi_trigger') OR e.node_name = '灵犀触发器' THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
                WHEN e.node_name = '灵犀触发器'
-                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick')
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -2791,6 +2973,141 @@ async function dbConversationVariables(url) {
     `, [workflowId, conversationId]);
     return { variables: normalizeDbConversationVariables(variables.rows) };
   });
+}
+
+async function sendDbConversationMessage(req) {
+  const body = await parseBody(req);
+  const configId = String(body.configId || "").trim();
+  const workflowId = String(body.workflowId || "").trim();
+  const conversationId = String(body.conversationId || "").trim();
+  const message = String(body.message || "").trim();
+  const agentId = String(body.agentId || "").trim();
+  const mqConfigId = String(body.mqConfigId || "").trim();
+  
+  if (!workflowId || !conversationId || !message) {
+    const err = new Error("缺少 workflowId、conversationId 或 message");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const configuredMqConfigs = readMqConfigs();
+  if (!configuredMqConfigs.length) {
+    const err = new Error('未配置 MQ，请前往系统设置完成 MQ 配置后再发送');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!mqConfigId) {
+    const err = new Error('请选择 MQ 配置后再发送');
+    err.statusCode = 400;
+    throw err;
+  }
+  const selectedMqConfig = configuredMqConfigs.find(config => config.id === mqConfigId);
+  if (!selectedMqConfig) {
+    const err = new Error('所选 MQ 配置不存在或已被删除');
+    err.statusCode = 400;
+    throw err;
+  }
+  
+  // Fetch executions from database
+  const executions = await withDbClient(configId, async client => {
+    const triggerIds = (await client.query(
+      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL",
+      [workflowId, conversationId]
+    )).rows.map(r => r.trigger_message_id).filter(Boolean);
+    
+    if (!triggerIds.length) return [];
+    
+    const runId = "platform:" + workflowId + ":" + conversationId;
+    return (await client.query(
+      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id::text = $1 AND e.deleted_at IS NULL AND (e.trigger_message_id = ANY($2::text[]) OR e.run_id = $3) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
+      [workflowId, triggerIds, runId]
+    )).rows;
+  });
+  
+  if (!executions.length) {
+    const err = new Error("未找到该会话的执行记录");
+    err.statusCode = 404;
+    throw err;
+  }
+  
+  // Prepare payload
+  const payload = prepareDbConversationPayload({
+    workflowId,
+    conversationId,
+    message,
+    executions,
+    agentId,
+    mqConfigId
+  });
+  
+  // Send via MQ
+  const config = selectedMqConfig;
+  const snapshot = {
+    index: 1,
+    role: "student",
+    content: message,
+    delaySeconds: 0,
+    payload
+  };
+  
+  const gateway = await checkMqGatewayReady(config);
+  const sentSnapshot = gateway.ready
+    ? { ...snapshot, mqResult: await sendSnapshotToMq(snapshot, config) }
+    : { ...snapshot, mqResult: failedMqResult(gateway.error) };
+  
+  const summary = summarizeMqSend([sentSnapshot], gateway.ready);
+  
+  return {
+    success: sentSnapshot.mqResult?.success || false,
+    snapshot: sentSnapshot,
+    ...summary
+  };
+}
+async function previewDbConversationPayload(url) {
+  const configId = String(url.searchParams.get("configId") || "").trim();
+  const workflowId = String(url.searchParams.get("workflowId") || "").trim();
+  const conversationId = String(url.searchParams.get("conversationId") || "").trim();
+  const message = String(url.searchParams.get("message") || "").trim();
+  const agentId = String(url.searchParams.get("agentId") || "").trim();
+  const mqConfigId = String(url.searchParams.get("mqConfigId") || "").trim();
+  
+  if (!workflowId || !conversationId || !message) {
+    const err = new Error("缺少 workflowId、conversationId 或 message");
+    err.statusCode = 400;
+    throw err;
+  }
+  
+  const executions = await withDbClient(configId, async client => {
+    const triggerIds = (await client.query(
+      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL",
+      [workflowId, conversationId]
+    )).rows.map(r => r.trigger_message_id).filter(Boolean);
+    
+    if (!triggerIds.length) return [];
+    
+    const runId = "platform:" + workflowId + ":" + conversationId;
+    return (await client.query(
+      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id::text = $1 AND e.deleted_at IS NULL AND (e.trigger_message_id = ANY($2::text[]) OR e.run_id = $3) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
+      [workflowId, triggerIds, runId]
+    )).rows;
+  });
+  
+  if (!executions.length) {
+    const err = new Error("未找到该会话的执行记录");
+    err.statusCode = 404;
+    throw err;
+  }
+  
+  const payload = prepareDbConversationPayload({
+    workflowId,
+    conversationId,
+    message,
+    executions,
+    agentId,
+    mqConfigId
+  });
+  
+  return { payload };
 }
 
 function wait(milliseconds) {
@@ -3341,6 +3658,12 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/db/conversations/variables') {
       return json(res, 200, await dbConversationVariables(url));
+    }
+    if (req.method === 'GET' && pathname === '/api/db/conversations/preview') {
+      return json(res, 200, await previewDbConversationPayload(url));
+    }
+    if (req.method === 'POST' && pathname === '/api/db/conversations/send') {
+      return json(res, 201, await sendDbConversationMessage(req));
     }
     if (req.method === 'GET' && pathname === '/api/cases') {
       return json(res, 200, listCases());

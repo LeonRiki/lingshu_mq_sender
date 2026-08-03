@@ -1156,18 +1156,28 @@ main {
 .db-message-flow {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 0;
+  padding: 0;
   background: #F5F7FA;
-  overflow-y: auto;
-  scrollbar-width: none;
+  overflow: hidden;
   border-top: 0;
   border-bottom: 0;
   border-left: 0;
   border-radius: 0;
 }
 
-.db-message-flow::-webkit-scrollbar {
+.db-message-flow-list {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.db-message-flow-list::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -1192,7 +1202,7 @@ main {
   z-index: 2;
   align-items: center;
   justify-content: space-between;
-  margin: 0 -12px;
+  margin: 0;
   padding: 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -1222,6 +1232,13 @@ main {
 .db-message-sort-button:focus-visible {
   color: #0958d9 !important;
   background: #dbeafe !important;
+}
+
+.db-message-flow-footer {
+  flex: 0 0 auto;
+  padding: 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
 }
 
 .db-message-item {
@@ -2980,6 +2997,15 @@ pre {
 .record-detail-open #caseDetailHeader,
 .db-record-detail-open #caseDetailHeader {
   display: block;
+}
+
+.db-record-detail-open .topbar-actions {
+  flex: 1;
+  min-width: 0;
+}
+
+.db-record-detail-open #caseDetailHeader {
+  width: 100%;
 }
 
 .case-detail-open .editor {
@@ -5070,4 +5096,108 @@ pre {
   .quick-hover-groups {
     flex-wrap: wrap;
   }
+}
+
+.db-message-drawer-content {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.db-message-drawer-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-message-drawer-config-select {
+  width: 100%;
+}
+
+.db-message-drawer-composer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-message-drawer-textarea {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+}
+
+.db-message-drawer-content .ant-spin {
+  display: block;
+}
+
+.db-message-drawer-content .db-message-input-json {
+  min-height: 260px;
+  max-height: calc(100vh - 292px);
+}
+
+.db-message-input-json {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  color: #cbd5e1;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  tab-size: 2;
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.db-message-input-json code {
+  color: inherit;
+  font: inherit;
+}
+
+.db-message-input-json .json-token-key { color: #93c5fd; }
+.db-message-input-json .json-token-string { color: #86efac; }
+.db-message-input-json .json-token-number { color: #fbbf24; }
+.db-message-input-json .json-token-boolean { color: #c4b5fd; }
+.db-message-input-json .json-token-null { color: #fca5a5; }
+.db-message-input-json .json-token-punctuation { color: #94a3b8; }
+
+.db-conversation-detail-header {
+  width: 100%;
+}
+
+@media (max-width: 560px) {
+  .db-message-drawer-composer-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .db-message-drawer-composer-header .ant-space-compact {
+    width: 100%;
+  }
+
+  .db-message-drawer-composer-header .ant-btn {
+    flex: 1;
+  }
+}
+
+/* Pending message style */
+.db-message-item.pending {
+  border-left: 3px solid var(--primary);
+}
+
+.db-message-item.pending .db-message-status-tags {
+  display: inline-flex;
+}
+
+.db-message-processing-tag {
+  animation: db-message-processing-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes db-message-processing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
