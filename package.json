@@ -1,6 +1,6 @@
 {
   "name": "workflow-message-tester-v1",
-  "version": "2.1.11",
+  "version": "2.1.10",
   "private": true,
   "description": "AI 工作流消息测试平台 V1，本地 Node 服务 + 静态前端，无运行时 npm 依赖。",
   "scripts": {
@@ -18,17 +18,17 @@
     "release:publish:dry-run": "node scripts/publish-release.js --dry-run"
   },
   "dependencies": {
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
     "@ant-design/icons": "^6.3.2",
     "@xyflow/react": "^12.11.2",
     "antd": "^6.5.0",
-    "pg": "^8.22.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "esbuild": "^0.28.1"
   },
   "engines": {
     "node": ">=18"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.1"
   }
 }

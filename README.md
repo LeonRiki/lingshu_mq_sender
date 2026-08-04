@@ -49,4 +49,6 @@ cache/        MQ 配置、运行缓存与在线更新备份
 
 ## 依赖
 
-需要用户电脑已安装 Node.js 18 或更高版本。
+Windows 会优先使用电脑上已有的 Node.js 18 或更高版本。未检测到兼容版本时，启动脚本会自动下载官方 Node.js LTS 便携运行时到 `%LOCALAPPDATA%\LingshuMQSender\node`，无需 `winget` 或管理员权限；随后仅安装服务运行所需的 `pg` 生产依赖。
+
+macOS 需要 Node.js 18 或更高版本，启动脚本会在缺失时尝试通过 Homebrew 安装。
