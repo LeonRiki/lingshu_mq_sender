@@ -9,11 +9,24 @@ echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [ERROR] Node.js 18 or later was not found.
-  echo Install Node.js from https://nodejs.org/
-  echo.
-  pause
-  exit /b 1
+  echo [INFO] Node.js was not found. Installing Node.js LTS...
+  where winget >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Windows Package Manager (winget) was not found.
+    echo Install Node.js 18 or later from https://nodejs.org/ and run this file again.
+    echo.
+    pause
+    exit /b 1
+  )
+  winget install --id OpenJS.NodeJS.LTS --exact --accept-source-agreements --accept-package-agreements
+  set "PATH=%ProgramFiles%\nodejs;%PATH%"
+  where node >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Node.js installation did not complete. Restart Windows and run this file again.
+    echo.
+    pause
+    exit /b 1
+  )
 )
 
 node -v

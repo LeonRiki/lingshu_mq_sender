@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.10",
+  "version": "2.1.11",
   "notes": [],
   "files": [
     {
       "path": "mac-启动服务.command",
-      "sha256": "c0f223b1214434f59f618ccb1d050932beb86882f16d4ca1a2a23713aa2c0359"
+      "sha256": "8bde82cf4f68c2d8ad87368f5b414d0d92885f0d51432da3529230045bf777b4"
     },
     {
       "path": "server.js",
@@ -13,7 +13,7 @@
     },
     {
       "path": "version.json",
-      "sha256": "927ab4355b9f52e0de947a84e92771b7cbb76a661ca501afceb943ca24a4af6c"
+      "sha256": "792c7b35b437ff07786fdc1b99463e313f0df25f8b44d1ddcccaaf0481c60391"
     },
     {
       "path": "web/app.js",
@@ -53,7 +53,7 @@
     },
     {
       "path": "win-启动服务.bat",
-      "sha256": "06379be006e98576f016ae816fda9e7b03aeb6f12163847538eccd9ee8ae8767"
+      "sha256": "1f681a2af514859d272d053db22ba5e12695f818f77c9f6b32fe637f4efe237d"
     }
   ]
 }
