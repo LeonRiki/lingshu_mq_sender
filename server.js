@@ -1695,7 +1695,7 @@ function dbSendExecutionPreview(execution, executionsByNodeId) {
   const tagActions = actions.filter(item => Number(item?.actionType) === 4);
   if (tagActions.length) {
     const content = tagActions.map(action => {
-      const value = dbResolveSendContent(action.actionMessage, localInputs, executionsByNodeId);
+      const value = dbResolveSendContent(action.actionContent, localInputs, executionsByNodeId);
       return `${Number(action?.tagOperateType) === 2 ? '-' : '+'}${value === null ? 'null' : dbInputText(value)}`;
     }).join(' / ');
     return { label: '打标签', content };
@@ -1717,7 +1717,7 @@ function dbSendExecutionActions(execution, executionsByNodeId) {
     .filter(action => Number(action?.actionType) === 4)
     .map(action => {
       const operateType = Number(action?.tagOperateType);
-      const content = dbResolveSendContent(action.actionMessage, localInputs, executionsByNodeId);
+      const content = dbResolveSendContent(action.actionContent, localInputs, executionsByNodeId);
       return {
         actionType: 'tag',
         actionLabel: '打标签',
