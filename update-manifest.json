@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.9",
+  "version": "2.1.10",
   "notes": [],
   "files": [
     {
@@ -13,7 +13,7 @@
     },
     {
       "path": "version.json",
-      "sha256": "c35c76257b3042a8a7190c9a86e681c5437bca76dc27c30a6635ace4d525e899"
+      "sha256": "927ab4355b9f52e0de947a84e92771b7cbb76a661ca501afceb943ca24a4af6c"
     },
     {
       "path": "web/app.js",
@@ -53,7 +53,7 @@
     },
     {
       "path": "win-启动服务.bat",
-      "sha256": "d5518d7e9714d9a9b310ca92053fc03cbce82152616b723caa3607d383b4ed75"
+      "sha256": "06379be006e98576f016ae816fda9e7b03aeb6f12163847538eccd9ee8ae8767"
     }
   ]
 }
