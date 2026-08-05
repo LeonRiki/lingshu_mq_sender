@@ -516,7 +516,7 @@ function DbConversationListPage({ data }) {
       <div className="db-filter-grid">
         <div className="db-filter-field"><span><b>*</b>工作流 ID</span><Input className="db-filter-control" allowClear value={filters.workflowId} onChange={event => emitListToolbarChange('db-workflow-id', event.target.value)} placeholder="请输入工作流ID" /></div>
         <div className="db-filter-field"><span><b>*</b>时间范围</span><DatePicker.RangePicker className="db-filter-control" format="YYYY-MM-DD" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
-        <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称" /></div>
+        <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
         <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
         <div className="db-filter-field"><span>消息摘要</span><Input className="db-filter-control" allowClear value={filters.keyword} onChange={event => emitListToolbarChange('db-keyword', event.target.value)} placeholder="请输入消息摘要关键词" /></div>
         <div className="db-filter-field"><span>状态</span><Select className="db-filter-control" value={filters.hasError} onChange={value => emitListToolbarChange('db-has-error', value)} options={[{ value: '', label: '全部状态' }, { value: 'true', label: '有错误节点' }, { value: 'false', label: '无错误节点' }]} /></div>
@@ -657,19 +657,22 @@ function dbDecodeEscapedText(value) {
   });
 }
 
-function dbLingxiSendOutputsSummary(node) {
-  const sourceOutputs = node?.outputs && typeof node.outputs === 'object' && !Array.isArray(node.outputs) ? node.outputs : {};
-  const hiddenKeys = new Set(['eventid', 'tenantid']);
-  const summary = {
-    inputList: dbFindNestedField(node?.outputs, 'inputList') ?? dbFindNestedField(node?.inputs, 'inputList') ?? '',
-    friendNick: dbFindNestedField(node?.outputs, 'friendNick') ?? dbFindNestedField(node?.inputs, 'friendNick') ?? ''
-  };
-  Object.entries(sourceOutputs).forEach(([key, value]) => {
-    const normalizedKey = key.toLowerCase();
-    if (hiddenKeys.has(normalizedKey) || normalizedKey === 'inputlist' || normalizedKey === 'friendnick') return;
-    summary[key] = value;
-  });
-  return summary;
+function dbLingxiSendInputsSummary(inputs) {
+  const source = inputs && typeof inputs === 'object' && !Array.isArray(inputs) ? inputs : {};
+  const fields = ['actionType', 'tagOperateType', 'actionContent', 'actionResult', 'actionMessage'];
+  let content = source.content;
+  if (typeof content === 'string') {
+    try {
+      content = JSON.parse(content);
+    } catch {
+      content = null;
+    }
+  }
+  const actionSource = content?.actions ?? source.actions ?? {};
+  return Object.fromEntries(fields.map(field => {
+    const key = Object.keys(source).find(item => item.toLowerCase() === field.toLowerCase());
+    return [field, key ? source[key] : dbFindNestedField(actionSource, field) ?? dbFindNestedField(content, field) ?? ''];
+  }));
 }
 
 function dbNodeOutputsSummary(outputs, preferredKeys = [], excludedKeys = []) {
@@ -1149,13 +1152,16 @@ function DbNodeDrawerTitle({ node, meta }) {
 function DbNodeDrawer({ node, onClose, loading = false }) {
   const nodeType = String(node?.nodeType || '').toLowerCase();
   const isSetVariable = nodeType === 'set_variable';
-  const showInputsSummary = !['lingxi_send', 'lingxi_trigger'].includes(nodeType);
-  const inputsSummary = nodeType === 'condition' ? dbConditionInputsSummary(node?.inputs) : node?.inputs;
+  const showInputsSummary = nodeType !== 'lingxi_trigger';
+  const showOutputsSummary = nodeType !== 'lingxi_send';
+  const inputsSummary = nodeType === 'condition'
+    ? dbConditionInputsSummary(node?.inputs)
+    : nodeType === 'lingxi_send'
+      ? dbLingxiSendInputsSummary(node?.inputs)
+      : node?.inputs;
   const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
   const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.outputs) : [];
-  const outputsSummary = nodeType === 'lingxi_send'
-    ? dbLingxiSendOutputsSummary(node)
-    : dbNodeOutputsSummary(node?.outputs, nodeType === 'lingxi_trigger' ? ['agentId', 'friendNick', 'latestMsgTime', 'input', 'tagList', 'inputList'] : ['inputList'], nodeType === 'lingxi_trigger' ? ['addTime'] : []);
+  const outputsSummary = dbNodeOutputsSummary(node?.outputs, nodeType === 'lingxi_trigger' ? ['agentId', 'friendNick', 'latestMsgTime', 'input', 'tagList', 'inputList'] : ['inputList'], nodeType === 'lingxi_trigger' ? ['addTime'] : []);
   const meta = dbNodeMeta(node?.nodeType);
   const isSuccess = isDbExecutionSuccess(node?.status);
   const statusText = node?.status || '-';
@@ -1169,8 +1175,8 @@ function DbNodeDrawer({ node, onClose, loading = false }) {
       <div className="db-node-summary-row"><Text type="secondary">开始时间</Text><Text>{node.startedAt || '-'}</Text></div>
     </div>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} />}
-    {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} /> : null}
+    {showOutputsSummary ? nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} /> : null}
+    {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} showType={nodeType !== 'lingxi_send'} /> : null}
     {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
     <DbNodeRawDataCollapse node={node} />
     <DbNodeRunId runId={node.runId} />
@@ -1382,7 +1388,7 @@ function DbConversationDetailPage({ data }) {
   const canSendMessage = activeDbConfig?.environment === 'test';
   const [drawerNode, setDrawerNode] = useState(null);
   const [messageOrder, setMessageOrder] = useState('asc');
-  const [showActions, setShowActions] = useState(false);
+  const [showActions, setShowActions] = useState(() => window.localStorage?.getItem('db-conversation-show-actions') === 'true');
   const [flowInstance, setFlowInstance] = useState(null);
   const [flowZoom, setFlowZoom] = useState(0.8);
   const [nodePositionOverrides, setNodePositionOverrides] = useState({});
@@ -1402,13 +1408,15 @@ function DbConversationDetailPage({ data }) {
   const hasPollableMessage = pollingTriggerMessageIds.length > 0;
   useEffect(() => {
     setNodePositionOverrides({});
-    setShowActions(false);
     historicalFocusNodeRef.current = '';
     pollInFlightRef.current = false;
     setPollUntil(0);
     setPendingMessages([]);
     setPollingTriggerMessageIds([]);
   }, [data.activeWorkflowId, data.activeConversationId]);
+  useEffect(() => {
+    window.localStorage?.setItem('db-conversation-show-actions', String(showActions));
+  }, [showActions]);
   useEffect(() => {
     setActiveExecutionIndex(0);
   }, [data.selectedTriggerMessageId, detail?.selectedTriggerMessageId]);

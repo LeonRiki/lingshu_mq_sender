@@ -16,8 +16,12 @@ function trackedFiles() {
   return result.toString('utf8').split('\0').filter(Boolean);
 }
 
-const version = String(JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version || '').trim();
+const versionConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8'));
+const version = String(versionConfig.version || '').trim();
 if (!version) throw new Error('version.json 缺少 version');
+const notes = (Array.isArray(versionConfig.notes) ? versionConfig.notes : [])
+  .map(note => String(note || '').trim())
+  .filter(Boolean);
 
 const files = trackedFiles()
   .filter(file => isUpdateAllowedPath(file))
@@ -28,5 +32,5 @@ for (const required of ['server.js', 'version.json', 'web/detail-ui.js']) {
   if (!files.some(file => file.path === required)) throw new Error(`缺少必要更新文件：${required}`);
 }
 
-fs.writeFileSync(output, `${JSON.stringify({ schemaVersion: 1, version, notes: [], files }, null, 2)}\n`, 'utf8');
+fs.writeFileSync(output, `${JSON.stringify({ schemaVersion: 1, version, notes, files }, null, 2)}\n`, 'utf8');
 console.log(`已生成 ${path.relative(ROOT, output)}，包含 ${files.length} 个文件。`);

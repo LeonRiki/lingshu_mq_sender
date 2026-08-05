@@ -2630,7 +2630,12 @@ async function listDbConversations(url) {
         WHERE m.workflow_id = candidate.workflow_id
           AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
-          AND (e.inputs::text ILIKE $${params.length} OR e.outputs::text ILIKE $${params.length})
+          AND (
+            e.inputs::jsonb ->> 'friendNick' ILIKE $${params.length}
+            OR e.outputs::jsonb ->> 'friendNick' ILIKE $${params.length}
+            OR e.inputs::text ILIKE $${params.length}
+            OR e.outputs::text ILIKE $${params.length}
+          )
       )`);
     }
     if (keyword) {

@@ -166,7 +166,7 @@ async function publishGithubSource(token, version) {
   return { sha: commit.sha, files };
 }
 
-async function createGithubRelease(token, version, sourceCommit) {
+async function createGithubRelease(token, version, sourceCommit, notes = []) {
   const tag = `v${version}`;
   try {
     return await githubApi(token, `/repos/${REPOSITORY}/releases`, {
@@ -175,7 +175,8 @@ async function createGithubRelease(token, version, sourceCommit) {
         tag_name: tag,
         target_commitish: sourceCommit,
         name: tag,
-        generate_release_notes: true
+        body: notes.map(note => `- ${note}`).join('\n'),
+        generate_release_notes: notes.length === 0
       }
     });
   } catch (error) {
@@ -359,7 +360,7 @@ async function publishRelease({ dryRun = false, replaceRelease = false } = {}) {
     modelscopePromise = publishModelscope(path.join(outputDirectory, 'modelscope'), version);
     const githubSource = await publishGithubSource(token, version);
     if (replaceRelease) await removeGithubReleaseAndTag(token, version);
-    const release = await createGithubRelease(token, version, githubSource.sha);
+    const release = await createGithubRelease(token, version, githubSource.sha, manifest.notes);
 
     console.log('正在更新 GitHub Release 运行包…');
     await replaceGithubReleaseAsset(token, release, archiveResult.archivePath);
