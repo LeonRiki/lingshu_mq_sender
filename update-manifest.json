@@ -1,7 +1,11 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.11",
-  "notes": [],
+  "version": "2.1.12",
+  "notes": [
+    "优化部分节点详情展示；",
+    "刷新或重新进入详情页后保留“展示动作”开关状态；",
+    "会话记录的“学员昵称”筛选支持模糊匹配。"
+  ],
   "files": [
     {
       "path": "mac-启动服务.command",
@@ -9,11 +13,11 @@
     },
     {
       "path": "server.js",
-      "sha256": "04b48c757909ab4a8ef418bce9610021ff148a24e92a5e836717ad76e171e117"
+      "sha256": "703cfab0deeeede45a599902e55a0f96c566628d288e6d252c030f37669d07e6"
     },
     {
       "path": "version.json",
-      "sha256": "792c7b35b437ff07786fdc1b99463e313f0df25f8b44d1ddcccaaf0481c60391"
+      "sha256": "981df91b0b8ed796eb60ee7bf718a3baeda40dfa445d1c8a14baaa9f2bb4f275"
     },
     {
       "path": "web/app.js",
@@ -33,7 +37,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "2b3ea54bdcbab4ddb0b24c3a283a52a71ea004c28c58b22eb19da5c206baf83b"
+      "sha256": "bee13ad21f5adafc35628ef9834ebbfb07ac171b59f6cd868bfefb8c0b661b48"
     },
     {
       "path": "web/favicon.ico",
