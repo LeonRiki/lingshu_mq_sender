@@ -132,38 +132,21 @@ function githubSourceFiles() {
   }));
 }
 
-async function publishGithubSource(token, version) {
+function assertGithubMainAtLocalHead(remoteSha, localSha) {
+  const remote = String(remoteSha || '').trim();
+  const local = String(localSha || '').trim();
+  if (!remote || !local || remote !== local) {
+    throw new Error(`GitHub main 未指向本地 HEAD：远端 ${remote || '-'}，本地 ${local || '-'}`);
+  }
+  return remote;
+}
+
+async function getGithubSource(token) {
   const ref = await githubApi(token, `/repos/${REPOSITORY}/git/ref/heads/${GITHUB_PACKAGE_BRANCH}`);
+  const localHead = run('git', ['rev-parse', 'HEAD'], { cwd: ROOT }).trim();
+  const sourceCommit = assertGithubMainAtLocalHead(ref.object?.sha, localHead);
   const files = githubSourceFiles();
-  const blobs = await Promise.all(files.map(async file => {
-    const blob = await githubApi(token, `/repos/${REPOSITORY}/git/blobs`, {
-      method: 'POST',
-      body: { content: file.content.toString('base64'), encoding: 'base64' }
-    });
-    return {
-      path: file.relativePath,
-      mode: file.mode,
-      type: 'blob',
-      sha: blob.sha
-    };
-  }));
-  const tree = await githubApi(token, `/repos/${REPOSITORY}/git/trees`, {
-    method: 'POST',
-    body: { tree: blobs }
-  });
-  const commit = await githubApi(token, `/repos/${REPOSITORY}/git/commits`, {
-    method: 'POST',
-    body: {
-      message: `release: v${version} update package`,
-      tree: tree.sha,
-      parents: [ref.object.sha]
-    }
-  });
-  await githubApi(token, `/repos/${REPOSITORY}/git/refs/heads/${GITHUB_PACKAGE_BRANCH}`, {
-    method: 'PATCH',
-    body: { sha: commit.sha, force: true }
-  });
-  return { sha: commit.sha, files };
+  return { sha: sourceCommit, files };
 }
 
 async function createGithubRelease(token, version, sourceCommit, notes = []) {
@@ -352,13 +335,13 @@ async function publishRelease({ dryRun = false, replaceRelease = false } = {}) {
   }
 
   const token = githubToken();
+  const githubSource = await getGithubSource(token);
   ensureModelscopeSdk();
   let modelscopePromise = null;
   let primaryError = null;
   try {
-    console.log('正在发布 GitHub 源码与更新包…');
+    console.log('正在发布 GitHub Release 与更新包…');
     modelscopePromise = publishModelscope(path.join(outputDirectory, 'modelscope'), version);
-    const githubSource = await publishGithubSource(token, version);
     if (replaceRelease) await removeGithubReleaseAndTag(token, version);
     const release = await createGithubRelease(token, version, githubSource.sha, manifest.notes);
 
@@ -400,4 +383,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { githubSourceFiles, publishRelease, verifyRemotePackage };
+module.exports = {
+  assertGithubMainAtLocalHead,
+  githubSourceFiles,
+  publishRelease,
+  verifyRemotePackage
+};
