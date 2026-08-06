@@ -1,10 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.12",
+  "version": "2.1.13",
   "notes": [
-    "优化部分节点详情展示；",
-    "刷新或重新进入详情页后保留“展示动作”开关状态；",
-    "会话记录的“学员昵称”筛选支持模糊匹配。"
+    "会话记录查询(DB)：筛选器工作流支持下拉选择",
+    "数据库自动连接"
   ],
   "files": [
     {
@@ -13,15 +12,15 @@
     },
     {
       "path": "server.js",
-      "sha256": "703cfab0deeeede45a599902e55a0f96c566628d288e6d252c030f37669d07e6"
+      "sha256": "a051e012e4aeed406261371bac1779e0eef4dd938f88096622445d28bccb56aa"
     },
     {
       "path": "version.json",
-      "sha256": "981df91b0b8ed796eb60ee7bf718a3baeda40dfa445d1c8a14baaa9f2bb4f275"
+      "sha256": "c5951dcf92e642a79848078dd862c8144c80b3815a47d9aaf44bff390408731b"
     },
     {
       "path": "web/app.js",
-      "sha256": "40cb17193b4811d554b2e901d6737232d6911fb3dd3f1017c0f02d8a5ce48147"
+      "sha256": "b2737f36e460d93b6e47409e3f1b3de3cc155a1b5b1399fd5554aa5bfc2a0a5e"
     },
     {
       "path": "web/assets/github.png",
@@ -37,7 +36,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "bee13ad21f5adafc35628ef9834ebbfb07ac171b59f6cd868bfefb8c0b661b48"
+      "sha256": "a56ae41afd6293b69614137765cf9a956efc228fb47aee4c36736c66d9e08c6a"
     },
     {
       "path": "web/favicon.ico",

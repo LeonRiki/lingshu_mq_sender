@@ -2850,6 +2850,23 @@ async function listDbConversations(url) {
   });
 }
 
+async function listDbWorkflows(url) {
+  const configId = url.searchParams.get('configId') || '';
+  return withDbClient(configId, async client => {
+    const result = await client.query(`
+      SELECT id, name
+      FROM public.workflow
+      WHERE status = 1
+        AND deleted_at IS NULL
+      ORDER BY id
+    `);
+    return result.rows.map(workflow => ({
+      id: String(workflow.id || ''),
+      name: String(workflow.name || '')
+    }));
+  });
+}
+
 async function dbConversationConfigIdForRoute(workflowId, conversationId) {
   const configs = readDbConfigs();
   if (!configs.length) {
@@ -3753,6 +3770,9 @@ async function handleApi(req, res, pathname, url) {
     if (req.method === 'GET' && pathname === '/api/db/conversations') {
       return json(res, 200, await listDbConversations(url));
     }
+    if (req.method === 'GET' && pathname === '/api/db/workflows') {
+      return json(res, 200, await listDbWorkflows(url));
+    }
     if (req.method === 'GET' && pathname === '/api/db/conversations/detail') {
       return json(res, 200, await dbConversationDetail(url));
     }
@@ -3909,6 +3929,7 @@ if (require.main === module) {
 module.exports = {
   buildDbConversationDetail,
   buildDbConversationRows,
+  listDbWorkflows,
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,

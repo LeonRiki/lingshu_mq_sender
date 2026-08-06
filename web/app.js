@@ -32,6 +32,8 @@ const state = {
   dbConfigs: [],
   dbConnection: { configId: '', name: '', status: 'disconnected', errorMessage: '' },
   dbConnectionChanging: false,
+  dbWorkflows: [],
+  dbWorkflowsLoading: false,
   dbSavedFilters: [],
   dbConversationItems: [],
   dbConversationQueried: false,
@@ -1595,6 +1597,8 @@ function dbRecordPageData() {
     mqConfigs: state.mqConfigs,
     connection: state.dbConnection,
     connectionChanging: state.dbConnectionChanging,
+    workflows: state.dbWorkflows,
+    workflowsLoading: state.dbWorkflowsLoading,
     savedFilters: state.dbSavedFilters,
     filters: {
       workflowId: state.dbWorkflowId,
@@ -1653,8 +1657,34 @@ async function loadDbConfigs() {
   ]);
   state.dbConfigs = configs;
   state.dbConnection = connection;
+  if (connection.status !== 'connected') state.dbWorkflows = [];
   if (!state.dbSettingsSelectedId) state.dbSettingsSelectedId = state.dbConfigs[0]?.id || '__new__';
   renderDbRecordsPage();
+  if (connection.status === 'connected') loadDbWorkflows().catch(showError);
+}
+
+async function loadDbWorkflows() {
+  if (state.dbConnection?.status !== 'connected') {
+    state.dbWorkflows = [];
+    state.dbWorkflowsLoading = false;
+    renderDbRecordsPage();
+    return;
+  }
+  state.dbWorkflowsLoading = true;
+  renderDbRecordsPage();
+  try {
+    const params = appendDbConfigId(new URLSearchParams());
+    state.dbWorkflows = await api(`/api/db/workflows${params.toString() ? `?${params}` : ''}`);
+  } finally {
+    state.dbWorkflowsLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+async function ensureDbWorkflowsReady() {
+  if (state.dbConnection?.status !== 'connected') await ensureDbConnected();
+  if (state.dbWorkflowsLoading || state.dbWorkflows.length) return;
+  await loadDbWorkflows();
 }
 
 async function ensureDbEnvironmentConfigured() {
@@ -1687,11 +1717,16 @@ async function ensureDbConnected(configId = '') {
 }
 
 async function changeDbConnection(action, options = {}) {
+  if (action === 'disconnect' || options.configId && options.configId !== state.dbConnection.configId) {
+    state.dbWorkflows = [];
+  }
   state.dbConnectionChanging = true;
   renderDbRecordsPage();
   try {
     const configId = options.configId || state.dbConnection.configId || state.dbConfigs[0]?.id || '';
     state.dbConnection = await api(`/api/db-configs/${action}`, { method: 'POST', body: JSON.stringify({ configId }) });
+    if (state.dbConnection.status === 'connected') loadDbWorkflows().catch(showError);
+    else state.dbWorkflows = [];
     if (!options.silent) toast(action === 'disconnect' ? '数据库已断开连接' : '数据库连接正常');
     return state.dbConnection;
   } catch (error) {
@@ -1714,7 +1749,10 @@ async function switchDbConnection(configId) {
       method: 'POST',
       body: JSON.stringify({ configId: targetConfigId })
     });
+    if (state.dbConnection.status === 'connected') loadDbWorkflows().catch(showError);
+    else state.dbWorkflows = [];
     if (changedConfig) {
+      state.dbWorkflows = [];
       state.dbConversationItems = [];
       state.dbConversationTotal = 0;
       state.dbConversationQueried = false;
@@ -1855,7 +1893,7 @@ async function testDbConfig(configId) {
 
 async function queryDbConversations() {
   if (!state.dbWorkflowId.trim() || !state.dbStartTime || !state.dbEndTime) {
-    toast('请填写工作流ID和时间范围后再查询', 'warning');
+    toast('请选择工作流和时间范围后再查询', 'warning');
     return;
   }
   if (!await ensureDbEnvironmentConfigured()) return;
@@ -2488,6 +2526,7 @@ function bindEvents() {
     if (type === 'connect-db') changeDbConnection('connect').catch(showError);
     if (type === 'disconnect-db') changeDbConnection('disconnect').catch(showError);
     if (type === 'switch-db-config') switchDbConnection(configId).catch(showError);
+    if (type === 'ensure-db-workflows') ensureDbWorkflowsReady().catch(showError);
     if (type === 'query-db-conversations') {
       state.dbPageNo = 1;
       queryDbConversations().catch(showError);

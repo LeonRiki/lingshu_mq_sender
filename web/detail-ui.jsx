@@ -514,7 +514,7 @@ function DbConversationListPage({ data }) {
   return <div className="db-record-page">
     <div className="db-record-toolbar">
       <div className="db-filter-grid">
-        <div className="db-filter-field"><span><b>*</b>工作流 ID</span><Input className="db-filter-control" allowClear value={filters.workflowId} onChange={event => emitListToolbarChange('db-workflow-id', event.target.value)} placeholder="请输入工作流ID" /></div>
+        <div className="db-filter-field"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
         <div className="db-filter-field"><span><b>*</b>时间范围</span><DatePicker.RangePicker className="db-filter-control" format="YYYY-MM-DD" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
         <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
         <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
