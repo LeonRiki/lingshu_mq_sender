@@ -1815,6 +1815,9 @@ function DbConversationDetailPage({ data }) {
           const pending = !processing && (userMessage?.isPending === true || userMessage?.processed === false);
           const noReply = !hasError && !pending && !processing && !userMessage?.failed && userMessage?.hasReplyAction === false;
           const isPending = userMessage?.isPending === true;
+          const conversationType = Number(userMessage?.conversationType) || 0;
+          const isEventMessage = conversationType === 3;
+          const chatRoomName = String(userMessage?.chatRoomName || '').trim();
           const selectMessage = () => emitListToolbar('select-db-message', { triggerMessageId: group.triggerMessageId });
           const shouldSkipCardSelect = event => event.target?.closest?.('.db-message-trigger-copy-zone');
           return <div
@@ -1834,9 +1837,10 @@ function DbConversationDetailPage({ data }) {
               selectMessage();
             }}
           >
-            <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} />
+            {showActions ? <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} /> : null}
             <span className="db-message-section">
-              <span className="db-message-meta"><span className="db-message-role">{detail.friendNick || '学员消息'}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+              {conversationType === 2 && chatRoomName ? <span className="db-message-chat-room"><Tag color="purple">{chatRoomName}</Tag></span> : null}
+              <span className="db-message-meta"><span className="db-message-role">{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
             </span>
             {showActions ? <DbConversationActionGroups actions={group.actions} /> : null}

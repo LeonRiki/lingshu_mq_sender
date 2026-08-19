@@ -1353,8 +1353,8 @@ main {
 
 .db-message-role {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
+  font-weight: 400;
+  color: var(--text);
 }
 
 .db-message-trigger-id-row {
@@ -1395,6 +1395,13 @@ main {
 .db-message-trigger-copy.ant-btn:focus-visible {
   color: var(--accent);
   background: #eff6ff;
+}
+
+.db-message-chat-room {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .db-message-content {

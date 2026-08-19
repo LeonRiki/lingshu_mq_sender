@@ -1921,6 +1921,27 @@ function dbTriggerLatestMsgTimeMap(executions = []) {
   return result;
 }
 
+function dbTriggerMetaMap(executions = []) {
+  const result = new Map();
+  executions.forEach(execution => {
+    const nodeType = String(execution.node_type ?? execution.nodeType ?? '');
+    const nodeName = String(execution.node_name ?? execution.nodeName ?? '').trim();
+    if (nodeType !== 'lingxi_trigger' && nodeName !== '灵犀触发器') return;
+    const key = dbTriggerKeyOf(execution);
+    if (!key || result.has(key)) return;
+    const outputs = parseDbJson(execution.outputs, execution.outputs || null);
+    result.set(key, {
+      conversationType: Number(outputs?.conversationType) || 0,
+      chatRoomName: String(outputs?.chatRoomName || '').trim(),
+      chatRoomWxId: String(outputs?.chatRoomWxId || '').trim(),
+      chatRoomRemoteId: String(outputs?.chatRoomRemoteId || '').trim(),
+      eventContent: String(outputs?.eventContent || '').trim(),
+      eventSourceType: Number(outputs?.eventSourceType) || 0
+    });
+  });
+  return result;
+}
+
 function dbAssistantReplyTimeMap(executions = []) {
   const result = new Map();
   dbAssistantReplySelectionMap(executions).forEach((selected, key) => {
@@ -2026,7 +2047,7 @@ function dbTriggerExecutionStates(executions = [], terminalNodeIds = new Set()) 
   return states;
 }
 
-function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, triggerLatestMsgTimes = new Map(), assistantReplyTimes = new Map()) {
+function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, triggerLatestMsgTimes = new Map(), assistantReplyTimes = new Map(), triggerMeta = new Map()) {
   const actionEventsByTrigger = dbExecutionActionEvents(executions);
   const executionStates = dbTriggerExecutionStates(executions, terminalNodeIds);
   const assistantMessagesByTrigger = new Map();
@@ -2042,6 +2063,10 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
       const key = dbTriggerKeyOf(message);
       const executionState = executionStates.get(key) || { started: false, finished: false, settled: false, failed: false };
       const assistantMessage = assistantMessagesByTrigger.get(key);
+      const meta = triggerMeta.get(key);
+      const conversationType = Number(meta?.conversationType) || 0;
+      const isEventMessage = conversationType === 3;
+      const chatRoomName = String(meta?.chatRoomName || '').trim();
       const hasReplyAction = assistantReplies.has(key) || Boolean(assistantMessage);
       const assistantContent = assistantReplies.has(key) ? assistantReplies.get(key) : String(assistantMessage?.content || '');
       const waitingForReply = executionState.started
@@ -2076,8 +2101,10 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
           processing: executionState.started && !executionState.failed && (!executionState.finished || waitingForReply),
           failed: executionState.failed,
           hasReplyAction,
-          content: dbMessageDisplayContent(message, triggerInputs, assistantReplies),
+          content: isEventMessage ? (meta?.eventContent || '') : dbMessageDisplayContent(message, triggerInputs, assistantReplies),
           contentType: message.content_type || '',
+          conversationType,
+          chatRoomName,
           messageTimestamp: formatDbDisplayDateTimeLoose(triggerLatestMsgTimes.get(key) || message.message_timestamp)
         },
         ...(hasReplyAction ? [{
@@ -2146,6 +2173,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
     const sortedMessages = [...group.messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
     const triggerInputs = dbTriggerInputMap(group.executions);
     const assistantReplies = dbAssistantReplyMap(group.executions);
+    const triggerMeta = dbTriggerMetaMap(group.executions);
     const errors = group.executions.filter(executionHasError);
     return {
       id: group.id,
@@ -2159,7 +2187,11 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
       friendNick: dbConversationFriendNick(group.executions),
       messageSummary: sortedMessages
         .filter(message => String(message.role || '').toUpperCase() === 'USER')
-        .map(message => dbMessageDisplayContent(message, triggerInputs, assistantReplies))
+        .map(message => {
+          const meta = triggerMeta.get(dbTriggerKeyOf(message));
+          if (Number(meta?.conversationType) === 3) return String(meta?.eventContent || '');
+          return dbMessageDisplayContent(message, triggerInputs, assistantReplies);
+        })
         .filter(value => value !== undefined && value !== ''),
       hasError: errors.length > 0,
       errorSummary: errors.map(item => item.error_message || item.error_class || item.error_code || item.status).filter(Boolean)[0] || ''
@@ -2367,6 +2399,7 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
   const sortedMessages = [...messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
   const triggerInputs = dbTriggerInputMap(executions);
   const assistantReplies = dbAssistantReplyMap(executions);
+  const triggerMeta = dbTriggerMetaMap(executions);
   const userMessages = sortedMessages.filter(message => String(message.role || '').toUpperCase() === 'USER' && dbTriggerIdOf(message));
   const selectedTriggerMessageId = dbTriggerIdOf(userMessages.at(-1)) || '';
   const triggerOrder = [];
@@ -2409,7 +2442,7 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
     workflowGraph,
     historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
     friendNick: dbConversationFriendNick(executions),
-    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, dbTriggerLatestMsgTimeMap(executions), dbAssistantReplyTimeMap(executions)),
+    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, dbTriggerLatestMsgTimeMap(executions), dbAssistantReplyTimeMap(executions), triggerMeta),
     variables: normalizeDbConversationVariables(variables),
     selectedTriggerMessageId,
     executionsByTrigger
@@ -2897,7 +2930,7 @@ async function listDbConversations(url) {
              CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
                THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
+               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -3023,7 +3056,7 @@ async function dbConversationDetail(url) {
              CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
                WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')

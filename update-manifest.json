@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.13",
+  "version": "2.1.14",
   "notes": [
-    "会话记录查询(DB)：筛选器工作流支持下拉选择",
-    "数据库自动连接"
+    "会话详情(DB)：支持群聊消息和事件消息类型展示",
+    "会话详情(DB)：消息列表标题样式优化"
   ],
   "files": [
     {
@@ -12,11 +12,11 @@
     },
     {
       "path": "server.js",
-      "sha256": "a051e012e4aeed406261371bac1779e0eef4dd938f88096622445d28bccb56aa"
+      "sha256": "3d961556861c24b7a000059e95639f778ad519d0f23c6d0b13aabddc477e9b9f"
     },
     {
       "path": "version.json",
-      "sha256": "c5951dcf92e642a79848078dd862c8144c80b3815a47d9aaf44bff390408731b"
+      "sha256": "a5ad8b71f9e046056469ff5b6a1ffbe2100d247a8cfddfedf07b88d241858809"
     },
     {
       "path": "web/app.js",
@@ -36,7 +36,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "a56ae41afd6293b69614137765cf9a956efc228fb47aee4c36736c66d9e08c6a"
+      "sha256": "99a787d92b4d2dfd0f0f9130c7e1b96c9622437d7f214ec970f6d67914a80ae3"
     },
     {
       "path": "web/favicon.ico",
@@ -52,7 +52,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "503a1f66d54951e40164d0536b24ee7a62f4471cfeb2718ba4173d583b6b850b"
+      "sha256": "f51a5ab0eefbb63deb7d4645e1007090e414da8569fa2c5eb0fa39065cd62166"
     },
     {
       "path": "win-启动服务.bat",
