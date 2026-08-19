@@ -628,6 +628,10 @@ main {
   padding-bottom: 56px;
 }
 
+#caseListApp .case-list-table .ant-table-body {
+  overflow-x: auto !important;
+}
+
 .ant-list-page .ant-table-footer {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -709,6 +713,7 @@ main {
 }
 
 .ant-list-table .case-name-cell {
+  max-width: 100%;
   display: flex;
   min-height: 42px;
   min-width: 0;

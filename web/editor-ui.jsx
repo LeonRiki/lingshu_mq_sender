@@ -183,7 +183,7 @@ function buildProtocol(caseData, config) {
     const attributes = attributesFor(group);
     const value = (field, fallback) => useSessionConfiguration && attributes[field] !== undefined && attributes[field] !== null && attributes[field] !== '' ? attributes[field] : (useSessionConfiguration && message[field] !== undefined && message[field] !== null && message[field] !== '' ? message[field] : fallback);
     const payload = {
-      requestId: `${shared.weworkCorpId}_${JSON_NAMES[Math.floor(Math.random() * JSON_NAMES.length)]}_${randomDigits(14)}_${Date.now()}_${sequence}`,
+      requestId: `${shared.weworkCorpId}_${shared.weworkAccount}_${shared.friendRemoteId}_${Date.now() + Math.max(0, sequence - 1)}`,
       input: group.messages.map(item => item.content),
       latestMsgTime: formatProtocolDate(value('latestMsgTime', currentDateTime())),
       weworkCorpId: shared.weworkCorpId,

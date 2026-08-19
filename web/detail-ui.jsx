@@ -43,6 +43,8 @@ import {
 } from '@ant-design/icons';
 const { Title, Text } = Typography;
 const listActionButtonTheme = { components: { Button: { iconGap: 4 } } };
+const CASE_LIST_SELECTION_WIDTH = 32;
+const CASE_LIST_TABLE_SCROLL_X = 1334;
 
 message.config({ top: 72, maxCount: 3 });
 window.showGlobalMessage = (content, type = 'success') => {
@@ -336,18 +338,18 @@ function CaseListPage({ data }) {
     {
       title: '测试场景名称',
       dataIndex: 'name',
-      width: 200,
+      width: 360,
       sorter: true,
       sortOrder: data.sort?.field === 'name' ? data.sort.order : null,
       render: (_, record) => <div className={`case-name-cell ${record.note ? '' : 'no-note'}`}><Button type="link" className="table-title case-name-link" onClick={event => { event.stopPropagation(); emitListToolbar('open-case', { id: record.id }); }}>{record.name}</Button>{record.note ? <Text type="secondary" className="list-table-note">{record.note}</Text> : null}</div>
     },
-    { title: '业务场景', dataIndex: 'businessScenario', width: 120, responsive: ['lg'], render: value => value ? <Tag color="green" variant="outlined">{value}</Tag> : <Text type="secondary">-</Text> },
-    { title: '触发消息', dataIndex: 'input', ellipsis: true, render: renderTriggerMessages },
-    { title: 'TagList', dataIndex: 'tags', width: 200, render: tags => { const values = Array.isArray(tags) ? tags : []; const title = values.join('、'); return values.length ? <Tooltip title={title}><div className="list-table-tags">{values.map(value => <Tag key={value} color="blue" variant="outlined">{value}</Tag>)}</div></Tooltip> : <Text type="secondary">-</Text>; } },
+    { title: '业务场景', dataIndex: 'businessScenario', width: 132, render: value => value ? <Tag color="green" variant="outlined">{value}</Tag> : <Text type="secondary">-</Text> },
+    { title: '触发消息', dataIndex: 'input', width: 210, ellipsis: true, render: renderTriggerMessages },
+    { title: 'TagList', dataIndex: 'tags', width: 128, render: tags => { const values = Array.isArray(tags) ? tags : []; const title = values.join('、'); return values.length ? <Tooltip title={title}><div className="list-table-tags">{values.map(value => <Tag key={value} color="blue" variant="outlined">{value}</Tag>)}</div></Tooltip> : <Text type="secondary">-</Text>; } },
     { title: '请求次数', dataIndex: 'batchCount', width: 76, align: 'center', render: value => value },
-    { title: '创建日期', dataIndex: 'createdAt', width: 168, responsive: ['xl'], sorter: true, sortOrder: data.sort?.field === 'createdAt' ? data.sort.order : null },
-    { title: '更新时间', dataIndex: 'updatedAt', width: 168, responsive: ['xl'], sorter: true, sortOrder: data.sort?.field === 'updatedAt' ? data.sort.order : null },
-    { title: '操作', key: 'actions', width: 1, onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }), onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, record) => <ConfigProvider theme={listActionButtonTheme}><Space size={4}><Button type="link" size="small" icon={<EditOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('open-case', { id: record.id }); }}>编辑</Button><Button type="link" size="small" icon={<CopyOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('duplicate-case', { id: record.id }); }}>复制</Button><Button type="link" size="small" icon={<SendOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('send-case', { id: record.id }); }}>发送</Button><Popconfirm title="确定删除该测试用例吗？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => emitListToolbar('delete-case', { id: record.id, confirmed: true })}><Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={event => event.stopPropagation()}>删除</Button></Popconfirm></Space></ConfigProvider> }
+    { title: '创建日期', dataIndex: 'createdAt', width: 112, sorter: true, sortOrder: data.sort?.field === 'createdAt' ? data.sort.order : null },
+    { title: '更新时间', dataIndex: 'updatedAt', width: 112, sorter: true, sortOrder: data.sort?.field === 'updatedAt' ? data.sort.order : null },
+    { title: '操作', key: 'actions', width: 172, onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }), onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, record) => <ConfigProvider theme={listActionButtonTheme}><Space size={4}><Button type="link" size="small" icon={<EditOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('open-case', { id: record.id }); }}>编辑</Button><Button type="link" size="small" icon={<CopyOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('duplicate-case', { id: record.id }); }}>复制</Button><Button type="link" size="small" icon={<SendOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('send-case', { id: record.id }); }}>发送</Button><Popconfirm title="确定删除该测试用例吗？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => emitListToolbar('delete-case', { id: record.id, confirmed: true })}><Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={event => event.stopPropagation()}>删除</Button></Popconfirm></Space></ConfigProvider> }
   ];
   const tableColumns = bulkHeaderActive
     ? columns.map((column, index) => {
@@ -359,7 +361,7 @@ function CaseListPage({ data }) {
     : columns;
   return <div className="ant-list-page">
     <CaseListToolbar data={data} />
-    <Table className="ant-list-table" size="middle" rowKey="id" columns={tableColumns} dataSource={data.items} tableLayout="auto" showSorterTooltip={{ target: 'sorter-icon' }} scroll={{ y: 'calc(100vh - 224px)' }} onChange={(_, __, sorter, extra) => { if (extra.action === 'sort') emitListToolbar('set-case-sort', { field: sorter.field, order: sorter.order }); }} rowSelection={{ selectedRowKeys: data.selectedIds, onChange: keys => emitListToolbar('set-case-selection', { ids: keys, pageIds: data.items.map(item => item.id) }) }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [15, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-case-page', { pageNo, pageSize }) }} />
+    <Table className="ant-list-table case-list-table" size="middle" rowKey="id" columns={tableColumns} dataSource={data.items} tableLayout="fixed" showSorterTooltip={{ target: 'sorter-icon' }} scroll={{ x: CASE_LIST_TABLE_SCROLL_X, y: 'calc(100vh - 224px)' }} onChange={(_, __, sorter, extra) => { if (extra.action === 'sort') emitListToolbar('set-case-sort', { field: sorter.field, order: sorter.order }); }} rowSelection={{ columnWidth: CASE_LIST_SELECTION_WIDTH, selectedRowKeys: data.selectedIds, onChange: keys => emitListToolbar('set-case-selection', { ids: keys, pageIds: data.items.map(item => item.id) }) }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [15, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-case-page', { pageNo, pageSize }) }} />
   </div>;
 }
 
@@ -983,7 +985,7 @@ function dbInputListMessage(value) {
   const messageId = delimiter >= 0 ? raw.slice(0, delimiter).trim() : '';
   const content = delimiter >= 0 ? raw.slice(delimiter + 1) : raw;
   const firstCharacter = messageId.charAt(0);
-  const role = firstCharacter === '1' ? 'teacher' : 'student';
+  const role = firstCharacter === '7' ? 'student' : 'teacher';
   return { messageId, content, role };
 }
 

@@ -641,9 +641,34 @@ function randomTeacherId() {
   return '168885' + randDigits(10);
 }
 
-function randomRequestId(corpId, sequence) {
-  const agent = NAMES[Math.floor(Math.random() * NAMES.length)];
-  return `${corpId}_${agent}_${randDigits(14)}_${Date.now()}_${sequence}`;
+function randomRequestId(corpId, sequence, weworkAccount = '', friendRemoteId = '') {
+  const account = String(weworkAccount || '').trim() || NAMES[Math.floor(Math.random() * NAMES.length)];
+  const remoteId = String(friendRemoteId || '').trim() || randDigits(14);
+  const timestamp = Date.now() + Math.max(0, Number(sequence || 1) - 1);
+  return `${corpId}_${account}_${remoteId}_${timestamp}`;
+}
+
+function sessionRequestId(session, sequence) {
+  return randomRequestId(
+    session.weworkCorpId,
+    sequence,
+    session.weworkAccount,
+    session.friendRemoteId
+  );
+}
+
+function conversationRequestId(identity) {
+  const existingRequestId = String(identity.existingRequestId || '').trim();
+  const existingParts = existingRequestId.split('_').filter(Boolean);
+  if (existingParts.length >= 4) {
+    return `${existingParts.slice(0, 3).join('_')}_${Date.now()}`;
+  }
+  const stablePrefix = [identity.weworkCorpId, identity.weworkAccount, identity.friendRemoteId]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .join('_');
+  if (!stablePrefix) return randomRequestId(identity.weworkCorpId, 1);
+  return `${stablePrefix}_${Date.now()}`;
 }
 
 function randomNick() {
@@ -1064,7 +1089,7 @@ function buildSnapshots(c, options) {
       ? payload.latestMsgTime
       : addSecondsToProtocolTime(latestMsgTime || payload.latestMsgTime, delaySeconds);
     payload.latestMsgTime = latestMsgTime;
-    payload.requestId = randomRequestId(session.weworkCorpId, snapshots.length + 1);
+    payload.requestId = sessionRequestId(session, snapshots.length + 1);
     snapshots.push({
       index: snapshots.length + 1,
       role: 'student',
@@ -1082,7 +1107,7 @@ function buildSnapshots(c, options) {
     applyAttributes(payload, unifiedAttrs);
     if (agentId) payload.agentId = agentId;
     applyIdentityLinks(payload, session);
-    payload.requestId = randomRequestId(session.weworkCorpId, 1);
+    payload.requestId = sessionRequestId(session, 1);
     snapshots.push({ index: 1, role: 'student', content: payload.input[0] || '', delaySeconds: 0, payload });
   }
   return snapshots;
@@ -1594,7 +1619,8 @@ function dbInputText(value) {
 
 function dbTriggerExecutionInput(execution) {
   const nodeName = String(execution.node_name ?? execution.nodeName ?? '').trim();
-  if (nodeName !== '灵犀触发器') return '';
+  const nodeType = String(execution.node_type ?? execution.nodeType ?? '').trim();
+  if (nodeType !== 'lingxi_trigger' && nodeName !== '灵犀触发器') return '';
   const outputs = parseDbJson(execution.outputs, execution.outputs || null);
   return dbInputText(outputs?.input);
 }
@@ -1841,6 +1867,14 @@ function dbTriggerInputMap(executions = []) {
 
 function dbAssistantReplyMap(executions = []) {
   const result = new Map();
+  dbAssistantReplySelectionMap(executions).forEach((selected, key) => {
+    result.set(key, selected.reply.value);
+  });
+  return result;
+}
+
+function dbAssistantReplySelectionMap(executions = []) {
+  const result = new Map();
   const executionsByTrigger = new Map();
   executions.forEach(execution => {
     const workflowId = dbWorkflowIdOf(execution);
@@ -1867,7 +1901,31 @@ function dbAssistantReplyMap(executions = []) {
       });
     const successfulReplies = replies.filter(item => !executionHasError(item.execution));
     const selected = successfulReplies.at(-1) || replies.at(-1);
-    if (selected) result.set(key, selected.reply.value);
+    if (selected) result.set(key, selected);
+  });
+  return result;
+}
+
+function dbTriggerLatestMsgTimeMap(executions = []) {
+  const result = new Map();
+  executions.forEach(execution => {
+    const nodeType = String(execution.node_type ?? execution.nodeType ?? '');
+    const nodeName = String(execution.node_name ?? execution.nodeName ?? '').trim();
+    if (nodeType !== 'lingxi_trigger' && nodeName !== '灵犀触发器') return;
+    const key = dbTriggerKeyOf(execution);
+    if (!key || result.has(key)) return;
+    const outputs = parseDbJson(execution.outputs, execution.outputs || null);
+    const latestMsgTime = outputs?.latestMsgTime ?? outputs?.latest_msg_time;
+    if (latestMsgTime) result.set(key, latestMsgTime);
+  });
+  return result;
+}
+
+function dbAssistantReplyTimeMap(executions = []) {
+  const result = new Map();
+  dbAssistantReplySelectionMap(executions).forEach((selected, key) => {
+    const startedAt = selected.execution?.started_at ?? selected.execution?.startedAt;
+    if (startedAt) result.set(key, startedAt);
   });
   return result;
 }
@@ -1968,7 +2026,7 @@ function dbTriggerExecutionStates(executions = [], terminalNodeIds = new Set()) 
   return states;
 }
 
-function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds) {
+function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, triggerLatestMsgTimes = new Map(), assistantReplyTimes = new Map()) {
   const actionEventsByTrigger = dbExecutionActionEvents(executions);
   const executionStates = dbTriggerExecutionStates(executions, terminalNodeIds);
   const assistantMessagesByTrigger = new Map();
@@ -2020,7 +2078,7 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
           hasReplyAction,
           content: dbMessageDisplayContent(message, triggerInputs, assistantReplies),
           contentType: message.content_type || '',
-          messageTimestamp: formatDbDisplayDateTimeLoose(message.message_timestamp)
+          messageTimestamp: formatDbDisplayDateTimeLoose(triggerLatestMsgTimes.get(key) || message.message_timestamp)
         },
         ...(hasReplyAction ? [{
           id: assistantMessage?.id || `${dbTriggerIdOf(message)}:assistant`,
@@ -2031,7 +2089,7 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
           actionLabel: 'AI回复',
           content: assistantContent,
           contentType: assistantMessage?.content_type || 'TEXT',
-          messageTimestamp: formatDbDisplayDateTimeLoose(assistantMessage?.message_timestamp || message.message_timestamp)
+          messageTimestamp: formatDbDisplayDateTimeLoose(assistantReplyTimes.get(key) || assistantMessage?.message_timestamp || message.message_timestamp)
         }] : []),
         ...actionEvents
       ];
@@ -2351,7 +2409,7 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
     workflowGraph,
     historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
     friendNick: dbConversationFriendNick(executions),
-    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds),
+    messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, dbTriggerLatestMsgTimeMap(executions), dbAssistantReplyTimeMap(executions)),
     variables: normalizeDbConversationVariables(variables),
     selectedTriggerMessageId,
     executionsByTrigger
@@ -2367,11 +2425,21 @@ function dbTriggerPayload(execution) {
 
 function extractDbConversationIdentity(triggerExecution) {
   const payload = dbTriggerPayload(triggerExecution);
+  const existingRequestId = String(
+    payload.requestId
+      || payload.eventId
+      || payload.trigger_message_id
+      || payload._metadata?.trigger_message_id
+      || triggerExecution.trigger_message_id
+      || ''
+  ).trim();
   return {
     weworkCorpId: String(payload.weworkCorpId || ""),
     weworkAccount: String(payload.weworkAccount || ""),
     friendExternalId: String(payload.friendExternalId || ""),
     friendRemoteId: String(payload.friendRemoteId || ""),
+    conversationId: String(payload.conversation_id || payload.conversationId || ""),
+    existingRequestId,
     agentId: String(payload.agentId || ""),
     lingxiAccount: String(payload.lingxiAccount || ""),
     friendNick: String(payload.friendNick || ""),
@@ -2481,8 +2549,9 @@ function prepareDbConversationPayload({
   
   // Build payload
   const now = nowIsoLocal();
+  const requestId = conversationRequestId(identity);
   return {
-    requestId: randomRequestId(identity.weworkCorpId, 1),
+    requestId,
     input: [message],
     inputList,
     latestMsgTime: now,
@@ -2495,7 +2564,11 @@ function prepareDbConversationPayload({
     tagList,
     weworkAccountAlias: identity.weworkAccountAlias || loadConfig().defaultAlias,
     friendRemoteId: identity.friendRemoteId,
-    lingxiAccount: identity.lingxiAccount || "mqSender"
+    lingxiAccount: identity.lingxiAccount || "mqSender",
+    conversation_id: identity.conversationId || conversationId,
+    eventId: requestId,
+    trigger_message_id: requestId,
+    user_input: message
   };
 }
 async function testDbConnection(configId) {
@@ -2823,8 +2896,8 @@ async function listDbConversations(url) {
              e.node_name,
              CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
                THEN e.inputs ELSE NULL END AS inputs,
-             CASE WHEN e.node_name = '灵犀触发器'
-               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
+             CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
+               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -2949,8 +3022,8 @@ async function dbConversationDetail(url) {
              CASE WHEN e.node_type IN ('lingxi_send', 'set_variable', 'lingxi_trigger') OR e.node_name = '灵犀触发器' THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
-               WHEN e.node_name = '灵犀触发器'
-                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
+               WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -3373,7 +3446,12 @@ function appendSnapshotFromRecord(record, message) {
   payload.input = [message];
   payload.inputList = history;
   payload.latestMsgTime = addSecondsToProtocolTime(previousPayload.latestMsgTime, 20);
-  payload.requestId = randomRequestId(String(payload.weworkCorpId || 'ww'), snapshots.length + 1);
+  payload.requestId = randomRequestId(
+    String(payload.weworkCorpId || 'ww'),
+    snapshots.length + 1,
+    payload.weworkAccount,
+    payload.friendRemoteId
+  );
   return {
     index: snapshots.length + 1,
     role: 'student',
@@ -3930,6 +4008,7 @@ module.exports = {
   buildDbConversationDetail,
   buildDbConversationRows,
   listDbWorkflows,
+  prepareDbConversationPayload,
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
