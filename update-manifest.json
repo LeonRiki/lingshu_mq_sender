@@ -1,9 +1,11 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.14",
+  "version": "2.1.15",
   "notes": [
     "会话详情(DB)：支持群聊消息和事件消息类型展示",
-    "会话详情(DB)：消息列表标题样式优化"
+    "会话详情(DB)：灵犀触发器Outputs摘要补充conversationType等字段",
+    "会话详情(DB)：节点引用显示为节点名称/字段名",
+    "会话详情(DB)：消息列表样式优化"
   ],
   "files": [
     {
@@ -12,11 +14,11 @@
     },
     {
       "path": "server.js",
-      "sha256": "3d961556861c24b7a000059e95639f778ad519d0f23c6d0b13aabddc477e9b9f"
+      "sha256": "38987744f000c3d44747fdaaf317ce417e33672d777b8e98a914265984fad125"
     },
     {
       "path": "version.json",
-      "sha256": "a5ad8b71f9e046056469ff5b6a1ffbe2100d247a8cfddfedf07b88d241858809"
+      "sha256": "e8e3e56473c4d57b26cffe86439f6c34495fc90e5da5a5ee494f6a83e361d810"
     },
     {
       "path": "web/app.js",
@@ -36,7 +38,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "99a787d92b4d2dfd0f0f9130c7e1b96c9622437d7f214ec970f6d67914a80ae3"
+      "sha256": "96ca4e56054593c6f17766759566e1467640f83aa6eca61f825140bce0c6d35e"
     },
     {
       "path": "web/favicon.ico",
@@ -52,7 +54,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "f51a5ab0eefbb63deb7d4645e1007090e414da8569fa2c5eb0fa39065cd62166"
+      "sha256": "ec8c8ca6ca143b60f213fbdc1d0280f6e82834aa86fc0b6304f838b822b69523"
     },
     {
       "path": "win-启动服务.bat",

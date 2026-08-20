@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
 import './editor-ui.jsx';
@@ -615,7 +615,7 @@ function dbValueMode(value) {
   return dbValueType(value);
 }
 
-function dbObjectEntries(value, limit = 6) {
+function dbObjectEntries(value, limit = Infinity) {
   if (Array.isArray(value)) return value.slice(0, limit).map((item, index) => ({ key: `[${index}]`, value: item }));
   if (value && typeof value === 'object') return Object.entries(value).slice(0, limit).map(([key, item]) => ({ key, value: item }));
   return value === undefined || value === null || value === '' ? [] : [{ key: 'value', value }];
@@ -685,6 +685,38 @@ function dbNodeOutputsSummary(outputs, preferredKeys = [], excludedKeys = []) {
   const orderedEntries = priority.flatMap(key => entries.filter(([entryKey]) => String(entryKey).toLowerCase() === key));
   const remainingEntries = entries.filter(([entryKey]) => !priority.includes(String(entryKey).toLowerCase()));
   return Object.fromEntries([...orderedEntries, ...remainingEntries]);
+}
+
+function dbTriggerOutputsSummary(outputs) {
+  if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) return outputs;
+  const conversationType = Number(outputs.conversationType) || 0;
+  const conversationTypeLabels = { 1: '1-一对一私聊消息', 2: '2-群聊消息', 3: '3-事件消息' };
+  const eventSourceTypeLabels = { 1: '1-新好友SOP', 2: '2-标签 SOP', 3: '3-私聊 SOP' };
+  const excludedKeys = new Set(['addtime', 'chatroomwxid', 'chatroomremoteid', 'eventid', 'tenantid']);
+  if (conversationType !== 2) excludedKeys.add('chatroomname');
+  if (conversationType !== 3) { excludedKeys.add('eventcontent'); excludedKeys.add('eventsourcetype'); }
+  const orderedPairs = [];
+  if (outputs.conversationType !== undefined && outputs.conversationType !== null) {
+    orderedPairs.push(['conversationType', conversationTypeLabels[conversationType] || String(outputs.conversationType)]);
+  }
+  if (conversationType === 2 && outputs.chatRoomName) {
+    orderedPairs.push(['chatRoomName', outputs.chatRoomName]);
+  }
+  if (conversationType === 3) {
+    if (outputs.eventContent !== undefined && outputs.eventContent !== null) {
+      orderedPairs.push(['eventContent', outputs.eventContent]);
+    }
+    if (outputs.eventSourceType !== undefined && outputs.eventSourceType !== null) {
+      const sourceType = Number(outputs.eventSourceType) || 0;
+      orderedPairs.push(['eventSourceType', eventSourceTypeLabels[sourceType] || String(outputs.eventSourceType)]);
+    }
+  }
+  const originalPreferred = ['agentId', 'friendNick', 'latestMsgTime', 'input', 'tagList', 'inputList'];
+  const usedKeys = new Set(orderedPairs.map(([key]) => String(key).toLowerCase()));
+  const orderedOriginals = originalPreferred
+    .map(key => [key, outputs[key]])
+    .filter(([key, value]) => !usedKeys.has(String(key).toLowerCase()) && !excludedKeys.has(String(key).toLowerCase()) && value !== undefined && value !== null);
+  return Object.fromEntries([...orderedPairs, ...orderedOriginals]);
 }
 
 function dbConditionInputsSummary(inputs) {
@@ -760,6 +792,28 @@ function dbConditionOperatorLabel(value) {
 function dbConditionNodeValue(value, maxLength = 160) {
   if (Array.isArray(value)) return value.map(item => dbValuePreview(item, 60)).join('、') || '-';
   return dbValuePreview(value, maxLength);
+}
+
+function dbResolveNodeReference(value, nodeNameById = new Map()) {
+  return String(value || '').replace(/@node\.([^.]+)\.([^.@\s]+)/g, (_, nodeId, field) => {
+    const nodeName = nodeNameById.get(nodeId) || nodeId;
+    return `${nodeName}/${field}`;
+  });
+}
+
+function dbResolveNodeReferencesDeep(value, nodeNameById = new Map()) {
+  if (!nodeNameById.size) return value;
+  if (typeof value === 'string') return dbResolveNodeReference(value, nodeNameById);
+  if (Array.isArray(value)) return value.map(item => dbResolveNodeReferencesDeep(item, nodeNameById));
+  if (value && typeof value === 'object') {
+    const result = {};
+    for (const [key, item] of Object.entries(value)) {
+      const resolvedKey = dbResolveNodeReference(key, nodeNameById);
+      result[resolvedKey] = dbResolveNodeReferencesDeep(item, nodeNameById);
+    }
+    return result;
+  }
+  return value;
 }
 
 function dbVariableLabel(value, maxLength = 160) {
@@ -1151,19 +1205,21 @@ function DbNodeDrawerTitle({ node, meta }) {
   </div>;
 }
 
-function DbNodeDrawer({ node, onClose, loading = false }) {
+function DbNodeDrawer({ node, onClose, loading = false, nodeNameById = new Map() }) {
   const nodeType = String(node?.nodeType || '').toLowerCase();
+  const resolvedNode = useMemo(() => dbResolveNodeReferencesDeep(node, nodeNameById), [node, nodeNameById]);
   const isSetVariable = nodeType === 'set_variable';
   const showInputsSummary = nodeType !== 'lingxi_trigger';
   const showOutputsSummary = nodeType !== 'lingxi_send';
   const inputsSummary = nodeType === 'condition'
-    ? dbConditionInputsSummary(node?.inputs)
+    ? dbConditionInputsSummary(resolvedNode?.inputs)
     : nodeType === 'lingxi_send'
-      ? dbLingxiSendInputsSummary(node?.inputs)
-      : node?.inputs;
-  const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
-  const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(node?.outputs) : [];
-  const outputsSummary = dbNodeOutputsSummary(node?.outputs, nodeType === 'lingxi_trigger' ? ['agentId', 'friendNick', 'latestMsgTime', 'input', 'tagList', 'inputList'] : ['inputList'], nodeType === 'lingxi_trigger' ? ['addTime'] : []);
+      ? dbLingxiSendInputsSummary(resolvedNode?.inputs)
+      : resolvedNode?.inputs;
+  const setVariableInputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(resolvedNode?.inputs, { keyField: 'variableKey', typeField: 'valueMode', valueField: 'variableValue' }) : [];
+  const setVariableOutputAssignments = nodeType === 'set_variable' ? dbSetVariableAssignmentsSummary(resolvedNode?.outputs) : [];
+  const triggerOutputs = resolvedNode?.outputs || resolvedNode?.previewOutputs || {};
+  const outputsSummary = nodeType === 'lingxi_trigger' ? dbTriggerOutputsSummary(triggerOutputs) : dbNodeOutputsSummary(resolvedNode?.outputs || resolvedNode?.previewOutputs, ['inputList'], []);
   const meta = dbNodeMeta(node?.nodeType);
   const isSuccess = isDbExecutionSuccess(node?.status);
   const statusText = node?.status || '-';
@@ -1179,14 +1235,14 @@ function DbNodeDrawer({ node, onClose, loading = false }) {
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
     {showOutputsSummary ? nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} /> : null}
     {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} showType={nodeType !== 'lingxi_send'} /> : null}
-    {isSetVariable ? <DbNodeSnapshotPanel before={node.beforeSnapshot} after={node.afterSnapshot} /> : null}
-    <DbNodeRawDataCollapse node={node} />
+    {isSetVariable ? <DbNodeSnapshotPanel before={resolvedNode.beforeSnapshot} after={resolvedNode.afterSnapshot} /> : null}
+    <DbNodeRawDataCollapse node={resolvedNode} />
     <DbNodeRunId runId={node.runId} />
   </Flex>;
   return <Drawer className="db-node-drawer" open={Boolean(node)} width={680} title={<DbNodeDrawerTitle node={node} meta={meta} />} onClose={onClose} destroyOnHidden>
     {node ? <Tabs className="db-node-drawer-tabs" defaultActiveKey="execution" items={[
       { key: 'execution', label: '执行详情', children: executionContent },
-      { key: 'config', label: '节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={node.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={node.nodeConfig} /> }
+      { key: 'config', label: '节点参数配置', children: nodeType === 'condition' ? <DbConditionConfigPanel config={resolvedNode.nodeConfig} /> : <DbNodeJsonBlock title="节点参数配置" value={resolvedNode.nodeConfig} /> }
     ]} /> : null}
   </Drawer>;
 }
@@ -1629,6 +1685,7 @@ function DbConversationDetailPage({ data }) {
   const historicalRawNodes = (historicalRuntime.nodes || []).map(item => ({ ...item.node, __historical: item }));
   const rawNodes = [...currentRawNodes, ...historicalRawNodes];
   const nodeById = new Map(rawNodes.map(node => [node.id, node]));
+  const nodeNameById = new Map(rawNodes.map(node => [node.id, node.data?.label || node.id]));
   const executionMap = new Map(executions.map(item => [item.nodeId, item]));
   const errorTriggerMessageIds = new Set(Object.entries(detail.executionsByTrigger || {})
     .filter(([, triggerExecutions]) => triggerExecutions.some(execution => isDbExecutionFailure(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
@@ -1839,8 +1896,8 @@ function DbConversationDetailPage({ data }) {
           >
             {showActions ? <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} /> : null}
             <span className="db-message-section">
-              {conversationType === 2 && chatRoomName ? <span className="db-message-chat-room"><Tag color="purple">{chatRoomName}</Tag></span> : null}
-              <span className="db-message-meta"><span className="db-message-role">{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+              {conversationType === 2 && chatRoomName ? <span className="db-message-chat-room"><Tag color="purple">群-{chatRoomName}</Tag></span> : null}
+              <span className="db-message-meta"><span className={`db-message-role${isEventMessage ? ' event-message' : ''}`}>{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
             </span>
             {showActions ? <DbConversationActionGroups actions={group.actions} /> : null}
@@ -1915,7 +1972,7 @@ function DbConversationDetailPage({ data }) {
         </div> : null}
       </section>
     </div>
-    <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} />
+    <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} nodeNameById={nodeNameById} />
     {canSendMessage ? <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} /> : null}
   </div>;
 }
