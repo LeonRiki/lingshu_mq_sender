@@ -62,14 +62,6 @@ function releaseVersion() {
 }
 
 function assertPreparedRelease(version) {
-  runInherited('npm', ['run', 'build']);
-  runInherited('npm', ['run', 'release:manifest']);
-  const changes = run('git', ['diff', '--name-only'], { cwd: ROOT }).trim();
-  if (changes) {
-    runInherited('git', ['add', '-A']);
-    runInherited('git', ['commit', '-m', `v${version}: rebuild artifacts before publish`]);
-    runInherited('git', ['push', 'origin', 'main']);
-  }
   const manifest = readJson(path.join(ROOT, 'update-manifest.json'));
   if (manifest.version !== version) throw new Error('更新清单版本与 version.json 不一致。');
   return manifest;
