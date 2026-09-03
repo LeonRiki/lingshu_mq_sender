@@ -688,7 +688,8 @@ const PROTOCOL_FIELDS = [
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
   'weworkAccountAlias', 'friendRemoteId', 'lingxiAccount', 'chatRoomName',
   'chatRoomWxId', 'eventContent', 'chatRoomTagList', 'eventSourceType',
-  'chatRoomRemoteId', 'conversationType', 'weworkAccountName'
+  'chatRoomRemoteId', 'conversationType', 'inputMessageList', 'weworkAccountName',
+  'inputListMessageList'
 ];
 
 const DB_TRIGGER_MESSAGE_FIELDS = new Set(PROTOCOL_FIELDS);

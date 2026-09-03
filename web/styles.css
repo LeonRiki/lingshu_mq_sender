@@ -2538,6 +2538,12 @@ main {
   background: #f8fafc;
 }
 
+.db-trigger-tag-section {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .db-trigger-case-section-title {
   color: #0f172a;
   font-size: 13px;
@@ -2561,6 +2567,10 @@ main {
   color: #64748b;
   font-size: 11px;
   font-weight: 500;
+}
+
+.db-trigger-case-session-field .ant-input {
+  font-weight: 400;
 }
 
 .db-trigger-case-json-preview {

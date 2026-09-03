@@ -724,7 +724,7 @@ const DB_TRIGGER_MESSAGE_FIELDS = [
   'chatRoomName', 'chatRoomWxId', 'eventContent', 'weworkCorpId', 'latestMsgTime',
   'lingxiAccount', 'weworkAccount', 'friendRemoteId', 'chatRoomTagList',
   'eventSourceType', 'chatRoomRemoteId', 'conversationType', 'friendExternalId',
-  'weworkAccountName', 'weworkAccountAlias'
+  'inputMessageList', 'weworkAccountName', 'weworkAccountAlias', 'inputListMessageList'
 ];
 
 function dbTriggerMessageJson(outputs) {
@@ -837,7 +837,7 @@ function DbTriggerOutputActions({ outputs, triggerMessageId, scenarios = [], use
             <label className="db-trigger-case-field"><span>业务场景</span><Select showSearch allowClear filterOption={false} value={businessScenario || undefined} placeholder="选择或创建业务场景" searchValue={scenarioSearch} onSearch={setScenarioSearch} options={scenarioOptions} onChange={value => { setBusinessScenario(String(value || '').trim()); setScenarioSearch(''); }} onClear={() => { setBusinessScenario(''); setScenarioSearch(''); }} popupRender={origin => <>{origin}{canCreateScenario ? <Button type="link" block onMouseDown={event => event.preventDefault()} onClick={createBusinessScenario}>创建“{scenarioSearch.trim()}”</Button> : null}</>} /></label>
             <label className="db-trigger-case-field"><span>备注</span><Input.TextArea value={expectedResult} maxLength={500} autoSize={{ minRows: 2, maxRows: 4 }} onChange={event => setExpectedResult(event.target.value)} placeholder="测试目的、特殊说明或预期结果（可选）" /></label>
           </div>
-          <section className="db-trigger-case-section">
+          <section className="db-trigger-case-section db-trigger-tag-section">
             <label className="db-trigger-case-field"><span>用户标签（tagList）</span><Select className="db-trigger-tag-select" mode="tags" value={tagList} options={userTags.map(value => ({ value, label: value }))} onChange={values => setTagList(values.map(value => String(value || '').trim()).filter(Boolean))} tokenSeparators={[',', '，', ';']} placeholder="输入后按 Enter 添加标签" /></label>
           </section>
           <section className="db-trigger-case-section">
