@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.15",
+  "version": "2.1.16",
   "notes": [
     "会话详情(DB)：支持群聊消息和事件消息类型展示",
     "会话详情(DB)：灵犀触发器Outputs摘要补充conversationType等字段",
     "会话详情(DB)：节点引用显示为节点名称/字段名",
-    "会话详情(DB)：消息列表样式优化"
+    "会话详情(DB)：消息列表样式优化",
+    "会话详情(DB)：灵犀触发器支持复制消息 JSON 与一键存为可编辑测试用例"
   ],
   "files": [
     {
@@ -14,15 +15,15 @@
     },
     {
       "path": "server.js",
-      "sha256": "38987744f000c3d44747fdaaf317ce417e33672d777b8e98a914265984fad125"
+      "sha256": "02c93cb92c965a66bb704c7e955729080bc3773bd07dd09ac0f804b80e10292b"
     },
     {
       "path": "version.json",
-      "sha256": "e8e3e56473c4d57b26cffe86439f6c34495fc90e5da5a5ee494f6a83e361d810"
+      "sha256": "76822c1f5f26f6c13efd3fa93a8e8b635d39b56aa6201c2d7fa7f3ff5e1c05a5"
     },
     {
       "path": "web/app.js",
-      "sha256": "b2737f36e460d93b6e47409e3f1b3de3cc155a1b5b1399fd5554aa5bfc2a0a5e"
+      "sha256": "bf0647b93a11682e874d7c9962e12cbd1d17fc51aadb1da811503fab47011449"
     },
     {
       "path": "web/assets/github.png",
@@ -38,7 +39,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "96ca4e56054593c6f17766759566e1467640f83aa6eca61f825140bce0c6d35e"
+      "sha256": "70cc3668d4a21f3f46947e59ffa04aa3d4e7fd359322566f2d82c43d77597782"
     },
     {
       "path": "web/favicon.ico",
@@ -54,7 +55,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "ec8c8ca6ca143b60f213fbdc1d0280f6e82834aa86fc0b6304f838b822b69523"
+      "sha256": "6ef9a7972478866d17f8a6bf261dc437497096d28a1bf4f348d67c446ebe57af"
     },
     {
       "path": "win-启动服务.bat",

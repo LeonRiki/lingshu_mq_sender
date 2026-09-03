@@ -736,6 +736,10 @@ function normalizeCase(data) {
       ))
     },
     message: {
+      ...Object.fromEntries([
+        'chatRoomName', 'chatRoomWxId', 'eventContent', 'chatRoomTagList', 'eventSourceType',
+        'chatRoomRemoteId', 'conversationType', 'weworkAccountName'
+      ].filter(key => message[key] !== undefined).map(key => [key, message[key]])),
       requestId: message.requestId || '',
       input: Array.isArray(message.input) ? message.input : (message.input ? [String(message.input)] : ['']),
       inputList: Array.isArray(message.inputList) ? message.inputList : [],

@@ -719,6 +719,140 @@ function dbTriggerOutputsSummary(outputs) {
   return Object.fromEntries([...orderedPairs, ...orderedOriginals]);
 }
 
+const DB_TRIGGER_MESSAGE_FIELDS = [
+  'input', 'addTime', 'agentId', 'tagList', 'inputList', 'requestId', 'friendNick',
+  'chatRoomName', 'chatRoomWxId', 'eventContent', 'weworkCorpId', 'latestMsgTime',
+  'lingxiAccount', 'weworkAccount', 'friendRemoteId', 'chatRoomTagList',
+  'eventSourceType', 'chatRoomRemoteId', 'conversationType', 'friendExternalId',
+  'weworkAccountName', 'weworkAccountAlias'
+];
+
+function dbTriggerMessageJson(outputs) {
+  if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) return {};
+  return Object.fromEntries(DB_TRIGGER_MESSAGE_FIELDS
+    .filter(key => outputs[key] !== undefined)
+    .map(key => [key, outputs[key]]));
+}
+
+function dbTriggerValueList(value) {
+  if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
+  if (typeof value !== 'string') return value === undefined || value === null || value === '' ? [] : [String(value)];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(item => String(item || '').trim()).filter(Boolean) : [value];
+  } catch {
+    return value ? [value] : [];
+  }
+}
+
+function DbTriggerCaseSessionFields({ fields, values, onChange }) {
+  return <div className="db-trigger-case-session-grid">
+    {fields.map(([key, label]) => <label key={key} className="db-trigger-case-session-field">
+      <span>{label}</span>
+      <Input value={values[key] || ''} onChange={event => onChange(key, event.target.value)} />
+    </label>)}
+  </div>;
+}
+
+function DbTriggerOutputActions({ outputs, triggerMessageId, scenarios = [], userTags = [] }) {
+  const [caseModalOpen, setCaseModalOpen] = useState(false);
+  const [caseName, setCaseName] = useState('');
+  const [businessScenario, setBusinessScenario] = useState('');
+  const [expectedResult, setExpectedResult] = useState('');
+  const [tagList, setTagList] = useState([]);
+  const [sessionValues, setSessionValues] = useState({});
+  const [scenarioSearch, setScenarioSearch] = useState('');
+  const [availableScenarios, setAvailableScenarios] = useState(scenarios);
+  const payload = useMemo(() => dbTriggerMessageJson(outputs), [outputs]);
+  const hasMessage = Object.keys(payload).length > 0;
+  const copyPayload = useMemo(() => {
+    const value = String(triggerMessageId || '').trim();
+    return value ? { ...payload, trigger_message_id: value } : payload;
+  }, [payload, triggerMessageId]);
+  const defaultName = useMemo(() => {
+    const identity = String(payload.friendNick || payload.agentId || '触发器消息').trim();
+    const timestamp = String(payload.latestMsgTime || payload.addTime || '').trim().replace(/[\\/:\s]+/g, '-');
+    return [identity, timestamp].filter(Boolean).join('-') || '触发器测试用例';
+  }, [payload]);
+  const sessionFields = [
+    ['friendNick', '好友昵称'],
+    ['weworkAccountAlias', '企微账号别名'],
+    ['lingxiAccount', '灵犀后台账号名'],
+    ['latestMsgTime', '最新消息时间'],
+    ['addTime', '添加时间']
+  ];
+  const draftPayload = useMemo(() => ({ ...payload, ...sessionValues, tagList }), [payload, sessionValues, tagList]);
+  useEffect(() => setAvailableScenarios(scenarios), [scenarios]);
+  const scenarioOptions = useMemo(() => {
+    const search = scenarioSearch.trim();
+    return [...new Set([...availableScenarios, businessScenario].filter(Boolean))]
+      .filter(value => !search || value.includes(search))
+      .map(value => ({ value, label: value }));
+  }, [availableScenarios, businessScenario, scenarioSearch]);
+  const canCreateScenario = scenarioSearch.trim() && ![...availableScenarios, businessScenario].filter(Boolean).includes(scenarioSearch.trim());
+  const createBusinessScenario = async () => {
+    const value = scenarioSearch.trim();
+    if (!value) return;
+    setBusinessScenario(value);
+    setAvailableScenarios(current => [...new Set([...current, value])]);
+    setScenarioSearch('');
+    await window.saveCaseLabels?.({ businessScenarios: [value] });
+  };
+  const openCaseModal = () => {
+    setCaseName(defaultName);
+    setBusinessScenario('');
+    setExpectedResult('');
+    setTagList(dbTriggerValueList(payload.tagList));
+    setSessionValues(Object.fromEntries(sessionFields.map(([key]) => [key, payload[key] ?? ''])));
+    setScenarioSearch('');
+    setCaseModalOpen(true);
+  };
+  const confirmSave = () => {
+    emitListToolbar('save-trigger-output-as-case', {
+      payload: draftPayload,
+      name: caseName.trim() || defaultName,
+      businessScenario: businessScenario.trim(),
+      expectedResult: expectedResult.trim()
+    });
+    setCaseModalOpen(false);
+  };
+  const copyDraftJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(draftPayload, null, 2));
+      message.success('已复制保存消息 JSON');
+    } catch {
+      message.error('复制失败，请重试');
+    }
+  };
+  return <>
+    <Flex className="db-trigger-output-actions" justify="end" gap={8} wrap>
+      <Button size="small" icon={<SaveOutlined />} disabled={!hasMessage} onClick={openCaseModal}>存为测试用例</Button>
+      <Button size="small" type="primary" icon={<CopyOutlined />} disabled={!hasMessage} onClick={() => emitListToolbar('copy-trigger-output-json', { payload: copyPayload })}>复制消息 JSON</Button>
+    </Flex>
+    <Modal className="db-trigger-case-modal" open={caseModalOpen} centered width={980} destroyOnHidden title="存为测试用例" okText="创建测试用例" cancelText="取消" onCancel={() => setCaseModalOpen(false)} onOk={confirmSave}>
+      <div className="db-trigger-case-modal-layout">
+        <div className="db-trigger-case-information">
+          <div className="db-trigger-case-form-fields">
+            <label className="db-trigger-case-field"><span>测试用例名称</span><Input value={caseName} maxLength={100} onChange={event => setCaseName(event.target.value)} placeholder="请输入测试用例名称" /></label>
+            <label className="db-trigger-case-field"><span>业务场景</span><Select showSearch allowClear filterOption={false} value={businessScenario || undefined} placeholder="选择或创建业务场景" searchValue={scenarioSearch} onSearch={setScenarioSearch} options={scenarioOptions} onChange={value => { setBusinessScenario(String(value || '').trim()); setScenarioSearch(''); }} onClear={() => { setBusinessScenario(''); setScenarioSearch(''); }} popupRender={origin => <>{origin}{canCreateScenario ? <Button type="link" block onMouseDown={event => event.preventDefault()} onClick={createBusinessScenario}>创建“{scenarioSearch.trim()}”</Button> : null}</>} /></label>
+            <label className="db-trigger-case-field"><span>备注</span><Input.TextArea value={expectedResult} maxLength={500} autoSize={{ minRows: 2, maxRows: 4 }} onChange={event => setExpectedResult(event.target.value)} placeholder="测试目的、特殊说明或预期结果（可选）" /></label>
+          </div>
+          <section className="db-trigger-case-section">
+            <label className="db-trigger-case-field"><span>用户标签（tagList）</span><Select className="db-trigger-tag-select" mode="tags" value={tagList} options={userTags.map(value => ({ value, label: value }))} onChange={values => setTagList(values.map(value => String(value || '').trim()).filter(Boolean))} tokenSeparators={[',', '，', ';']} placeholder="输入后按 Enter 添加标签" /></label>
+          </section>
+          <section className="db-trigger-case-section">
+            <DbTriggerCaseSessionFields fields={sessionFields} values={sessionValues} onChange={(key, value) => setSessionValues(current => ({ ...current, [key]: value }))} />
+          </section>
+        </div>
+        <section className="db-trigger-case-json-preview">
+          <Flex className="db-trigger-case-json-preview-head" justify="space-between" align="center"><span>保存消息 JSON</span><Tooltip title="复制 JSON"><Button type="text" size="small" className="db-trigger-case-json-copy" icon={<CopyOutlined />} aria-label="复制保存消息 JSON" onClick={copyDraftJson} /></Tooltip></Flex>
+          <pre><code>{renderJsonCode(draftPayload)}</code></pre>
+        </section>
+      </div>
+    </Modal>
+  </>;
+}
+
 function dbConditionInputsSummary(inputs) {
   const branches = Array.isArray(inputs?.branches) ? inputs.branches : [];
   const fieldValues = new Map();
@@ -1072,7 +1206,7 @@ function DbNodeLatestInputPreview({ value }) {
   </div>;
 }
 
-function DbNodeValuePanel({ title, value, typeLabel = dbValueType, showType = true, arrayAsTags = false, inputListAsMessages = false, inputAsStudentMessage = false, fullValueKeys = [] }) {
+function DbNodeValuePanel({ title, value, typeLabel = dbValueType, showType = true, arrayAsTags = false, inputListAsMessages = false, inputAsStudentMessage = false, fullValueKeys = [], titleExtra = null }) {
   const entries = dbObjectEntries(value);
   const orderedEntries = inputListAsMessages
     ? [...entries].sort((left, right) => Number(String(left.key).toLowerCase() === 'inputlist') - Number(String(right.key).toLowerCase() === 'inputlist'))
@@ -1080,7 +1214,7 @@ function DbNodeValuePanel({ title, value, typeLabel = dbValueType, showType = tr
   const parseVariableLabel = title === 'Inputs 摘要';
   const fullValueKeySet = new Set(fullValueKeys.map(key => String(key).toLowerCase()));
   return <section className="db-node-panel">
-    <div className="db-node-panel-title"><span>{title}</span><Text type="secondary">{dbCollectionSummary(value)}</Text></div>
+    <div className="db-node-panel-title"><span>{title}</span>{titleExtra || <Text type="secondary">{dbCollectionSummary(value)}</Text>}</div>
     {entries.length ? <div className="db-node-value-list">
       {orderedEntries.map(item => <div key={item.key} className={`db-node-value-row${showType ? '' : ' without-type'}`}>
         <span className="db-node-value-key" title={item.key}>{parseVariableLabel ? dbVariableLabel(item.key, 160) : item.key}</span>
@@ -1205,7 +1339,7 @@ function DbNodeDrawerTitle({ node, meta }) {
   </div>;
 }
 
-function DbNodeDrawer({ node, onClose, loading = false, nodeNameById = new Map() }) {
+function DbNodeDrawer({ node, onClose, loading = false, nodeNameById = new Map(), scenarios = [], userTags = [] }) {
   const nodeType = String(node?.nodeType || '').toLowerCase();
   const resolvedNode = useMemo(() => dbResolveNodeReferencesDeep(node, nodeNameById), [node, nodeNameById]);
   const isSetVariable = nodeType === 'set_variable';
@@ -1233,7 +1367,7 @@ function DbNodeDrawer({ node, onClose, loading = false, nodeNameById = new Map()
       <div className="db-node-summary-row"><Text type="secondary">开始时间</Text><Text>{node.startedAt || '-'}</Text></div>
     </div>
     {node.errorMessage ? <Alert type="error" message={node.errorMessage} /> : null}
-    {showOutputsSummary ? nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} /> : null}
+    {showOutputsSummary ? nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Outputs 摘要" assignments={setVariableOutputAssignments} showValueType /> : <DbNodeValuePanel title="Outputs 摘要" value={outputsSummary} showType={nodeType !== 'condition' && nodeType !== 'lingxi_trigger'} arrayAsTags inputListAsMessages inputAsStudentMessage={nodeType === 'lingxi_trigger'} fullValueKeys={nodeType === 'agent' ? ['output'] : []} titleExtra={nodeType === 'lingxi_trigger' ? <DbTriggerOutputActions outputs={triggerOutputs} triggerMessageId={node?.triggerMessageId || node?.trigger_message_id} scenarios={scenarios} userTags={userTags} /> : null} /> : null}
     {showInputsSummary ? nodeType === 'agent' ? <DbNodeAgentInputsPanel inputs={inputsSummary} /> : nodeType === 'set_variable' ? <DbNodeAssignmentsPanel title="Inputs 摘要" assignments={setVariableInputAssignments} showValueType /> : <DbNodeValuePanel title="Inputs 摘要" value={inputsSummary} typeLabel={dbValueMode} showType={nodeType !== 'lingxi_send'} /> : null}
     {isSetVariable ? <DbNodeSnapshotPanel before={resolvedNode.beforeSnapshot} after={resolvedNode.afterSnapshot} /> : null}
     <DbNodeRawDataCollapse node={resolvedNode} />
@@ -1972,7 +2106,7 @@ function DbConversationDetailPage({ data }) {
         </div> : null}
       </section>
     </div>
-    <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} nodeNameById={nodeNameById} />
+    <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} nodeNameById={nodeNameById} scenarios={data.scenarios} userTags={data.userTags} />
     {canSendMessage ? <DbMessageDrawer open={messageDrawerOpen} onClose={() => setMessageDrawerOpen(false)} workflowId={data.activeWorkflowId} conversationId={data.activeConversationId} onSend={handleSendMessage} mqConfigs={data.mqConfigs} lastUsedMqConfigId={lastUsedMqConfigId} configId={data.connection?.configId} /> : null}
   </div>;
 }

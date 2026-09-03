@@ -686,8 +686,71 @@ function readSingleInputs() {
 const PROTOCOL_FIELDS = [
   'requestId', 'input', 'latestMsgTime', 'weworkCorpId', 'agentId', 'addTime',
   'weworkAccount', 'friendNick', 'friendExternalId', 'tagList', 'inputList',
-  'weworkAccountAlias', 'friendRemoteId', 'lingxiAccount'
+  'weworkAccountAlias', 'friendRemoteId', 'lingxiAccount', 'chatRoomName',
+  'chatRoomWxId', 'eventContent', 'chatRoomTagList', 'eventSourceType',
+  'chatRoomRemoteId', 'conversationType', 'weworkAccountName'
 ];
+
+const DB_TRIGGER_MESSAGE_FIELDS = new Set(PROTOCOL_FIELDS);
+
+function dbTriggerMessagePayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([key]) => DB_TRIGGER_MESSAGE_FIELDS.has(key)));
+}
+
+function dbTriggerMessageCopyPayload(value) {
+  const payload = dbTriggerMessagePayload(value);
+  const triggerMessageId = String(value?.trigger_message_id || '').trim();
+  if (triggerMessageId) payload.trigger_message_id = triggerMessageId;
+  return payload;
+}
+
+function triggerPayloadList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return value === undefined || value === null || value === '' ? [] : [value];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return value ? [value] : [];
+  }
+}
+
+async function saveTriggerOutputAsCase(rawPayload, name, businessScenario, expectedResult) {
+  const payload = dbTriggerMessagePayload(rawPayload);
+  const rawInput = payload.input;
+  const inputContent = value => typeof value === 'string' ? value : JSON.stringify(value);
+  const input = Array.isArray(rawInput)
+    ? rawInput.map(value => inputContent(value ?? '')).filter(Boolean)
+    : rawInput === undefined || rawInput === null || rawInput === '' ? [] : [inputContent(rawInput)];
+  if (!input.length) {
+    toast('触发器输出中没有可用于创建用例的 input 消息', 'warning');
+    return;
+  }
+  const message = {
+    ...payload,
+    input,
+    tagList: triggerPayloadList(payload.tagList),
+    inputList: triggerPayloadList(payload.inputList)
+  };
+  const testCase = {
+    meta: { name: String(name || '触发器测试用例').trim() || '触发器测试用例', businessScenario: String(businessScenario || '').trim(), expectedResult: String(expectedResult || '').trim(), mode: 'single' },
+    message,
+    session: { mode: 'system', attributes: {} },
+    conversation: { flow: input.map(content => ({ type: 'message', content })), messages: [] }
+  };
+  if (testCase.meta.businessScenario && !labelNames('businessScenarios').includes(testCase.meta.businessScenario)) {
+    await window.saveCaseLabels?.({ businessScenarios: [testCase.meta.businessScenario] });
+  }
+  const newTags = message.tagList.filter(tag => !labelNames('userTags').includes(tag));
+  if (newTags.length) await window.saveCaseLabels?.({ userTags: newTags });
+  const created = normalizeCase(await api('/api/cases', { method: 'POST', body: JSON.stringify(testCase) }));
+  await loadCases();
+  state.activeCaseId = created.id;
+  setView('cases');
+  showCaseDetail('push');
+  toast('已创建测试用例');
+}
 
 function protocolPayload(c, input, inputList, attrs = {}) {
   const payload = {};
@@ -1595,6 +1658,8 @@ function dbRecordPageData() {
     page: state.dbRecordPage,
     configs: state.dbConfigs,
     mqConfigs: state.mqConfigs,
+    scenarios: labelNames('businessScenarios'),
+    userTags: labelNames('userTags'),
     connection: state.dbConnection,
     connectionChanging: state.dbConnectionChanging,
     workflows: state.dbWorkflows,
@@ -2486,7 +2551,7 @@ function bindEvents() {
   });
   document.addEventListener('list-page-ui-ready', renderListToolbars);
   document.addEventListener('list-toolbar-action', e => {
-    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId, workflowId, conversationId, triggerMessageId, configId, filters } = e.detail || {};
+    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId, workflowId, conversationId, triggerMessageId, configId, filters, payload, businessScenario, expectedResult } = e.detail || {};
     if (type === 'new-case') createCase().catch(showError);
     if (type === 'import-case' && file) importTestCaseFile(file, format).catch(showError);
     if (type === 'export-cases') exportCases();
@@ -2556,6 +2621,8 @@ function bindEvents() {
     }
     if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
     if (type === 'copy-trigger-message-id') copyText(value, '已复制 triggerMessageId');
+    if (type === 'copy-trigger-output-json') copyText(JSON.stringify(dbTriggerMessageCopyPayload(payload), null, 2), '已复制消息 JSON');
+    if (type === 'save-trigger-output-as-case') saveTriggerOutputAsCase(payload, name, businessScenario, expectedResult).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
     if (type === 'delete-selected-label-items') deleteSelectedLabelItems(labelType, names).catch(showError);
     if (type === 'delete-unused-label-items') deleteUnusedLabelItems(labelType).catch(showError);
