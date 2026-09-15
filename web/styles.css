@@ -1049,8 +1049,14 @@ main {
 .db-record-table-area {
   display: flex;
   flex: 1;
+  gap: 0;
   min-height: 0;
   flex-direction: column;
+}
+
+.db-record-table-area > .ant-table-wrapper,
+.db-record-table-area > .db-record-pagination {
+  margin: 0 !important;
 }
 
 .db-record-page .ant-table-wrapper {

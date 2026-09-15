@@ -1,9 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.18",
+  "version": "2.1.19",
   "notes": [
-    "会话详情(DB)：发送后续新消息时补齐 inputMessageList、inputListMessageList 字段",
-    "会话记录查询(DB)：恢复列表分页器，列表内容与分页器独立滚动和展示"
+    "会话记录查询(DB)：按运行时表头和分页器高度计算列表滚动区域，消除列表底部空白"
   ],
   "files": [
     {
@@ -16,7 +15,7 @@
     },
     {
       "path": "version.json",
-      "sha256": "a42ca4f22677e7189e525a93082ca24021f2450d8cc4761c21cf8f4ae72e2bc5"
+      "sha256": "c762e2d0437464e0d30dd9dc9228ebf2a0e07e460c28d729a8e7a0f61e91f87e"
     },
     {
       "path": "web/app.js",
@@ -36,7 +35,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "6cc720eca006078a0e6a31a0d023fb74074a24c3493c9357451724061060b6fa"
+      "sha256": "9d9f1c061c5742f5cf93d1cb144c60b6fb7229f8919ac4faf1ccd20bfbff1136"
     },
     {
       "path": "web/favicon.ico",
@@ -52,7 +51,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "600972f441de6e5a879754bc21c241cc33cc073a45c6da4c3714c01d7f353c11"
+      "sha256": "26709973c6a2594596649f31dfdb4371d749224884e0df74df19e1a2e16d20ea"
     },
     {
       "path": "win-启动服务.bat",
