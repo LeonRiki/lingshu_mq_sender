@@ -1018,6 +1018,66 @@ function applyAttributes(payload, attrs) {
   });
 }
 
+function parseInputListEntry(value) {
+  const raw = String(value || '');
+  const separatorIndex = raw.indexOf(':');
+  if (separatorIndex <= 0) return { remoteId: '', message: raw };
+  return {
+    remoteId: raw.slice(0, separatorIndex).trim(),
+    message: raw.slice(separatorIndex + 1)
+  };
+}
+
+function protocolMessageType(message) {
+  try {
+    const parsed = JSON.parse(message);
+    return String(parsed?.messageType || 'text');
+  } catch {
+    return 'text';
+  }
+}
+
+function remapStudentHistory(inputList, sourceFriendRemoteId, targetFriendRemoteId) {
+  const sourceId = String(sourceFriendRemoteId || '').trim();
+  const targetId = String(targetFriendRemoteId || '').trim();
+  return (Array.isArray(inputList) ? inputList : []).map(value => {
+    const entry = parseInputListEntry(value);
+    if (!sourceId || !targetId || entry.remoteId !== sourceId) return String(value || '');
+    return `${targetId}:${entry.message}`;
+  });
+}
+
+function inputListMessageEntries(inputList, templates, fallbackTime) {
+  const sourceTemplates = Array.isArray(templates) ? templates : [];
+  return (Array.isArray(inputList) ? inputList : []).map((value, index) => {
+    const entry = parseInputListEntry(value);
+    const template = sourceTemplates[index] && typeof sourceTemplates[index] === 'object' ? sourceTemplates[index] : {};
+    return {
+      message: entry.message,
+      remoteId: entry.remoteId || String(template.remoteId || ''),
+      messageTime: formatDateForInput(template.messageTime || fallbackTime),
+      messageType: String(template.messageType || protocolMessageType(entry.message))
+    };
+  });
+}
+
+function inputMessageEntries(input, friendRemoteId, messageTime) {
+  return (Array.isArray(input) ? input : [input]).map(value => {
+    const message = String(value || '');
+    return {
+      message,
+      remoteId: String(friendRemoteId || ''),
+      messageTime: formatDateForInput(messageTime),
+      messageType: protocolMessageType(message)
+    };
+  });
+}
+
+function synchronizeProtocolMessageLists(payload, historyTemplates = []) {
+  payload.inputListMessageList = inputListMessageEntries(payload.inputList, historyTemplates, payload.latestMsgTime);
+  payload.inputMessageList = inputMessageEntries(payload.input, payload.friendRemoteId, payload.latestMsgTime);
+}
+
 function basePayload(c, session, agentId) {
   const cfg = loadConfig();
   const msg = c.message || {};
@@ -1034,6 +1094,8 @@ function basePayload(c, session, agentId) {
     friendExternalId: session.friendExternalId,
     tagList: Array.isArray(msg.tagList) ? [...msg.tagList] : [],
     inputList: [],
+    inputMessageList: [],
+    inputListMessageList: [],
     weworkAccountAlias: msg.weworkAccountAlias || cfg.defaultAlias,
     friendRemoteId: session.friendRemoteId,
     lingxiAccount: String(msg.lingxiAccount || 'mqSender')
@@ -1078,7 +1140,8 @@ function buildSnapshots(c, options) {
   const snapshots = [];
   const sessionMode = c.session.mode || 'system';
   const unifiedAttrs = sessionMode === 'custom' || sessionMode === 'unified' ? c.session.attributes : {};
-  const history = Array.isArray(c.message.inputList) ? [...c.message.inputList] : [];
+  const history = remapStudentHistory(c.message.inputList, c.message.friendRemoteId, session.friendRemoteId);
+  const historyMessageList = inputListMessageEntries(history, c.message.inputListMessageList, c.message.latestMsgTime);
   const groups = messageFlowGroups(c.conversation.flow);
   let latestMsgTime = '';
   groups.forEach(group => {
@@ -1095,6 +1158,7 @@ function buildSnapshots(c, options) {
       : addSecondsToProtocolTime(latestMsgTime || payload.latestMsgTime, delaySeconds);
     payload.latestMsgTime = latestMsgTime;
     payload.requestId = sessionRequestId(session, snapshots.length + 1);
+    synchronizeProtocolMessageLists(payload, historyMessageList);
     snapshots.push({
       index: snapshots.length + 1,
       role: 'student',
@@ -1102,17 +1166,26 @@ function buildSnapshots(c, options) {
       delaySeconds,
       payload
     });
-    group.messages.forEach(item => history.push(`${session.friendRemoteId}:${item.content}`));
+    group.messages.forEach(item => {
+      history.push(`${session.friendRemoteId}:${item.content}`);
+      historyMessageList.push({
+        message: String(item.content || ''),
+        remoteId: session.friendRemoteId,
+        messageTime: formatDateForInput(payload.latestMsgTime),
+        messageType: protocolMessageType(String(item.content || ''))
+      });
+    });
   });
 
   if (snapshots.length === 0) {
     const payload = basePayload(c, session, agentId);
     payload.input = Array.isArray(c.message.input) && c.message.input.length ? [...c.message.input] : [''];
-    payload.inputList = Array.isArray(c.message.inputList) ? [...c.message.inputList] : [];
+    payload.inputList = remapStudentHistory(c.message.inputList, c.message.friendRemoteId, session.friendRemoteId);
     applyAttributes(payload, unifiedAttrs);
     if (agentId) payload.agentId = agentId;
     applyIdentityLinks(payload, session);
     payload.requestId = sessionRequestId(session, 1);
+    synchronizeProtocolMessageLists(payload, c.message.inputListMessageList);
     snapshots.push({ index: 1, role: 'student', content: payload.input[0] || '', delaySeconds: 0, payload });
   }
   return snapshots;
@@ -2588,7 +2661,7 @@ function prepareDbConversationPayload({
   // Build payload
   const now = nowIsoLocal();
   const requestId = conversationRequestId(identity);
-  return {
+  const payload = {
     requestId,
     input: [message],
     inputList,
@@ -2608,6 +2681,12 @@ function prepareDbConversationPayload({
     trigger_message_id: requestId,
     user_input: message
   };
+  // 后续消息与初始测试消息使用相同的协议字段：当前学生消息写入
+  // inputMessageList，历史消息按 inputList 的 RemoteId 生成 inputListMessageList。
+  // 保留最近一次触发器中的时间和消息类型，缺失时由同步方法回退为当前时间和文本类型。
+  const latestTriggerPayload = dbTriggerPayload(latestTrigger);
+  synchronizeProtocolMessageLists(payload, latestTriggerPayload.inputListMessageList);
+  return payload;
 }
 async function testDbConnection(configId) {
   return withDbClientQueue(async () => {
@@ -2935,7 +3014,7 @@ async function listDbConversations(url) {
              CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
                THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
+               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'inputMessageList', e.outputs::jsonb -> 'inputMessageList', 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -3061,7 +3140,7 @@ async function dbConversationDetail(url) {
              CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
                WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
+                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'inputMessageList', e.outputs::jsonb -> 'inputMessageList', 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -3490,6 +3569,10 @@ function appendSnapshotFromRecord(record, message) {
     payload.weworkAccount,
     payload.friendRemoteId
   );
+  synchronizeProtocolMessageLists(payload, [
+    ...(Array.isArray(previousPayload.inputListMessageList) ? previousPayload.inputListMessageList : []),
+    ...(Array.isArray(previousPayload.inputMessageList) ? previousPayload.inputMessageList : [])
+  ]);
   return {
     index: snapshots.length + 1,
     role: 'student',

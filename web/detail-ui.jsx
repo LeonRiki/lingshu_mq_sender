@@ -2,7 +2,7 @@ import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Pagination, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
 import { Background, BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getBezierPath } from '@xyflow/react';
 import {
   ApiOutlined,
@@ -442,6 +442,25 @@ function DbConversationListPage({ data }) {
   const filters = data.filters || {};
   const [saveFilterOpen, setSaveFilterOpen] = useState(false);
   const [filterName, setFilterName] = useState('');
+  const [tableScrollY, setTableScrollY] = useState(240);
+  const pageRef = useRef(null);
+  const toolbarRef = useRef(null);
+  const listHeaderRef = useRef(null);
+  useEffect(() => {
+    const syncTableHeight = () => {
+      const page = pageRef.current;
+      const toolbar = toolbarRef.current;
+      const listHeader = listHeaderRef.current;
+      if (!page || !toolbar || !listHeader) return;
+      const pageGap = 28;
+      const paginationHeight = 54;
+      setTableScrollY(Math.max(120, Math.floor(page.clientHeight - toolbar.offsetHeight - listHeader.offsetHeight - pageGap - paginationHeight)));
+    };
+    const observer = new ResizeObserver(syncTableHeight);
+    [pageRef.current, toolbarRef.current, listHeaderRef.current].filter(Boolean).forEach(element => observer.observe(element));
+    syncTableHeight();
+    return () => observer.disconnect();
+  }, []);
   const rangeValue = filters.startTime || filters.endTime ? [
     filters.startTime ? dayjs(filters.startTime) : null,
     filters.endTime ? dayjs(filters.endTime) : null
@@ -513,8 +532,8 @@ function DbConversationListPage({ data }) {
     })(),
     disabled: data.connectionChanging
   }));
-  return <div className="db-record-page">
-    <div className="db-record-toolbar">
+  return <div className="db-record-page" ref={pageRef}>
+    <div className="db-record-toolbar" ref={toolbarRef}>
       <div className="db-filter-grid">
         <div className="db-filter-field"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
         <div className="db-filter-field"><span><b>*</b>时间范围</span><DatePicker.RangePicker className="db-filter-control" format="YYYY-MM-DD" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
@@ -537,8 +556,8 @@ function DbConversationListPage({ data }) {
         </Space>
       </div>
     </div>
-    <div className="db-record-list-header"><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
-    {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: 'calc(100vh - 344px)', x: 1260 }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize }) }} />}
+    <div className="db-record-list-header" ref={listHeaderRef}><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
+    {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <div className="db-record-table-area"><Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: tableScrollY, x: 1260 }} pagination={false} /><Pagination className="db-record-pagination" current={data.pageNo} pageSize={data.pageSize} total={data.total} showSizeChanger pageSizeOptions={[10, 20, 50, 100]} showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`} onChange={(pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize })} /></div>}
     <Modal open={saveFilterOpen} title="保存筛选条件" okText="保存" cancelText="取消" onCancel={() => { setSaveFilterOpen(false); setFilterName(''); }} onOk={saveCurrentFilter} destroyOnHidden>
       <Input autoFocus value={filterName} onChange={event => setFilterName(event.target.value)} onPressEnter={saveCurrentFilter} placeholder="请输入筛选条件名称" maxLength={40} />
     </Modal>

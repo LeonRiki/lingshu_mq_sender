@@ -1046,6 +1046,13 @@ main {
   min-height: 0;
 }
 
+.db-record-table-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .db-record-page .ant-table-wrapper {
   display: flex;
   flex: 1;
@@ -1075,15 +1082,17 @@ main {
   overflow: auto !important;
 }
 
-.db-record-page .ant-table-pagination {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
+.db-record-pagination {
+  display: flex;
   flex: 0 0 auto;
+  box-sizing: border-box;
+  justify-content: flex-end;
+  width: 100%;
   margin: 0 !important;
   padding: 10px 12px;
-  background: var(--surface);
+  background: #fff;
   border-top: 1px solid #eef2f7;
+  text-align: right;
 }
 
 .db-record-table .ant-table-cell {

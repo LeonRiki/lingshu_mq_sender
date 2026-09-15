@@ -1,14 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.17",
+  "version": "2.1.18",
   "notes": [
-    "会话详情(DB)：支持群聊消息和事件消息类型展示",
-    "会话详情(DB)：灵犀触发器Outputs摘要补充conversationType等字段",
-    "会话详情(DB)：节点引用显示为节点名称/字段名",
-    "会话详情(DB)：消息列表样式优化",
-    "会话详情(DB)：灵犀触发器支持复制消息 JSON 与一键存为可编辑测试用例",
-    "会话详情(DB)：测试用例保存消息补齐 inputMessageList、inputListMessageList 字段",
-    "会话详情(DB)：优化测试用例弹窗标签和会话属性输入样式"
+    "会话详情(DB)：发送后续新消息时补齐 inputMessageList、inputListMessageList 字段",
+    "会话记录查询(DB)：恢复列表分页器，列表内容与分页器独立滚动和展示"
   ],
   "files": [
     {
@@ -17,11 +12,11 @@
     },
     {
       "path": "server.js",
-      "sha256": "a76217e067ded49293bf98fa5f1fc01c3260ad30b7e798563976f42f3f60c333"
+      "sha256": "f82403f0b832fad9e8af065145bd571c94f5da9692975f423c029798bedce66c"
     },
     {
       "path": "version.json",
-      "sha256": "d002af830dfb5bb4f566103def38a81b7870e7e73e2a85af9efcdec5c7a4eb83"
+      "sha256": "a42ca4f22677e7189e525a93082ca24021f2450d8cc4761c21cf8f4ae72e2bc5"
     },
     {
       "path": "web/app.js",
@@ -41,7 +36,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "696d33ca3f892b1ce77458b650d866421dcd4e2a7f8914ed0935add965f9fd85"
+      "sha256": "6cc720eca006078a0e6a31a0d023fb74074a24c3493c9357451724061060b6fa"
     },
     {
       "path": "web/favicon.ico",
@@ -57,7 +52,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "d67ec25145d894c54b05f415c1d982541042b9542a6dd21e70cbc6f1b4826bbb"
+      "sha256": "600972f441de6e5a879754bc21c241cc33cc073a45c6da4c3714c01d7f353c11"
     },
     {
       "path": "win-启动服务.bat",
