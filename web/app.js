@@ -38,6 +38,11 @@ const state = {
   dbConversationItems: [],
   dbConversationQueried: false,
   dbConversationLoading: false,
+  dbConversationListScrollTop: 0,
+  dbConversationPreview: null,
+  dbConversationPreviewLoading: false,
+  dbConversationPreviewWorkflowId: '',
+  dbConversationPreviewConversationId: '',
   dbConversationDetail: null,
   dbConversationDetailLoading: false,
   dbConversationVariablesOpen: false,
@@ -1678,6 +1683,11 @@ function dbRecordPageData() {
     loading: state.dbConversationLoading,
     queried: state.dbConversationQueried,
     items: state.dbConversationItems,
+    listScrollTop: state.dbConversationListScrollTop,
+    conversationPreview: state.dbConversationPreview,
+    conversationPreviewLoading: state.dbConversationPreviewLoading,
+    conversationPreviewWorkflowId: state.dbConversationPreviewWorkflowId,
+    conversationPreviewConversationId: state.dbConversationPreviewConversationId,
     pageNo: state.dbPageNo,
     pageSize: state.dbPageSize,
     total: state.dbConversationTotal || 0,
@@ -1895,9 +1905,14 @@ function resetDbConversationFilters() {
   state.dbStartTime = startTime;
   state.dbEndTime = endTime;
   state.dbPageNo = 1;
+  state.dbConversationListScrollTop = 0;
   state.dbConversationItems = [];
   state.dbConversationTotal = 0;
   state.dbConversationQueried = false;
+  state.dbConversationPreview = null;
+  state.dbConversationPreviewLoading = false;
+  state.dbConversationPreviewWorkflowId = '';
+  state.dbConversationPreviewConversationId = '';
   state.dbConversationDetail = null;
   state.dbActiveWorkflowId = '';
   state.dbActiveConversationId = '';
@@ -1965,6 +1980,11 @@ async function queryDbConversations() {
   if (!await ensureDbEnvironmentConfigured()) return;
   state.dbConversationLoading = true;
   state.dbConversationQueried = true;
+  state.dbConversationListScrollTop = 0;
+  state.dbConversationPreview = null;
+  state.dbConversationPreviewLoading = false;
+  state.dbConversationPreviewWorkflowId = '';
+  state.dbConversationPreviewConversationId = '';
   state.dbConversationDetail = null;
   state.dbActiveWorkflowId = '';
   state.dbActiveConversationId = '';
@@ -1996,6 +2016,12 @@ async function queryDbConversations() {
 
 async function openDbConversationDetail(workflowId, conversationId, options = {}) {
   if (!await ensureDbEnvironmentConfigured()) return;
+  state.dbConversationPreview = null;
+  state.dbConversationPreviewLoading = false;
+  state.dbConversationPreviewWorkflowId = '';
+  state.dbConversationPreviewConversationId = '';
+  const listScrollTop = Number(options.listScrollTop);
+  if (Number.isFinite(listScrollTop) && listScrollTop >= 0) state.dbConversationListScrollTop = listScrollTop;
   const preserveDetail = Boolean(options.preserveDetail);
   const requestedConfigId = String(options.configId || '').trim();
   const resolveConfig = Boolean(options.resolveConfig);
@@ -2029,6 +2055,31 @@ async function openDbConversationDetail(workflowId, conversationId, options = {}
     if (!preserveDetail) state.dbConversationDetailLoading = false;
     renderDbRecordsPage();
   }
+}
+
+async function openDbConversationPreview(workflowId, conversationId) {
+  if (!await ensureDbEnvironmentConfigured()) return;
+  state.dbConversationPreviewLoading = true;
+  state.dbConversationPreview = null;
+  state.dbConversationPreviewWorkflowId = workflowId || '';
+  state.dbConversationPreviewConversationId = conversationId || '';
+  renderDbRecordsPage();
+  try {
+    await ensureDbConnected();
+    const params = appendDbConfigId(new URLSearchParams({ workflowId, conversationId }));
+    state.dbConversationPreview = await api(`/api/db/conversations/detail?${params}`);
+  } finally {
+    state.dbConversationPreviewLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+function closeDbConversationPreview() {
+  state.dbConversationPreview = null;
+  state.dbConversationPreviewLoading = false;
+  state.dbConversationPreviewWorkflowId = '';
+  state.dbConversationPreviewConversationId = '';
+  renderDbRecordsPage();
 }
 
 async function pollDbConversationDetail(workflowId, conversationId) {
@@ -2552,7 +2603,7 @@ function bindEvents() {
   });
   document.addEventListener('list-page-ui-ready', renderListToolbars);
   document.addEventListener('list-toolbar-action', e => {
-    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId, workflowId, conversationId, triggerMessageId, configId, filters, payload, businessScenario, expectedResult } = e.detail || {};
+    const { type, value, file, format, id, confirmed, date, fileName, ids, pageIds, pageNo, pageSize, agentId, mqConfigId, config, field, order, labelType, action, name, names, replacement, backupId, workflowId, conversationId, triggerMessageId, configId, filters, payload, businessScenario, expectedResult, listScrollTop } = e.detail || {};
     if (type === 'new-case') createCase().catch(showError);
     if (type === 'import-case' && file) importTestCaseFile(file, format).catch(showError);
     if (type === 'export-cases') exportCases();
@@ -2602,7 +2653,9 @@ function bindEvents() {
     if (type === 'save-db-filter') saveDbSavedFilter(name).catch(showError);
     if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
     if (type === 'apply-db-filter') applyDbSavedFilter(filters);
-    if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId).catch(showError);
+    if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId, { listScrollTop }).catch(showError);
+    if (type === 'open-db-conversation-preview') openDbConversationPreview(workflowId, conversationId).catch(showError);
+    if (type === 'close-db-conversation-preview') closeDbConversationPreview();
     if (type === 'load-db-conversation-detail') openDbConversationDetail(workflowId, conversationId, { updateRoute: false }).catch(showError);
     if (type === 'poll-db-conversation-detail') pollDbConversationDetail(workflowId, conversationId).catch(showError);
     if (type === 'load-db-conversation-mq-configs') loadMqConfigs().then(renderDbRecordsPage).catch(showError);
@@ -2649,6 +2702,7 @@ function bindEvents() {
     if (type === 'set-db-page') {
       state.dbPageNo = pageNo;
       if (pageSize !== state.dbPageSize) state.dbPageSize = pageSize;
+      state.dbConversationListScrollTop = 0;
       queryDbConversations().catch(showError);
     }
     if (type === 'create-agent-id') createAgentId(agentId).catch(showError);

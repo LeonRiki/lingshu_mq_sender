@@ -2213,6 +2213,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
       workflowId,
       conversationId,
       status: item.status || '',
+      friendNick: item.friend_nick,
       lastMessageAt: item.last_message_at || item.lastMessageAt || '',
       messages: [],
       executions: []
@@ -2262,7 +2263,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
       messageCount: group.messages.length,
       userMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'USER').length,
       assistantMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'ASSISTANT').length,
-      friendNick: dbConversationFriendNick(group.executions),
+      friendNick: group.friendNick ?? dbConversationFriendNick(group.executions),
       messageSummary: sortedMessages
         .filter(message => String(message.role || '').toUpperCase() === 'USER')
         .map(message => {
@@ -2808,25 +2809,37 @@ async function listDbConversations(url) {
       params.push(`%${conversationId}%`);
       where.push(`candidate.conversation_id ILIKE $${params.length}`);
     }
-    if (friendNick) {
-      params.push(`%${friendNick}%`);
-      where.push(`EXISTS (
-        SELECT 1
+    // 昵称只读取触发器的身份字段，并与列表显示使用同一个值。
+    const nicknameJoin = friendNick ? `JOIN LATERAL (
+      SELECT identity.friend_nick
+      FROM (
+        SELECT m.trigger_message_id
         FROM public.conversation_messages m
-        JOIN public.workflow_node_executions e
-         ON e.workflow_id = m.workflow_id
-         AND e.trigger_message_id = m.trigger_message_id
-         AND e.deleted_at IS NULL
         WHERE m.workflow_id = candidate.workflow_id
           AND m.conversation_id = candidate.conversation_id
           AND m.deleted_at IS NULL
-          AND (
-            e.inputs::jsonb ->> 'friendNick' ILIKE $${params.length}
-            OR e.outputs::jsonb ->> 'friendNick' ILIKE $${params.length}
-            OR e.inputs::text ILIKE $${params.length}
-            OR e.outputs::text ILIKE $${params.length}
-          )
-      )`);
+        ORDER BY m.message_timestamp DESC NULLS LAST, m.id DESC
+        OFFSET 0
+      ) recent
+      JOIN LATERAL (
+        SELECT COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                        NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) AS friend_nick
+        FROM public.workflow_node_executions e
+        WHERE e.workflow_id = candidate.workflow_id
+          AND e.trigger_message_id = recent.trigger_message_id
+          AND e.deleted_at IS NULL
+          AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+          AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                       NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) IS NOT NULL
+        ORDER BY e.id DESC
+        LIMIT 1
+      ) identity ON TRUE
+      LIMIT 1
+    ) nickname ON TRUE` : '';
+    if (friendNick) {
+      // 用户输入的 % 和 _ 按昵称字符处理，避免被解释为 SQL 通配符。
+      params.push(`%${friendNick.replace(/[\\%_]/g, '\\$&')}%`);
+      where.push(`nickname.friend_nick ILIKE $${params.length}`);
     }
     if (keyword) {
       params.push(`%${keyword}%`);
@@ -2942,7 +2955,14 @@ async function listDbConversations(url) {
       )`);
     }
     const pageParams = [...params, pageSize, (pageNo - 1) * pageSize];
-    const conversationSql = `WITH grouped AS MATERIALIZED (
+    // 日期表示期间有过消息；最近消息时间仅用于排序，不再决定会话是否入选。
+    const conversationSql = `WITH active_conversations AS MATERIALIZED (
+        SELECT DISTINCT m.workflow_id, m.conversation_id
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = $1
+          AND m.deleted_at IS NULL
+          AND m.message_timestamp >= $2 AND m.message_timestamp <= $3
+      ), grouped AS MATERIALIZED (
         SELECT c.workflow_id,
                c.conversation_id,
                COALESCE(
@@ -2951,29 +2971,31 @@ async function listDbConversations(url) {
                  MAX(c.last_message_at)
                ) AS last_message_at
         FROM public.conversations c
+        JOIN active_conversations active
+          ON active.workflow_id = c.workflow_id
+         AND active.conversation_id = c.conversation_id
         LEFT JOIN public.conversation_messages m
           ON m.workflow_id = c.workflow_id
          AND m.conversation_id = c.conversation_id
          AND m.deleted_at IS NULL
         WHERE c.deleted_at IS NULL
-          AND c.workflow_id::text = $1
+          AND c.workflow_id = $1
         GROUP BY c.workflow_id, c.conversation_id
       ), candidates AS MATERIALIZED (
         SELECT *
         FROM grouped
-        WHERE last_message_at >= $2
-          AND last_message_at <= $3
       ), filtered AS MATERIALIZED (
-        SELECT candidate.*
+        SELECT candidate.*${friendNick ? ', nickname.friend_nick' : ''}
         FROM candidates candidate
+        ${nicknameJoin}
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ), page AS (
         SELECT filtered.*, COUNT(*) OVER() AS total_count
         FROM filtered
-        ORDER BY last_message_at DESC NULLS LAST
+        ORDER BY last_message_at DESC NULLS LAST, workflow_id, conversation_id
         LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}
       )
-      SELECT c.workflow_id, c.conversation_id, c.status, page.last_message_at, page.total_count
+      SELECT c.workflow_id, c.conversation_id, c.status, page.last_message_at, page.total_count${friendNick ? ", page.friend_nick" : ""}
       FROM public.conversations c
       JOIN page
         ON page.workflow_id = c.workflow_id

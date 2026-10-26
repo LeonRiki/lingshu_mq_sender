@@ -469,6 +469,12 @@ function DbConversationListPage({ data }) {
     syncTableHeight();
     return () => observer.disconnect();
   }, [data.queried, data.loading, data.items?.length]);
+  useEffect(() => {
+    const tableBody = tableAreaRef.current?.querySelector('.ant-table-body');
+    if (!tableBody) return;
+    const maxScrollTop = Math.max(0, tableBody.scrollHeight - tableBody.clientHeight);
+    tableBody.scrollTop = Math.min(Math.max(0, Number(data.listScrollTop) || 0), maxScrollTop);
+  }, [data.listScrollTop, data.loading, data.pageNo, data.items]);
   const rangeValue = filters.startTime || filters.endTime ? [
     filters.startTime ? dayjs(filters.startTime) : null,
     filters.endTime ? dayjs(filters.endTime) : null
@@ -480,21 +486,17 @@ function DbConversationListPage({ data }) {
     return diff > 6;
   };
   const queryReady = Boolean(String(filters.workflowId || '').trim() && filters.startTime && filters.endTime);
-  const renderMessageSummary = values => {
+  const renderMessageSummary = (values, record) => {
     const messages = Array.isArray(values) ? values : [];
     const summaryLines = messages
       .map(renderDbMessageText)
       .map(value => value.replace(/\s*[\r\n]+\s*/g, ' ').trim())
       .filter(value => value && value !== '-');
     const visibleLines = summaryLines.slice(0, 2);
-    const tooltipLines = summaryLines.slice(0, 8);
-    return <Tooltip title={<div className="db-message-summary-tooltip">
-      {tooltipLines.length ? tooltipLines.map((line, index) => <div key={`${index}-${line}`} className="db-message-summary-tooltip-line">{line}</div>) : <div className="db-message-summary-tooltip-line">-</div>}
-      <div className="db-message-summary-tooltip-count">共 {summaryLines.length} 条</div>
-    </div>}><span className="list-table-input db-message-summary">
+    return <span className="list-table-input db-message-summary">
       {visibleLines.length ? visibleLines.map((line, index) => <span key={`${index}-${line}`} className="db-message-summary-line">{line}</span>) : <span className="db-message-summary-line">-</span>}
-      <span className="db-message-summary-count">共 {summaryLines.length} 条</span>
-    </span></Tooltip>;
+      <span className="db-message-summary-footer"><span className="db-message-summary-count">共 {summaryLines.length} 条</span><Button className="db-message-summary-preview-button" type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-preview', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看</Button></span>
+    </span>;
   };
   const columns = [
     { title: '工作流ID', dataIndex: 'workflowId', width: 120, fixed: 'left', render: value => <Text strong>{value}</Text> },
@@ -504,7 +506,7 @@ function DbConversationListPage({ data }) {
     { title: '状态', dataIndex: 'hasError', width: 120, render: (_, record) => record.hasError ? <Tooltip title={record.errorSummary}><Tag color="red">有错误</Tag></Tooltip> : <Tag color="green">正常</Tag> },
     { title: '消息数', dataIndex: 'messageCount', width: 84, align: 'center' },
     { title: '最近消息时间', dataIndex: 'lastMessageAt', width: 190, render: value => <Text>{value || '-'}</Text> },
-    { title: '操作', key: 'actions', width: 184, render: (_, record) => <Space size={0}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => emitListToolbar('open-db-conversation', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看详情</Button><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看变量</Button></Space> }
+    { title: '操作', key: 'actions', width: 184, render: (_, record) => <Space size={0}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => emitListToolbar('open-db-conversation', { workflowId: record.workflowId, conversationId: record.conversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })}>查看详情</Button><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看变量</Button></Space> }
   ];
   const saveCurrentFilter = () => {
     const name = filterName.trim();
@@ -566,6 +568,7 @@ function DbConversationListPage({ data }) {
     </div>
     <div className="db-record-list-header" ref={listHeaderRef}><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
     {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <div className="db-record-table-area" ref={tableAreaRef}><Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: tableScrollY, x: 1260 }} pagination={false} /><Pagination className="db-record-pagination" current={data.pageNo} pageSize={data.pageSize} total={data.total} showSizeChanger pageSizeOptions={[10, 20, 50, 100]} showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`} onChange={(pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize })} /></div>}
+    <DbConversationPreviewDrawer detail={data.conversationPreview} loading={data.conversationPreviewLoading} workflowId={data.conversationPreviewWorkflowId} conversationId={data.conversationPreviewConversationId} onClose={() => emitListToolbar('close-db-conversation-preview')} onOpenDetail={() => emitListToolbar('open-db-conversation', { workflowId: data.conversationPreviewWorkflowId, conversationId: data.conversationPreviewConversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })} />
     <Modal open={saveFilterOpen} title="保存筛选条件" okText="保存" cancelText="取消" onCancel={() => { setSaveFilterOpen(false); setFilterName(''); }} onOk={saveCurrentFilter} destroyOnHidden>
       <Input autoFocus value={filterName} onChange={event => setFilterName(event.target.value)} onPressEnter={saveCurrentFilter} placeholder="请输入筛选条件名称" maxLength={40} />
     </Modal>
@@ -1412,6 +1415,68 @@ function renderDbMessageText(value) {
   return value === null ? 'null' : String(value || '-');
 }
 
+function groupDbConversationMessages(messages) {
+  const groups = [];
+  const groupsByTriggerMessageId = new Map();
+  (messages || []).forEach(message => {
+    const triggerMessageId = message.triggerMessageId || message.id;
+    if (!groupsByTriggerMessageId.has(triggerMessageId)) {
+      const group = { triggerMessageId, user: null, assistant: null, actions: [] };
+      groupsByTriggerMessageId.set(triggerMessageId, group);
+      groups.push(group);
+    }
+    const group = groupsByTriggerMessageId.get(triggerMessageId);
+    const role = String(message.role || '').toUpperCase();
+    if (role === 'USER') group.user = group.user || message;
+    else if (role === 'ASSISTANT') group.assistant = group.assistant || message;
+    else if (role === 'ACTION') group.actions.push(message);
+  });
+  return groups.sort((left, right) => {
+    const leftTime = left.user?.messageTimestamp || left.assistant?.messageTimestamp || '';
+    const rightTime = right.user?.messageTimestamp || right.assistant?.messageTimestamp || '';
+    return String(leftTime).localeCompare(String(rightTime));
+  });
+}
+
+function DbConversationTranscript({ detail }) {
+  const messageGroups = groupDbConversationMessages(detail?.messages || []);
+  const errorTriggerMessageIds = new Set(Object.entries(detail?.executionsByTrigger || {})
+    .filter(([, executions]) => executions.some(execution => isDbExecutionFailure(execution.status) || execution.errorMessage || execution.errorClass || execution.errorCode))
+    .map(([triggerMessageId]) => triggerMessageId));
+  if (!messageGroups.length) return <div className="db-conversation-preview-empty">暂无消息记录</div>;
+  return <div className="db-conversation-preview-list">
+    {messageGroups.map(group => {
+      const userMessage = group.user || group.assistant;
+      const assistantMessage = group.assistant;
+      const conversationType = Number(userMessage?.conversationType) || 0;
+      const isEventMessage = conversationType === 3;
+      const chatRoomName = String(userMessage?.chatRoomName || '').trim();
+      const hasError = errorTriggerMessageIds.has(group.triggerMessageId);
+      const processing = userMessage?.processing === true;
+      const pending = !processing && (userMessage?.isPending === true || userMessage?.processed === false);
+      const noReply = !hasError && !pending && !processing && !userMessage?.failed && userMessage?.hasReplyAction === false;
+      return <article key={group.triggerMessageId} className="db-message-item conversation db-message-transcript-item">
+        <span className="db-message-section">
+          {conversationType === 2 && chatRoomName ? <span className="db-message-chat-room"><Tag color="purple">群-{chatRoomName}</Tag></span> : null}
+          <span className="db-message-meta"><span className={`db-message-role${isEventMessage ? ' event-message' : ''}`}>{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+          <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
+        </span>
+        {assistantMessage ? <span className="db-message-ai-reply">
+          <span className="db-message-meta"><span className="db-message-role">AI回复</span>{assistantMessage.messageTimestamp ? <span className="db-message-time">{assistantMessage.messageTimestamp}</span> : null}</span>
+          <span className="db-message-content">{assistantMessage.content === '' ? '\u00a0' : renderDbMessageText(assistantMessage.content)}</span>
+        </span> : null}
+      </article>;
+    })}
+  </div>;
+}
+
+function DbConversationPreviewDrawer({ detail, loading, workflowId, conversationId, onClose, onOpenDetail }) {
+  const open = Boolean(detail || loading);
+  return <Drawer className="db-conversation-preview-drawer" title={detail?.friendNick ? `查看对话 · ${detail.friendNick}` : '查看对话'} extra={<Button type="link" size="small" icon={<EyeOutlined />} disabled={loading || !workflowId || !conversationId} onClick={onOpenDetail}>查看详情</Button>} open={open} placement="right" width={560} onClose={onClose} destroyOnHidden styles={{ body: { padding: 0 } }}>
+    <div className="db-conversation-preview-body"><Spin spinning={loading} tip="正在加载会话消息"><div className="db-conversation-preview-content">{detail ? <DbConversationTranscript detail={detail} /> : null}</div></Spin></div>
+  </Drawer>;
+}
+
 function DbMessageTriggerIdBar({ triggerMessageId }) {
   const value = String(triggerMessageId || '').trim();
   if (!value) return null;
@@ -1821,25 +1886,7 @@ function DbConversationDetailPage({ data }) {
   const executionStepIndex = Math.min(Math.max(activeExecutionIndex, 0), Math.max(executions.length - 1, 0));
   const activeExecution = executions[executionStepIndex] || null;
   const graph = detail.workflowGraph || { nodes: [], edges: [] };
-  const messageGroups = [];
-  const messageGroupMap = new Map();
-  messages.forEach(message => {
-    const triggerMessageId = message.triggerMessageId || message.id;
-    if (!messageGroupMap.has(triggerMessageId)) {
-      const group = { triggerMessageId, user: null, assistant: null, actions: [] };
-      messageGroupMap.set(triggerMessageId, group);
-      messageGroups.push(group);
-    }
-    const group = messageGroupMap.get(triggerMessageId);
-    if (String(message.role).toUpperCase() === 'USER') group.user = group.user || message;
-    else if (String(message.role).toUpperCase() === 'ASSISTANT') group.assistant = group.assistant || message;
-    else if (String(message.role).toUpperCase() === 'ACTION') group.actions.push(message);
-  });
-  messageGroups.sort((left, right) => {
-    const leftTime = left.user?.messageTimestamp || left.assistant?.messageTimestamp || '';
-    const rightTime = right.user?.messageTimestamp || right.assistant?.messageTimestamp || '';
-    return String(leftTime).localeCompare(String(rightTime));
-  });
+  const messageGroups = groupDbConversationMessages(messages);
   const orderedMessageGroups = messageOrder === 'desc' ? [...messageGroups].reverse() : messageGroups;
   const currentRawNodes = graph.nodes || [];
   const historicalRuntime = detail.historicalNodesByTrigger?.[selectedTrigger] || { nodes: [], edges: [] };

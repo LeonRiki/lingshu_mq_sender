@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "version": "2.1.19",
+  "version": "2.1.20",
   "notes": [
-    "会话记录查询(DB)：按运行时表头和分页器高度计算列表滚动区域，消除列表底部空白"
+    "提升会话记录列表数据查询速度"
   ],
   "files": [
     {
@@ -11,15 +11,15 @@
     },
     {
       "path": "server.js",
-      "sha256": "f82403f0b832fad9e8af065145bd571c94f5da9692975f423c029798bedce66c"
+      "sha256": "62ece71f3f254b8d510902fc58bbd0d73e6758cee41537828f759d2cb265b198"
     },
     {
       "path": "version.json",
-      "sha256": "c762e2d0437464e0d30dd9dc9228ebf2a0e07e460c28d729a8e7a0f61e91f87e"
+      "sha256": "8d94c31db3c5a7f8edd83779c01c4adf166ee98cad4797a7952003585c6af307"
     },
     {
       "path": "web/app.js",
-      "sha256": "c2aec5f03232b0c265fe66de35c365e9bb2311e1edfe3cec4c5061fd3ec10b2b"
+      "sha256": "a3f2cea1d28524ed12b273f971bbbadb2c18980d8042a84b66f6bdb4a3dd6170"
     },
     {
       "path": "web/assets/github.png",
@@ -35,7 +35,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "9d9f1c061c5742f5cf93d1cb144c60b6fb7229f8919ac4faf1ccd20bfbff1136"
+      "sha256": "8304740eac566f23f19dca4085138cdf0c63087fe95cc3c246fbbb883af17420"
     },
     {
       "path": "web/favicon.ico",
@@ -51,7 +51,7 @@
     },
     {
       "path": "web/styles.css",
-      "sha256": "26709973c6a2594596649f31dfdb4371d749224884e0df74df19e1a2e16d20ea"
+      "sha256": "4ef9ed740ccc21418d45e6db16d51de08d6e14598f0aa832eed2820451ab6cb3"
     },
     {
       "path": "win-启动服务.bat",
