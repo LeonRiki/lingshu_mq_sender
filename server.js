@@ -2757,15 +2757,22 @@ async function disconnectDbConnection(configId) {
   });
 }
 
-function dbDateParam(value) {
+function dbDateParam(value, endOfDay = false) {
   const text = String(value || '').trim();
-  return text || null;
+  if (!text) return null;
+  // 兼容旧版只传日期的请求，结束日期包含当天最后一秒。
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return `${text} ${endOfDay ? '23:59:59' : '00:00:00'}`;
+  }
+  return text;
 }
 
-function dbDateRangeDay(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
-  if (!match) return Number.NaN;
-  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+function dbDateRangeTimestamp(value) {
+  const text = String(value || '');
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) return Number.NaN;
+  const timestamp = Date.parse(text.replace(' ', 'T') + 'Z');
+  if (!Number.isFinite(timestamp)) return Number.NaN;
+  return new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ') === text ? timestamp : Number.NaN;
 }
 
 async function listDbConversations(url) {
@@ -2781,21 +2788,21 @@ async function listDbConversations(url) {
   const keyword = String(url.searchParams.get('keyword') || '').trim();
   const hasError = String(url.searchParams.get('hasError') || '').trim();
   const startTime = dbDateParam(url.searchParams.get('startTime'));
-  const endTime = dbDateParam(url.searchParams.get('endTime'));
+  const endTime = dbDateParam(url.searchParams.get('endTime'), true);
   if (!startTime || !endTime) {
-    const err = new Error('时间范围为必填项');
+    const err = new Error('学员消息时间为必填项');
     err.statusCode = 400;
     throw err;
   }
-  const startDay = dbDateRangeDay(startTime);
-  const endDay = dbDateRangeDay(endTime);
+  const startDay = dbDateRangeTimestamp(startTime);
+  const endDay = dbDateRangeTimestamp(endTime);
   if (!Number.isFinite(startDay) || !Number.isFinite(endDay) || endDay < startDay) {
-    const err = new Error('时间范围无效');
+    const err = new Error('学员消息时间无效');
     err.statusCode = 400;
     throw err;
   }
-  if ((endDay - startDay) / 86400000 > 6) {
-    const err = new Error('时间范围最多7天');
+  if ((endDay + 1000 - startDay) / 86400000 > 7) {
+    const err = new Error('学员消息时间最多7天');
     err.statusCode = 400;
     throw err;
   }
@@ -2803,7 +2810,9 @@ async function listDbConversations(url) {
   const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 20)));
   return withDbClient(configId, async client => {
     // 先按必填的工作流和时间范围聚合候选会话，避免在每个可选筛选条件中重复计算最新消息时间。
-    const params = [workflowId, startTime, endTime];
+    // 界面结束时间包含整秒，用下一秒的排他上界覆盖毫秒数据，保持时间列可用索引。
+    const endExclusive = new Date(endDay + 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const params = [workflowId, startTime, endExclusive];
     const where = [];
     if (conversationId) {
       params.push(`%${conversationId}%`);
@@ -2961,7 +2970,8 @@ async function listDbConversations(url) {
         FROM public.conversation_messages m
         WHERE m.workflow_id = $1
           AND m.deleted_at IS NULL
-          AND m.message_timestamp >= $2 AND m.message_timestamp <= $3
+          AND UPPER(COALESCE(m.role, '')) = 'USER'
+          AND m.message_timestamp >= $2 AND m.message_timestamp < $3
       ), grouped AS MATERIALIZED (
         SELECT c.workflow_id,
                c.conversation_id,

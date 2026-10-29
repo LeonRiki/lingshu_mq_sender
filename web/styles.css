@@ -1374,7 +1374,8 @@ main {
   box-sizing: border-box;
   height: auto;
   min-height: 0;
-  grid-template-columns: 1fr;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   justify-items: start;
   border: 1px solid var(--border);
@@ -1471,10 +1472,23 @@ main {
 }
 
 .db-message-chat-room {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.db-message-chat-room .ant-tag {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.db-message-meta .db-message-role {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .db-message-content {
@@ -1491,6 +1505,8 @@ main {
 }
 
 .db-message-time {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
@@ -1505,6 +1521,8 @@ main {
 }
 
 .db-message-status-tags {
+  max-width: 100%;
+  flex-wrap: wrap;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1513,6 +1531,7 @@ main {
 }
 
 .db-message-ai-reply {
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   width: 100%;
   gap: 5px;
@@ -1523,6 +1542,7 @@ main {
 
 .db-message-section,
 .db-message-actions {
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   width: 100%;
   gap: 5px;

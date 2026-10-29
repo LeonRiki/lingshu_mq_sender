@@ -483,7 +483,7 @@ function DbConversationListPage({ data }) {
   const disabledDate = (currentDate, info) => {
     if (!info?.from) return false;
     const diff = Math.abs(currentDate.startOf('day').diff(info.from.startOf('day'), 'day'));
-    return diff > 6;
+    return diff > 7;
   };
   const queryReady = Boolean(String(filters.workflowId || '').trim() && filters.startTime && filters.endTime);
   const renderMessageSummary = (values, record) => {
@@ -546,7 +546,7 @@ function DbConversationListPage({ data }) {
     <div className="db-record-toolbar" ref={toolbarRef}>
       <div className="db-filter-grid">
         <div className="db-filter-field"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
-        <div className="db-filter-field"><span><b>*</b>时间范围</span><DatePicker.RangePicker className="db-filter-control" format="YYYY-MM-DD" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
+        <div className="db-filter-field"><span><b>*</b>学员消息时间</span><DatePicker.RangePicker className="db-filter-control" showTime format="YYYY-MM-DD HH:mm:ss" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
         <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
         <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
         <div className="db-filter-field"><span>消息摘要</span><Input className="db-filter-control" allowClear value={filters.keyword} onChange={event => emitListToolbarChange('db-keyword', event.target.value)} placeholder="请输入消息摘要关键词" /></div>
@@ -786,6 +786,9 @@ function DbTriggerCaseSessionFields({ fields, values, onChange }) {
 
 function DbTriggerOutputActions({ outputs, triggerMessageId, scenarios = [], userTags = [] }) {
   const [caseModalOpen, setCaseModalOpen] = useState(false);
+  const [caseSaving, setCaseSaving] = useState(false);
+  const [createdCaseId, setCreatedCaseId] = useState('');
+  const caseSavingRef = useRef(false);
   const [caseName, setCaseName] = useState('');
   const [businessScenario, setBusinessScenario] = useState('');
   const [expectedResult, setExpectedResult] = useState('');
@@ -837,14 +840,26 @@ function DbTriggerOutputActions({ outputs, triggerMessageId, scenarios = [], use
     setScenarioSearch('');
     setCaseModalOpen(true);
   };
-  const confirmSave = () => {
-    emitListToolbar('save-trigger-output-as-case', {
-      payload: draftPayload,
-      name: caseName.trim() || defaultName,
-      businessScenario: businessScenario.trim(),
-      expectedResult: expectedResult.trim()
-    });
-    setCaseModalOpen(false);
+  const confirmSave = async () => {
+    if (caseSavingRef.current) return;
+    caseSavingRef.current = true;
+    setCaseSaving(true);
+    try {
+      const created = await window.saveTriggerOutputAsCase(
+        draftPayload,
+        caseName.trim() || defaultName,
+        businessScenario.trim(),
+        expectedResult.trim()
+      );
+      if (!created?.id) return;
+      setCaseModalOpen(false);
+      setCreatedCaseId(created.id);
+    } catch (error) {
+      message.error(error.message || '创建失败，请重试');
+    } finally {
+      caseSavingRef.current = false;
+      setCaseSaving(false);
+    }
   };
   const copyDraftJson = async () => {
     try {
@@ -859,7 +874,17 @@ function DbTriggerOutputActions({ outputs, triggerMessageId, scenarios = [], use
       <Button size="small" icon={<SaveOutlined />} disabled={!hasMessage} onClick={openCaseModal}>存为测试用例</Button>
       <Button size="small" type="primary" icon={<CopyOutlined />} disabled={!hasMessage} onClick={() => emitListToolbar('copy-trigger-output-json', { payload: copyPayload })}>复制消息 JSON</Button>
     </Flex>
-    <Modal className="db-trigger-case-modal" open={caseModalOpen} centered width={980} destroyOnHidden title="存为测试用例" okText="创建测试用例" cancelText="取消" onCancel={() => setCaseModalOpen(false)} onOk={confirmSave}>
+    <Modal open={Boolean(createdCaseId)} centered title="创建成功" onCancel={() => setCreatedCaseId('')} footer={<Space>
+      <Button onClick={() => {
+        const id = createdCaseId;
+        setCreatedCaseId('');
+        emitListToolbar('open-created-trigger-case', { id });
+      }}>查看用例</Button>
+      <Button type="primary" onClick={() => setCreatedCaseId('')}>确 定</Button>
+    </Space>}>
+      <p>测试用例创建成功。</p>
+    </Modal>
+    <Modal className="db-trigger-case-modal" open={caseModalOpen} centered width={980} destroyOnHidden title="存为测试用例" okText="创建测试用例" cancelText="取消" confirmLoading={caseSaving} cancelButtonProps={{ disabled: caseSaving }} closable={!caseSaving} maskClosable={!caseSaving} keyboard={!caseSaving} onCancel={() => setCaseModalOpen(false)} onOk={confirmSave}>
       <div className="db-trigger-case-modal-layout">
         <div className="db-trigger-case-information">
           <div className="db-trigger-case-form-fields">
@@ -1666,6 +1691,13 @@ function DbMessageDrawer({ open, onClose, workflowId, conversationId, onSend, mq
     </div>
   </Drawer>;
 }
+function formatDbMessageTime(value) {
+  if (!value) return '';
+  const timestamp = dayjs(value);
+  if (!timestamp.isValid()) return String(value);
+  return timestamp.format(timestamp.year() === dayjs().year() ? 'MM-DD HH:mm:ss' : 'YYYY-MM-DD HH:mm:ss');
+}
+
 function DbConversationDetailPage({ data }) {
   const detail = data.detail;
   const activeDbConfig = (data.configs || []).find(config => config.id === data.connection?.configId);
@@ -2105,12 +2137,12 @@ function DbConversationDetailPage({ data }) {
             {showActions ? <DbMessageTriggerIdBar triggerMessageId={group.triggerMessageId} /> : null}
             <span className="db-message-section">
               {conversationType === 2 && chatRoomName ? <span className="db-message-chat-room"><Tag color="purple">群-{chatRoomName}</Tag></span> : null}
-              <span className="db-message-meta"><span className={`db-message-role${isEventMessage ? ' event-message' : ''}`}>{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{userMessage?.messageTimestamp}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
+              <span className="db-message-meta"><span className={`db-message-role${isEventMessage ? ' event-message' : ''}`}>{isEventMessage ? '事件消息' : (detail.friendNick || '学员消息')}</span><span className="db-message-time">{formatDbMessageTime(userMessage?.messageTimestamp)}</span>{pending || processing || noReply || hasError ? <span className="db-message-status-tags">{pending ? <Tag color="gold">待处理</Tag> : null}{processing ? <Tag className="db-message-processing-tag" color="blue">处理中</Tag> : null}{noReply ? <Tag color="default">不回复</Tag> : null}{hasError ? <Tag color="red">有错误</Tag> : null}</span> : null}</span>
               <span className="db-message-content">{renderDbMessageText(userMessage?.content)}</span>
             </span>
             {showActions ? <DbConversationActionGroups actions={group.actions} /> : null}
             {assistantMessage && !noReply ? <span className="db-message-ai-reply">
-              <span className="db-message-meta"><span className="db-message-role">AI回复</span>{assistantMessage?.messageTimestamp ? <span className="db-message-time">{assistantMessage.messageTimestamp}</span> : null}</span>
+              <span className="db-message-meta"><span className="db-message-role">AI回复</span>{assistantMessage?.messageTimestamp ? <span className="db-message-time">{formatDbMessageTime(assistantMessage.messageTimestamp)}</span> : null}</span>
               <span className="db-message-content">{assistantMessage?.content === '' ? '\u00a0' : renderDbMessageText(assistantMessage?.content)}</span>
             </span> : null}
           </div>;
@@ -2167,7 +2199,7 @@ function DbConversationDetailPage({ data }) {
         {activeExecution ? <div className="db-flow-step-controls">
           <div className="db-flow-step-progress"><span style={{ width: `${executionProgress}%` }} /></div>
           <div className="db-flow-step-content">
-            <Dropdown menu={{ items: executionMenuItems, selectedKeys: [String(executionStepIndex)], onClick: ({ key }) => focusExecutionStep(Number(key)) }} trigger={['click']}><Tooltip title="选择执行节点"><Button className="db-flow-step-menu-button" icon={<UnorderedListOutlined />} aria-label="选择执行节点" /></Tooltip></Dropdown>
+            <Dropdown menu={{ items: executionMenuItems, selectedKeys: [String(executionStepIndex)], onClick: ({ key }) => focusExecutionStep(Number(key)) }} trigger={['hover']}><Tooltip title="选择执行节点"><Button className="db-flow-step-menu-button" icon={<UnorderedListOutlined />} aria-label="选择执行节点" /></Tooltip></Dropdown>
             <Tag className="db-flow-step-type" color={dbNodeMeta(activeExecution.nodeType).color}>{dbNodeMeta(activeExecution.nodeType).name}</Tag>
             <span className="db-flow-step-name" title={activeExecution.nodeName || activeExecution.nodeId}>{activeExecution.nodeName || activeExecution.nodeId || '未命名节点'}</span>
             <span className="db-flow-step-duration">{activeExecution.durationMs || 0}ms</span>
@@ -2198,6 +2230,8 @@ function DbConversationVariablesModal({ data }) {
 }
 
 function DbRecordsPage({ data }) {
+  // 抽屉和弹窗通过 portal 挂在 body，离开会话页时必须卸载，不能只隐藏页面容器。
+  if (!data.active) return null;
   return <>{data.page === 'detail' ? <DbConversationDetailPage data={data} /> : <DbConversationListPage data={data} />}<DbConversationVariablesModal data={data} /></>;
 }
 

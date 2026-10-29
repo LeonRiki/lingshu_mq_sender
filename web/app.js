@@ -8,7 +8,7 @@ function formatDbFilterDate(date) {
 
 function defaultDbTimeRange() {
   const today = new Date();
-  return [formatDbFilterDate(today), formatDbFilterDate(today)];
+  return [`${formatDbFilterDate(today)} 00:00:00`, `${formatDbFilterDate(today)} 23:59:59`];
 }
 
 function dbQueryDateBoundary(value, endOfDay = false) {
@@ -649,6 +649,8 @@ function renderEditor() {
 }
 
 function syncCaseDetailChrome() {
+  // 页头由多个详情页共用，后台刷新用例不能覆盖当前会话或记录页。
+  if (!$('casesView').classList.contains('active')) return;
   if (!window.renderCaseDetailChrome) return;
   const c = activeCase();
   window.renderCaseDetailChrome(c ? {
@@ -752,11 +754,10 @@ async function saveTriggerOutputAsCase(rawPayload, name, businessScenario, expec
   if (newTags.length) await window.saveCaseLabels?.({ userTags: newTags });
   const created = normalizeCase(await api('/api/cases', { method: 'POST', body: JSON.stringify(testCase) }));
   await loadCases();
-  state.activeCaseId = created.id;
-  setView('cases');
-  showCaseDetail('push');
-  toast('已创建测试用例');
+  return created;
 }
+
+window.saveTriggerOutputAsCase = saveTriggerOutputAsCase;
 
 function protocolPayload(c, input, inputList, attrs = {}) {
   const payload = {};
@@ -1661,6 +1662,7 @@ function renderRecordList() {
 
 function dbRecordPageData() {
   return {
+    active: $('dbRecordsView').classList.contains('active'),
     page: state.dbRecordPage,
     configs: state.dbConfigs,
     mqConfigs: state.mqConfigs,
@@ -1974,7 +1976,7 @@ async function testDbConfig(configId) {
 
 async function queryDbConversations() {
   if (!state.dbWorkflowId.trim() || !state.dbStartTime || !state.dbEndTime) {
-    toast('请选择工作流和时间范围后再查询', 'warning');
+    toast('请选择工作流和学员消息时间后再查询', 'warning');
     return;
   }
   if (!await ensureDbEnvironmentConfigured()) return;
@@ -2615,6 +2617,10 @@ function bindEvents() {
     if (type === 'refresh-records') loadRecords().catch(showError);
     if (type === 'switch-view') requestViewChange(value).catch(showError);
     if (type === 'open-case') switchCaseEditor(id).catch(showError);
+    if (type === 'open-created-trigger-case') {
+      setView('cases');
+      switchCaseEditor(id).catch(showError);
+    }
     if (type === 'send-case') requestSendCaseById(id).catch(showError);
     if (type === 'open-system-settings') openSystemSettings().catch(showError);
     if (type === 'open-mq-settings') openSystemSettings('mq').catch(showError);
