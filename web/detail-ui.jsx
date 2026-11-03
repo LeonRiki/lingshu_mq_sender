@@ -2,8 +2,8 @@ import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
 import './editor-ui.jsx';
-import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Pagination, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, Tooltip, Typography, Upload } from 'antd';
-import { Background, BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getBezierPath } from '@xyflow/react';
+import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Pagination, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, TimePicker, Tooltip, Typography, Upload } from 'antd';
+import { Background, BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, applyNodeChanges, getBezierPath } from '@xyflow/react';
 import {
   ApiOutlined,
   ArrowLeftOutlined,
@@ -438,6 +438,135 @@ function DbSettingsPanel({ data }) {
   </Flex>;
 }
 
+function DbDateTimeRangePicker({
+  startTime,
+  endTime,
+  maxDays = 7,
+  onChange,
+  className = ''
+}) {
+  const presets = useMemo(() => {
+    const list = [
+      { key: 'today', label: '今天', getRange: () => [dayjs().startOf('day'), dayjs().endOf('day')] },
+      { key: 'yesterday', label: '昨天', getRange: () => [dayjs().subtract(1, 'day').startOf('day'), dayjs().subtract(1, 'day').endOf('day')] },
+      { key: '24h', label: '近 24 小时', getRange: () => [dayjs().subtract(24, 'hour'), dayjs()] },
+      { key: '3d', label: '近 3 天', getRange: () => [dayjs().subtract(2, 'day').startOf('day'), dayjs().endOf('day')] },
+      { key: '7d', label: '近 7 天', getRange: () => [dayjs().subtract(6, 'day').startOf('day'), dayjs().endOf('day')] }
+    ];
+    if (maxDays >= 15) {
+      list.push({ key: '15d', label: '近 15 天', getRange: () => [dayjs().subtract(14, 'day').startOf('day'), dayjs().endOf('day')] });
+    }
+    return list;
+  }, [maxDays]);
+
+  const dateValue = useMemo(() => {
+    if (!startTime && !endTime) return null;
+    return [
+      startTime ? dayjs(startTime) : null,
+      endTime ? dayjs(endTime) : null
+    ];
+  }, [startTime, endTime]);
+
+  const timeValue = useMemo(() => {
+    if (!startTime && !endTime) return [dayjs('00:00:00', 'HH:mm:ss'), dayjs('23:59:59', 'HH:mm:ss')];
+    return [
+      startTime ? dayjs(startTime) : dayjs('00:00:00', 'HH:mm:ss'),
+      endTime ? dayjs(endTime) : dayjs('23:59:59', 'HH:mm:ss')
+    ];
+  }, [startTime, endTime]);
+
+  const activePresetKey = useMemo(() => {
+    if (!startTime || !endTime) return '';
+    const s = dayjs(startTime);
+    const e = dayjs(endTime);
+    for (const preset of presets) {
+      const [pStart, pEnd] = preset.getRange();
+      if (preset.key === '24h') {
+        if (Math.abs(e.diff(pEnd, 'second')) <= 120 && Math.abs(s.diff(pStart, 'second')) <= 120) {
+          return preset.key;
+        }
+      } else {
+        if (s.format('YYYY-MM-DD HH:mm:ss') === pStart.format('YYYY-MM-DD HH:mm:ss') &&
+            e.format('YYYY-MM-DD HH:mm:ss') === pEnd.format('YYYY-MM-DD HH:mm:ss')) {
+          return preset.key;
+        }
+      }
+    }
+    return '';
+  }, [startTime, endTime, presets]);
+
+  const handlePresetChange = e => {
+    const key = e.target.value;
+    const target = presets.find(item => item.key === key);
+    if (!target) return;
+    const [pStart, pEnd] = target.getRange();
+    onChange?.([pStart.format('YYYY-MM-DD HH:mm:ss'), pEnd.format('YYYY-MM-DD HH:mm:ss')]);
+  };
+
+  const handleDateChange = dates => {
+    if (!dates || !dates[0] || !dates[1]) {
+      onChange?.(['', '']);
+      return;
+    }
+    let start = dates[0];
+    let end = dates[1];
+    if (end.isBefore(start)) {
+      [start, end] = [end, start];
+    }
+    const diffDays = (end.startOf('day').valueOf() - start.startOf('day').valueOf()) / 86400000;
+    if (diffDays >= maxDays) {
+      const prevStart = dateValue?.[0];
+      const changedStart = !prevStart || !start.isSame(prevStart, 'day');
+      if (changedStart) {
+        end = start.add(maxDays - 1, 'day');
+        window.showGlobalMessage?.(`查询跨度最长为 ${maxDays} 天，已自动为您同步结束日期`, 'info');
+      } else {
+        start = end.subtract(maxDays - 1, 'day');
+        window.showGlobalMessage?.(`查询跨度最长为 ${maxDays} 天，已自动为您同步开始日期`, 'info');
+      }
+    }
+    const tStart = timeValue?.[0] ? timeValue[0].format('HH:mm:ss') : '00:00:00';
+    const tEnd = timeValue?.[1] ? timeValue[1].format('HH:mm:ss') : '23:59:59';
+    onChange?.([`${start.format('YYYY-MM-DD')} ${tStart}`, `${end.format('YYYY-MM-DD')} ${tEnd}`]);
+  };
+
+  const handleTimeChange = times => {
+    if (!times || !times[0] || !times[1]) return;
+    const dStart = dateValue?.[0] ? dateValue[0].format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+    const dEnd = dateValue?.[1] ? dateValue[1].format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD');
+    onChange?.([`${dStart} ${times[0].format('HH:mm:ss')}`, `${dEnd} ${times[1].format('HH:mm:ss')}`]);
+  };
+
+  return <div className={`db-datetime-range-selector ${className}`.trim()}>
+    <Radio.Group
+      className="db-datetime-presets"
+      size="small"
+      optionType="button"
+      buttonStyle="solid"
+      value={activePresetKey}
+      onChange={handlePresetChange}
+      options={presets.map(item => ({ label: item.label, value: item.key }))}
+    />
+    <div className="db-datetime-inputs">
+      <DatePicker.RangePicker
+        className="db-datetime-date-picker"
+        value={dateValue}
+        format="YYYY-MM-DD"
+        allowClear={false}
+        onChange={handleDateChange}
+      />
+      <TimePicker.RangePicker
+        className="db-datetime-time-picker"
+        value={timeValue}
+        format="HH:mm:ss"
+        needConfirm={false}
+        allowClear={false}
+        onChange={handleTimeChange}
+      />
+    </div>
+  </div>;
+}
+
 function DbConversationListPage({ data }) {
   const filters = data.filters || {};
   const [saveFilterOpen, setSaveFilterOpen] = useState(false);
@@ -475,16 +604,7 @@ function DbConversationListPage({ data }) {
     const maxScrollTop = Math.max(0, tableBody.scrollHeight - tableBody.clientHeight);
     tableBody.scrollTop = Math.min(Math.max(0, Number(data.listScrollTop) || 0), maxScrollTop);
   }, [data.listScrollTop, data.loading, data.pageNo, data.items]);
-  const rangeValue = filters.startTime || filters.endTime ? [
-    filters.startTime ? dayjs(filters.startTime) : null,
-    filters.endTime ? dayjs(filters.endTime) : null
-  ] : null;
   const renderDbMessageText = value => value === null ? 'null' : String(value || '-');
-  const disabledDate = (currentDate, info) => {
-    if (!info?.from) return false;
-    const diff = Math.abs(currentDate.startOf('day').diff(info.from.startOf('day'), 'day'));
-    return diff > 7;
-  };
   const queryReady = Boolean(String(filters.workflowId || '').trim() && filters.startTime && filters.endTime);
   const renderMessageSummary = (values, record) => {
     const messages = Array.isArray(values) ? values : [];
@@ -545,12 +665,16 @@ function DbConversationListPage({ data }) {
   return <div className="db-record-page" ref={pageRef}>
     <div className="db-record-toolbar" ref={toolbarRef}>
       <div className="db-filter-grid">
-        <div className="db-filter-field"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
-        <div className="db-filter-field"><span><b>*</b>学员消息时间</span><DatePicker.RangePicker className="db-filter-control" showTime format="YYYY-MM-DD HH:mm:ss" value={rangeValue} disabledDate={disabledDate} onChange={(_, values) => emitListToolbarChange('db-time-range', values)} /></div>
-        <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
-        <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
-        <div className="db-filter-field"><span>消息摘要</span><Input className="db-filter-control" allowClear value={filters.keyword} onChange={event => emitListToolbarChange('db-keyword', event.target.value)} placeholder="请输入消息摘要关键词" /></div>
-        <div className="db-filter-field"><span>状态</span><Select className="db-filter-control" value={filters.hasError} onChange={value => emitListToolbarChange('db-has-error', value)} options={[{ value: '', label: '全部状态' }, { value: 'true', label: '有错误节点' }, { value: 'false', label: '无错误节点' }]} /></div>
+        <div className="db-filter-row db-filter-row-primary">
+          <div className="db-filter-field db-filter-field-workflow"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
+          <div className="db-filter-field db-filter-field-time"><span><b>*</b>学员消息时间</span><DbDateTimeRangePicker className="db-filter-control" maxDays={7} startTime={filters.startTime} endTime={filters.endTime} onChange={values => emitListToolbarChange('db-time-range', values)} /></div>
+        </div>
+        <div className="db-filter-row db-filter-row-secondary">
+          <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
+          <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
+          <div className="db-filter-field"><span>消息摘要</span><Input className="db-filter-control" allowClear value={filters.keyword} onChange={event => emitListToolbarChange('db-keyword', event.target.value)} placeholder="请输入消息摘要关键词" /></div>
+          <div className="db-filter-field"><span>状态</span><Select className="db-filter-control" value={filters.hasError} onChange={value => emitListToolbarChange('db-has-error', value)} options={[{ value: '', label: '全部状态' }, { value: 'true', label: '有错误节点' }, { value: 'false', label: '无错误节点' }]} /></div>
+        </div>
       </div>
       <div className="db-filter-actions">
         <div className="db-saved-filter-row">
@@ -2235,8 +2359,1737 @@ function DbRecordsPage({ data }) {
   return <>{data.page === 'detail' ? <DbConversationDetailPage data={data} /> : <DbConversationListPage data={data} />}<DbConversationVariablesModal data={data} /></>;
 }
 
+function formatAnalyticsDuration(ms) {
+  const num = Number(ms);
+  if (!Number.isFinite(num) || num < 0) return '-';
+  if (num < 1000) return `${Math.round(num)} ms`;
+  if (num < 60000) return `${(num / 1000).toFixed(2)} s`;
+  const minutes = Math.floor(num / 60000);
+  const seconds = ((num % 60000) / 1000).toFixed(1);
+  return `${minutes}m ${seconds}s`;
+}
+
+function analyticsErrorRateLevel(rate) {
+  const num = Number(rate) || 0;
+  if (num <= 0) return 'healthy';
+  if (num < 5) return 'warning';
+  return 'danger';
+}
+
+const DbAnalyticsSkeletonTriggerNode = memo(function DbAnalyticsSkeletonTriggerNode({ data }) {
+  const rate = Math.min(100, Math.max(0, Number(data.triggerHitRate) || 100));
+  return <div className="db-skel-node trigger">
+    <div className="db-skel-card-head">
+      <div className="db-skel-head-main">
+        <span className="db-skel-badge trigger"><ThunderboltOutlined /> 触发入口 · L0</span>
+        <span className="db-skel-title" title={data.nodeName}>{data.nodeName}</span>
+      </div>
+    </div>
+    <div className="db-skel-trigger-body">
+      <div className="db-skel-trigger-metric">
+        <span>触发命中轮次</span>
+        <strong>{data.triggerHitCount || 0} 轮 ({rate}%)</strong>
+      </div>
+      <div className="db-skel-bar-track">
+        <div className="db-skel-bar-fill trigger" style={{ width: `${rate}%` }} />
+      </div>
+    </div>
+    <Handle id="trigger-out" type="source" position={Position.Right} className="db-skel-handle out active" />
+  </div>;
+});
+
+const DbAnalyticsSkeletonConditionNode = memo(function DbAnalyticsSkeletonConditionNode({ data }) {
+  const branches = Array.isArray(data.branches) ? data.branches : [];
+  return <div className={`db-skel-node condition${data.isHistorical ? ' historical' : ''}`}>
+    <Handle id="cond-in" type="target" position={Position.Left} className="db-skel-handle in" />
+    <div className="db-skel-card-head">
+      <div className="db-skel-head-main">
+        <span className="db-skel-badge condition">L{data.level || 1} 分流</span>
+        <span className="db-skel-title" title={data.nodeName}>{data.nodeName}</span>
+        {data.isHistorical ? <Tag color="gold" bordered={false}>历史</Tag> : null}
+      </div>
+      <Tooltip title="忽略此条件节点（自动折叠并直连下游分流）">
+        <button
+          type="button"
+          className="db-skel-ignore-btn nodrag nopan"
+          onClick={event => {
+            event.stopPropagation();
+            data.onIgnore?.(data.nodeId);
+          }}
+        >
+          忽略
+        </button>
+      </Tooltip>
+    </div>
+    <div className="db-skel-card-sub">
+      <span>共执行 <strong>{data.executionCount || 0}</strong> 次</span>
+      <span>轮次命中 <strong>{data.triggerHitRate || 0}%</strong> ({data.triggerCount || 0} 轮)</span>
+    </div>
+    <div className="db-skel-branch-list">
+      {branches.map(branch => {
+        const rate = Math.min(100, Math.max(0, Number(branch.branchRate) || 0));
+        const isDominant = rate >= 50 && (branch.hitCount || 0) > 0;
+        const isZero = (branch.hitCount || 0) <= 0;
+        const downstreamList = Array.isArray(branch.downstreamConditions) ? branch.downstreamConditions : [];
+        const hasDownstream = downstreamList.length > 0;
+        const maxViaCount = hasDownstream ? Math.max(0, ...downstreamList.map(d => Number(d.viaCount) || 0)) : 0;
+        const viaTooltip = (branch.viaNodes || []).length
+          ? `途经 ${branch.viaNodes.length} 个普通节点：${branch.viaNodes.map(v => v.nodeName).join(' → ')}`
+          : undefined;
+        return <div
+          key={branch.branchKey}
+          className={`db-skel-branch-row${isDominant ? ' dominant' : ''}${isZero ? ' zero' : ''}`}
+        >
+          <div className="db-skel-branch-top">
+            <span className="db-skel-branch-name" title={branch.branchName}>
+              {branch.branchName}
+              {branch.isDefault ? <small className="db-skel-default-pill">默认</small> : null}
+            </span>
+            <span className="db-skel-branch-nums">
+              <strong>{branch.hitCount || 0} 次</strong>
+              <span>({branch.branchRate || 0}%)</span>
+            </span>
+          </div>
+          <div className="db-skel-bar-track">
+            <div
+              className={`db-skel-bar-fill ${isDominant ? 'dominant' : isZero ? 'zero' : 'normal'}`}
+              style={{ width: `${isZero ? 0 : Math.max(3, rate)}%` }}
+            />
+          </div>
+          <div className="db-skel-branch-dest">
+            {hasDownstream ? (
+              <span className="db-skel-dest-link" title={downstreamList.map(d => d.nodeName).join('、')}>
+                ↳ 流向：{downstreamList.map(d => d.nodeName).join('、')}
+                {maxViaCount > 0 ? ` · 经 ${maxViaCount} 节点` : ''}
+              </span>
+            ) : (
+              <Tooltip title={viaTooltip}>
+                <span className={`db-skel-dest-terminal${branch.hasReplySend ? ' reply' : ''}`}>
+                  {branch.hasReplySend
+                    ? `→ AI回复/发送消息${branch.viaCount > 0 ? ` (经 ${branch.viaCount} 节点)` : ''}`
+                    : branch.viaCount > 0
+                      ? `→ 途经 ${branch.viaCount} 个节点后结束`
+                      : '→ 流程结束'}
+                </span>
+              </Tooltip>
+            )}
+          </div>
+          <Handle
+            id={String(branch.branchKey)}
+            type="source"
+            position={Position.Right}
+            className={`db-skel-handle branch-out ${hasDownstream ? 'active' : 'inactive'}`}
+          />
+        </div>;
+      })}
+    </div>
+  </div>;
+});
+
+function DbAnalyticsSkeletonEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, style, className, data }) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition
+  });
+  const labelOffset = Number(data?.labelOffset || 0);
+  const viaNodes = Array.isArray(data?.viaNodes) ? data.viaNodes : [];
+  const viaCount = Number(data?.viaCount || viaNodes.length || 0);
+  const viaTitle = viaCount > 0
+    ? `已折叠中间 ${viaCount} 个节点：${viaNodes.map((v, idx) => `${idx + 1}. ${v.nodeName}`).join(' → ')}`
+    : '';
+  return <>
+    <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} className={className} />
+    <EdgeLabelRenderer>
+      <div
+        className={`db-skel-edge-pill nodrag nopan${data?.isDominant ? ' dominant' : ''}${data?.isZero ? ' zero' : ''}${data?.edgeKind === 'trigger' ? ' trigger' : ''}`}
+        style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + labelOffset}px)` }}
+      >
+        <div className="db-skel-edge-main">
+          {data?.edgeKind === 'trigger'
+            ? `流入 ${data?.hitCount || 0} 轮 (${data?.rate || 0}%)`
+            : `${data?.branchName || '分支'}: ${data?.hitCount || 0} 次 (${data?.rate || 0}%)`}
+        </div>
+        {viaCount > 0 ? (
+          <Tooltip title={viaTitle}>
+            <div className="db-skel-edge-via">途经 {viaCount} 个节点</div>
+          </Tooltip>
+        ) : null}
+      </div>
+    </EdgeLabelRenderer>
+  </>;
+}
+
+const dbAnalyticsSkeletonNodeTypes = {
+  analyticsTrigger: DbAnalyticsSkeletonTriggerNode,
+  analyticsCondition: DbAnalyticsSkeletonConditionNode
+};
+
+const dbAnalyticsSkeletonEdgeTypes = {
+  analyticsSkeletonEdge: DbAnalyticsSkeletonEdge
+};
+
+function buildConditionSkeletonModel({ flowGraph, conditionNodes, allNodes, ignoredConditionSet, onIgnore }) {
+  const graphNodes = Array.isArray(flowGraph?.nodes) ? flowGraph.nodes : [];
+  const graphEdges = Array.isArray(flowGraph?.edges) ? flowGraph.edges : [];
+  const allNodesList = Array.isArray(allNodes) ? allNodes : [];
+  const rawConditions = Array.isArray(conditionNodes) ? conditionNodes : [];
+
+  const nodeMetaById = new Map();
+  allNodesList.forEach(item => {
+    nodeMetaById.set(String(item.nodeId), {
+      nodeId: String(item.nodeId),
+      nodeName: item.nodeName || String(item.nodeId),
+      nodeType: item.nodeType || 'unknown',
+      executionCount: Number(item.executionCount || 0),
+      triggerHitCount: Number(item.triggerHitCount ?? item.triggerCount ?? 0),
+      triggerHitRate: Number(item.triggerHitRate || 0),
+      position: { x: 0, y: 0 }
+    });
+  });
+  graphNodes.forEach(item => {
+    const id = String(item.nodeId || item.id || '');
+    if (!id) return;
+    const prev = nodeMetaById.get(id) || {};
+    nodeMetaById.set(id, {
+      ...prev,
+      nodeId: id,
+      nodeName: item.nodeName || prev.nodeName || id,
+      nodeType: item.nodeType || prev.nodeType || 'unknown',
+      executionCount: Number(item.executionCount ?? prev.executionCount ?? 0),
+      triggerHitCount: Number(item.triggerHitCount ?? item.triggerCount ?? prev.triggerHitCount ?? 0),
+      triggerHitRate: Number(item.triggerHitRate ?? prev.triggerHitRate ?? 0),
+      position: item.position || prev.position || { x: 0, y: 0 }
+    });
+  });
+
+  const activeConditions = rawConditions
+    .filter(c => !ignoredConditionSet.has(String(c.nodeId)))
+    .map(c => ({
+      ...c,
+      nodeId: String(c.nodeId),
+      branches: (c.branches || []).map(b => ({ ...b }))
+    }));
+  const activeConditionById = new Map(activeConditions.map(c => [c.nodeId, c]));
+
+  const outgoingBySource = new Map();
+  graphEdges.forEach(edge => {
+    const source = String(edge?.source || '');
+    const target = String(edge?.target || '');
+    if (!source || !target) return;
+    if (!outgoingBySource.has(source)) outgoingBySource.set(source, []);
+    outgoingBySource.get(source).push({ ...edge, source, target });
+  });
+
+  const traceToActiveConditions = startTargets => {
+    const downstreamConditions = [];
+    const seenConditionIds = new Set();
+    const visited = new Set();
+    const queue = [];
+    const terminalNodeTypes = new Set();
+    const allViaNodes = [];
+    const seenViaIds = new Set();
+
+    (startTargets || []).forEach(target => {
+      const targetId = String(target?.nodeId || '').trim();
+      if (!targetId) return;
+      if (activeConditionById.has(targetId)) {
+        if (!seenConditionIds.has(targetId)) {
+          seenConditionIds.add(targetId);
+          const cond = activeConditionById.get(targetId);
+          downstreamConditions.push({
+            nodeId: targetId,
+            nodeName: cond.nodeName,
+            viaCount: 0,
+            viaNodes: []
+          });
+        }
+      } else if (!visited.has(targetId)) {
+        visited.add(targetId);
+        const meta = nodeMetaById.get(targetId) || {
+          nodeId: targetId,
+          nodeName: target.nodeName || targetId,
+          nodeType: target.nodeType || 'unknown'
+        };
+        const viaItem = { nodeId: meta.nodeId, nodeName: meta.nodeName, nodeType: meta.nodeType };
+        queue.push({ currentId: targetId, viaNodes: [viaItem] });
+      }
+    });
+
+    while (queue.length > 0) {
+      const { currentId, viaNodes } = queue.shift();
+      viaNodes.forEach(v => {
+        if (!seenViaIds.has(v.nodeId)) {
+          seenViaIds.add(v.nodeId);
+          allViaNodes.push(v);
+        }
+      });
+      const nextEdges = outgoingBySource.get(currentId) || [];
+      if (!nextEdges.length) {
+        const lastMeta = nodeMetaById.get(currentId);
+        if (lastMeta?.nodeType) terminalNodeTypes.add(lastMeta.nodeType);
+      }
+      nextEdges.forEach(edge => {
+        const nextId = edge.target;
+        if (!nextId) return;
+        if (activeConditionById.has(nextId)) {
+          if (!seenConditionIds.has(nextId)) {
+            seenConditionIds.add(nextId);
+            const cond = activeConditionById.get(nextId);
+            downstreamConditions.push({
+              nodeId: nextId,
+              nodeName: cond.nodeName,
+              viaCount: viaNodes.length,
+              viaNodes
+            });
+          }
+        } else if (!visited.has(nextId)) {
+          visited.add(nextId);
+          const nextMeta = nodeMetaById.get(nextId) || { nodeId: nextId, nodeName: nextId, nodeType: 'unknown' };
+          if (nextMeta.nodeType === 'lingxi_send' || nextMeta.nodeType === 'output') {
+            terminalNodeTypes.add(nextMeta.nodeType);
+          }
+          queue.push({
+            currentId: nextId,
+            viaNodes: [...viaNodes, { nodeId: nextMeta.nodeId, nodeName: nextMeta.nodeName, nodeType: nextMeta.nodeType }]
+          });
+        }
+      });
+    }
+
+    return {
+      downstreamConditions,
+      hasReplySend: terminalNodeTypes.has('lingxi_send') || allViaNodes.some(v => v.nodeType === 'lingxi_send'),
+      viaCount: allViaNodes.length,
+      viaNodes: allViaNodes
+    };
+  };
+
+  const triggerNodes = graphNodes
+    .filter(n => n.nodeType === 'lingxi_trigger')
+    .map(n => nodeMetaById.get(String(n.nodeId || n.id)) || n);
+  if (!triggerNodes.length) {
+    allNodesList
+      .filter(n => n.nodeType === 'lingxi_trigger')
+      .forEach(n => triggerNodes.push(nodeMetaById.get(String(n.nodeId)) || n));
+  }
+
+  const skeletonEdges = [];
+  const upstreamByConditionId = new Map(activeConditions.map(c => [c.nodeId, []]));
+
+  triggerNodes.forEach(trig => {
+    const trigId = String(trig.nodeId);
+    const directTargets = (outgoingBySource.get(trigId) || []).map(e => nodeMetaById.get(e.target) || { nodeId: e.target, nodeName: e.target });
+    const traced = traceToActiveConditions(directTargets);
+    traced.downstreamConditions.forEach(dc => {
+      const targetCond = activeConditionById.get(dc.nodeId);
+      const hitCount = targetCond?.triggerCount || targetCond?.executionCount || 0;
+      const rate = targetCond?.triggerHitRate || 0;
+      upstreamByConditionId.get(dc.nodeId)?.push({
+        sourceType: 'trigger',
+        nodeId: trigId,
+        nodeName: trig.nodeName,
+        branchKey: '',
+        branchName: '',
+        hitCount,
+        rate,
+        viaCount: dc.viaCount,
+        viaNodes: dc.viaNodes
+      });
+      skeletonEdges.push({
+        id: `skel-trig-${trigId}->${dc.nodeId}`,
+        source: trigId,
+        sourceHandle: 'trigger-out',
+        target: dc.nodeId,
+        targetHandle: 'cond-in',
+        edgeKind: 'trigger',
+        branchName: '触发流入',
+        hitCount,
+        rate,
+        viaCount: dc.viaCount,
+        viaNodes: dc.viaNodes
+      });
+    });
+  });
+
+  activeConditions.forEach(condNode => {
+    const condOutgoing = outgoingBySource.get(condNode.nodeId) || [];
+    const claimedTargetIds = new Set();
+    condNode.branches.forEach(branch => {
+      (branch.targetNodes || []).forEach(t => {
+        if (t?.nodeId) claimedTargetIds.add(String(t.nodeId));
+      });
+    });
+    if (condOutgoing.length && condNode.branches.length) {
+      const unclaimedTargets = condOutgoing
+        .map(e => String(e.target || '').trim())
+        .filter(tid => tid && !claimedTargetIds.has(tid));
+      if (unclaimedTargets.length) {
+        const validBranches = condNode.branches.filter(b => b.branchKey !== '__unmatched__');
+        const candidateBranches = validBranches.length ? validBranches : condNode.branches;
+        const emptyBranches = candidateBranches.filter(b => !(b.targetNodes || []).length);
+        const primaryBranch = [...candidateBranches].sort((a, b) => ((b.hitCount || 0) - (a.hitCount || 0)) || (Number(a.isDefault) - Number(b.isDefault)))[0];
+        unclaimedTargets.forEach((tid, idx) => {
+          if (claimedTargetIds.has(tid)) return;
+          claimedTargetIds.add(tid);
+          const targetBranch = emptyBranches[idx] || primaryBranch;
+          const meta = nodeMetaById.get(tid) || { nodeId: tid, nodeName: tid, nodeType: 'unknown' };
+          targetBranch.targetNodes = [...(targetBranch.targetNodes || []), { nodeId: meta.nodeId, nodeName: meta.nodeName, nodeType: meta.nodeType }];
+        });
+      }
+    }
+
+    condNode.branches.forEach((branch, branchIdx) => {
+      const traced = traceToActiveConditions(branch.targetNodes || []);
+      branch.downstreamConditions = traced.downstreamConditions;
+      branch.hasDownstreamCondition = traced.downstreamConditions.length > 0;
+      branch.hasReplySend = traced.hasReplySend;
+      branch.viaCount = traced.viaCount;
+      branch.viaNodes = traced.viaNodes;
+
+      traced.downstreamConditions.forEach(dc => {
+        if (dc.nodeId === condNode.nodeId) return;
+        upstreamByConditionId.get(dc.nodeId)?.push({
+          sourceType: 'condition',
+          nodeId: condNode.nodeId,
+          nodeName: condNode.nodeName,
+          branchKey: branch.branchKey,
+          branchName: branch.branchName,
+          branchIdx,
+          hitCount: branch.hitCount || 0,
+          rate: branch.branchRate || 0,
+          viaCount: dc.viaCount,
+          viaNodes: dc.viaNodes
+        });
+        skeletonEdges.push({
+          id: `skel-branch-${condNode.nodeId}:${branch.branchKey}->${dc.nodeId}`,
+          source: condNode.nodeId,
+          sourceHandle: String(branch.branchKey),
+          target: dc.nodeId,
+          targetHandle: 'cond-in',
+          edgeKind: 'branch',
+          branchKey: branch.branchKey,
+          branchName: branch.branchName,
+          branchIdx,
+          hitCount: branch.hitCount || 0,
+          rate: branch.branchRate || 0,
+          workflowRate: branch.workflowRate || 0,
+          viaCount: dc.viaCount,
+          viaNodes: dc.viaNodes
+        });
+      });
+    });
+  });
+
+  const distFromTrigger = new Map();
+  const bfsQueue = [];
+  triggerNodes.forEach(trig => {
+    const trigId = String(trig.nodeId);
+    distFromTrigger.set(trigId, 0);
+    bfsQueue.push(trigId);
+  });
+  while (bfsQueue.length > 0) {
+    const curr = bfsQueue.shift();
+    const d = distFromTrigger.get(curr) || 0;
+    (outgoingBySource.get(curr) || []).forEach(edge => {
+      if (edge.target && !distFromTrigger.has(edge.target)) {
+        distFromTrigger.set(edge.target, d + 1);
+        bfsQueue.push(edge.target);
+      }
+    });
+  }
+
+  const condOutMap = new Map(activeConditions.map(c => [c.nodeId, new Set()]));
+  activeConditions.forEach(c => {
+    (upstreamByConditionId.get(c.nodeId) || []).forEach(u => {
+      if (u.sourceType === 'condition' && u.nodeId !== c.nodeId && condOutMap.has(u.nodeId)) {
+        condOutMap.get(u.nodeId).add(c.nodeId);
+      }
+    });
+  });
+
+  const canReachCond = (fromId, targetId) => {
+    const visited = new Set([fromId]);
+    const q = [fromId];
+    while (q.length > 0) {
+      const curr = q.shift();
+      const nexts = condOutMap.get(curr);
+      if (!nexts) continue;
+      for (const nxt of nexts) {
+        if (nxt === targetId) return true;
+        if (!visited.has(nxt)) {
+          visited.add(nxt);
+          q.push(nxt);
+        }
+      }
+    }
+    return false;
+  };
+
+  const getCondPosX = nodeId => {
+    const c = activeConditionById.get(nodeId);
+    const meta = nodeMetaById.get(nodeId);
+    return Number(c?.position?.x || meta?.position?.x || 0);
+  };
+
+  const getCondHits = nodeId => {
+    const c = activeConditionById.get(nodeId);
+    return Number(c?.triggerCount ?? c?.executionCount ?? 0);
+  };
+
+  const isPriorCondition = (aId, bId) => {
+    const da = distFromTrigger.has(aId) ? distFromTrigger.get(aId) : Number.MAX_SAFE_INTEGER;
+    const db = distFromTrigger.has(bId) ? distFromTrigger.get(bId) : Number.MAX_SAFE_INTEGER;
+    if (da !== db) return da < db;
+    const xa = getCondPosX(aId);
+    const xb = getCondPosX(bId);
+    if (Math.abs(xa - xb) > 10) return xa < xb;
+    const ta = getCondHits(aId);
+    const tb = getCondHits(bId);
+    if (ta !== tb) return ta > tb;
+    return String(aId).localeCompare(String(bId)) < 0;
+  };
+
+  const forwardEdges = [];
+  condOutMap.forEach((targets, uId) => {
+    targets.forEach(vId => {
+      const inCycle = canReachCond(vId, uId);
+      if (inCycle && isPriorCondition(vId, uId)) return;
+      forwardEdges.push([uId, vId]);
+    });
+  });
+
+  const relaxForwardLevels = lvlMap => {
+    for (let pass = 0; pass < activeConditions.length; pass++) {
+      let changed = false;
+      forwardEdges.forEach(([uId, vId]) => {
+        const uLvl = lvlMap.get(uId) || 1;
+        const vLvl = lvlMap.get(vId) || 1;
+        if (vLvl < uLvl + 1) {
+          lvlMap.set(vId, uLvl + 1);
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
+  };
+
+  const levelMap = new Map(activeConditions.map(c => [c.nodeId, 1]));
+  relaxForwardLevels(levelMap);
+
+  const hasIncomingCond = new Set(forwardEdges.map(([, vId]) => vId));
+  const hasIncomingTrig = new Set();
+  activeConditions.forEach(c => {
+    if ((upstreamByConditionId.get(c.nodeId) || []).some(u => u.sourceType === 'trigger')) {
+      hasIncomingTrig.add(c.nodeId);
+    }
+  });
+
+  const orderedCondIds = activeConditions.map(c => c.nodeId).sort(isPriorCondition ? (a, b) => (isPriorCondition(a, b) ? -1 : 1) : undefined);
+  if (!hasIncomingTrig.size && orderedCondIds.length > 0) {
+    hasIncomingTrig.add(orderedCondIds[0]);
+  }
+
+  orderedCondIds.forEach(nodeId => {
+    if (hasIncomingCond.has(nodeId) || hasIncomingTrig.has(nodeId)) return;
+    const cond = activeConditionById.get(nodeId);
+    const posX = getCondPosX(nodeId);
+    const hits = getCondHits(nodeId);
+    let baseLevel = hasIncomingTrig.size > 0 ? 2 : 1;
+    orderedCondIds.forEach(otherId => {
+      if (otherId === nodeId) return;
+      const otherCond = activeConditionById.get(otherId);
+      const otherLvl = levelMap.get(otherId) || 1;
+      const otherX = getCondPosX(otherId);
+      const otherHits = getCondHits(otherId);
+      if (graphEdges.length > 0 && cond?.inCurrentGraph !== false && otherCond?.inCurrentGraph !== false && posX > 0 && otherX > 0) {
+        if (otherX + 60 < posX) {
+          baseLevel = Math.max(baseLevel, otherLvl + 1);
+        }
+      } else if (otherHits > hits) {
+        baseLevel = Math.max(baseLevel, otherLvl + 1);
+      }
+    });
+    if ((levelMap.get(nodeId) || 1) < baseLevel) {
+      levelMap.set(nodeId, baseLevel);
+      relaxForwardLevels(levelMap);
+    }
+  });
+
+  activeConditions.forEach(c => {
+    c.level = levelMap.get(c.nodeId) || 1;
+    c.upstreamSources = upstreamByConditionId.get(c.nodeId) || [];
+  });
+
+  activeConditions.sort((a, b) => (a.level - b.level) || (Number(b.inCurrentGraph) - Number(a.inCurrentGraph)) || ((a.position?.x || 0) - (b.position?.x || 0)) || ((b.executionCount || 0) - (a.executionCount || 0)));
+
+  // Compute Left-to-Right Layered Positions
+  const columns = new Map();
+  activeConditions.forEach(c => {
+    const lvl = c.level || 1;
+    if (!columns.has(lvl)) columns.set(lvl, []);
+    columns.get(lvl).push(c);
+  });
+
+  const nodeYMap = new Map();
+  const estimateConditionHeight = cond => 96 + Math.max(1, (cond.branches || []).length) * 68;
+
+  const sortedLevels = [...columns.keys()].sort((a, b) => a - b);
+  sortedLevels.forEach(lvl => {
+    const colNodes = columns.get(lvl) || [];
+    colNodes.sort((a, b) => {
+      const upA = (a.upstreamSources || []).filter(u => u.sourceType === 'condition');
+      const upB = (b.upstreamSources || []).filter(u => u.sourceType === 'condition');
+      const scoreA = upA.length
+        ? upA.reduce((s, u) => s + (nodeYMap.get(u.nodeId) ?? 0) + (u.branchIdx || 0) * 80, 0) / upA.length
+        : (a.position?.y || 0);
+      const scoreB = upB.length
+        ? upB.reduce((s, u) => s + (nodeYMap.get(u.nodeId) ?? 0) + (u.branchIdx || 0) * 80, 0) / upB.length
+        : (b.position?.y || 0);
+      return scoreA - scoreB || ((b.executionCount || 0) - (a.executionCount || 0));
+    });
+
+    let currentY = 40;
+    if (colNodes.length === 1 && lvl > 1) {
+      const parentConds = (colNodes[0].upstreamSources || []).filter(u => u.sourceType === 'condition' && nodeYMap.has(u.nodeId));
+      if (parentConds.length) {
+        currentY = Math.max(32, Math.round(parentConds.reduce((s, u) => s + (nodeYMap.get(u.nodeId) || 40), 0) / parentConds.length));
+      }
+    }
+    colNodes.forEach(cond => {
+      nodeYMap.set(cond.nodeId, currentY);
+      currentY += estimateConditionHeight(cond) + 42;
+    });
+  });
+
+  const hasTriggers = triggerNodes.length > 0 && skeletonEdges.some(e => e.edgeKind === 'trigger');
+  const baseCondX = hasTriggers ? 400 : 48;
+  const colStepX = 510;
+
+  const rfNodes = [];
+  if (hasTriggers) {
+    const firstLevelConds = columns.get(1) || activeConditions.slice(0, 1);
+    const firstY = firstLevelConds.length ? (nodeYMap.get(firstLevelConds[0].nodeId) || 40) + 28 : 60;
+    triggerNodes.forEach((trig, idx) => {
+      rfNodes.push({
+        id: String(trig.nodeId),
+        type: 'analyticsTrigger',
+        position: { x: 40, y: firstY + idx * 150 },
+        data: {
+          nodeId: String(trig.nodeId),
+          nodeName: trig.nodeName || '触发器',
+          triggerHitCount: trig.triggerHitCount || trig.executionCount || 0,
+          triggerHitRate: trig.triggerHitRate || 100
+        }
+      });
+    });
+  }
+
+  activeConditions.forEach(cond => {
+    const lvl = cond.level || 1;
+    const x = baseCondX + (lvl - 1) * colStepX;
+    const y = nodeYMap.get(cond.nodeId) ?? 40;
+    rfNodes.push({
+      id: cond.nodeId,
+      type: 'analyticsCondition',
+      position: { x, y },
+      data: {
+        ...cond,
+        onIgnore
+      }
+    });
+  });
+
+  const pairCounts = new Map();
+  skeletonEdges.forEach(edge => {
+    const key = `${edge.source}->${edge.target}`;
+    if (!pairCounts.has(key)) pairCounts.set(key, []);
+    pairCounts.get(key).push(edge.id);
+  });
+
+  const rfEdges = skeletonEdges.map(edge => {
+    const rate = Number(edge.rate) || 0;
+    const hitCount = Number(edge.hitCount) || 0;
+    const isZero = hitCount <= 0;
+    const isDominant = rate >= 50 && !isZero;
+    const isTrigger = edge.edgeKind === 'trigger';
+    const stroke = isZero
+      ? '#cbd5e1'
+      : isTrigger
+        ? '#8b5cf6'
+        : isDominant
+          ? '#2563eb'
+          : '#3b82f6';
+    const strokeWidth = isZero
+      ? 1.5
+      : Math.max(2, Math.min(5.5, 1.8 + (rate / 100) * 3.7));
+    const siblings = pairCounts.get(`${edge.source}->${edge.target}`) || [edge.id];
+    const siblingIdx = siblings.indexOf(edge.id);
+    const labelOffset = siblings.length > 1 ? (siblingIdx - (siblings.length - 1) / 2) * 34 : 0;
+
+    return {
+      id: edge.id,
+      source: edge.source,
+      sourceHandle: edge.sourceHandle,
+      target: edge.target,
+      targetHandle: edge.targetHandle,
+      type: 'analyticsSkeletonEdge',
+      animated: !isZero,
+      selectable: false,
+      markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
+      style: {
+        stroke,
+        strokeWidth,
+        strokeDasharray: isZero ? '5 4' : undefined
+      },
+      data: {
+        ...edge,
+        isZero,
+        isDominant,
+        labelOffset
+      }
+    };
+  });
+
+  return {
+    activeConditions,
+    rfNodes,
+    rfEdges
+  };
+}
+
+function DbConditionSkeletonCanvas({ skeletonModel, workflowId, ignoredKey }) {
+  const [flowInstance, setFlowInstance] = useState(null);
+  const [flowZoom, setFlowZoom] = useState(0.85);
+  const [canvasNodes, setCanvasNodes] = useState(() => skeletonModel.rfNodes || []);
+
+  useEffect(() => {
+    setCanvasNodes(skeletonModel.rfNodes || []);
+  }, [skeletonModel.rfNodes]);
+
+  const fitCanvas = (instance = flowInstance, duration = 200) => {
+    if (!instance) return;
+    instance.fitView({ padding: 0.14, maxZoom: 0.95, minZoom: 0.25, duration });
+  };
+
+  const focusEntry = (instance = flowInstance, duration = 200) => {
+    const firstNode = canvasNodes[0];
+    if (!instance || !firstNode) return;
+    const zoom = 0.88;
+    instance.setViewport({
+      x: 36 - firstNode.position.x * zoom,
+      y: Math.max(24, 56 - firstNode.position.y * zoom),
+      zoom
+    }, { duration });
+    setFlowZoom(zoom);
+  };
+
+  const resetLayout = () => {
+    setCanvasNodes(skeletonModel.rfNodes || []);
+    requestAnimationFrame(() => fitCanvas(flowInstance, 200));
+  };
+
+  const handleNodesChange = changes => {
+    if (!changes?.length) return;
+    setCanvasNodes(prevNodes => applyNodeChanges(changes, prevNodes));
+  };
+
+  return <div className="db-analytics-skeleton-wrap">
+    <div className="db-analytics-skeleton-topbar">
+      <div className="db-analytics-skeleton-hint">
+        <BranchesOutlined />
+        <span>可视化分流骨架图：按工作流上下游层级展示条件分流，已自动折叠中间普通节点（悬停连线「途经 N 个节点」可查看明细，点击节点右上角「忽略」可收起无关分流并自动直连下游）</span>
+      </div>
+      <Space size={6}>
+        <Button size="small" icon={<FullscreenOutlined />} onClick={() => fitCanvas(flowInstance, 180)}>适应全图</Button>
+        <Button size="small" onClick={() => focusEntry(flowInstance, 180)}>聚焦入口</Button>
+        <Button size="small" icon={<ReloadOutlined />} onClick={resetLayout}>重置布局</Button>
+        <span className="db-analytics-skeleton-zoom">{Math.round(flowZoom * 100)}%</span>
+      </Space>
+    </div>
+    <div className="db-analytics-skeleton-canvas">
+      <ReactFlow
+        key={`${workflowId}:${ignoredKey}`}
+        nodes={canvasNodes}
+        edges={skeletonModel.rfEdges}
+        nodeTypes={dbAnalyticsSkeletonNodeTypes}
+        edgeTypes={dbAnalyticsSkeletonEdgeTypes}
+        minZoom={0.15}
+        maxZoom={1.5}
+        nodesDraggable
+        nodesConnectable={false}
+        edgesFocusable={false}
+        elementsSelectable
+        panOnDrag
+        zoomOnScroll
+        proOptions={{ hideAttribution: true }}
+        onInit={instance => {
+          setFlowInstance(instance);
+          window.setTimeout(() => {
+            instance.fitView({ padding: 0.14, maxZoom: 0.92, minZoom: 0.15, duration: 0 });
+            const vp = instance.getViewport?.();
+            if (vp?.zoom) setFlowZoom(vp.zoom);
+          }, 60);
+        }}
+        onMove={(_, viewport) => setFlowZoom(viewport.zoom)}
+        onNodesChange={handleNodesChange}
+      >
+        <Background color="#cbd5e1" gap={20} size={1} />
+      </ReactFlow>
+    </div>
+  </div>;
+}
+
+function DbAnalyticsPage({ data }) {
+  if (!data?.active) return null;
+  const filters = data.filters || {};
+  const [nodeTypeFilter, setNodeTypeFilter] = useState('ALL');
+  const [branchViewTab, setBranchViewTab] = useState('skeleton');
+  const queryReady = Boolean(String(filters.workflowId || '').trim() && filters.startTime && filters.endTime);
+  const connection = data.connection || {};
+  const connectionStatus = connection.status || 'disconnected';
+  const connectionMeta = connectionStatus === 'connected'
+    ? { badge: 'success', label: '已连接', title: '数据库已连接' }
+    : connectionStatus === 'error'
+      ? { badge: 'error', label: '连接异常', title: connection.errorMessage || '数据库连接异常' }
+      : { badge: 'default', label: '未连接', title: '数据库未连接' };
+  const connectionConfigItems = (data.configs || []).map(config => ({
+    key: config.id,
+    label: (() => {
+      const isCurrent = config.id === connection.configId;
+      const status = isCurrent ? connectionStatus : 'disconnected';
+      const statusMeta = status === 'connected'
+        ? { badge: 'success', label: '已连接', className: 'connected' }
+        : status === 'error'
+          ? { badge: 'error', label: '连接异常', className: 'error' }
+          : { badge: 'default', label: '未连接', className: 'disconnected' };
+      return <span className="db-connection-dropdown-item">
+        <span className="db-connection-dropdown-main"><Badge status={statusMeta.badge} /><span className="db-connection-dropdown-name">{displayDbConfigName(config.name)}<small>PostgreSQL - {config.host || '未设置 Host'}</small></span></span>
+        <Tag className={`db-connection-dropdown-status ${statusMeta.className}`} bordered={false}>{statusMeta.label}</Tag>
+      </span>;
+    })(),
+    disabled: data.connectionChanging
+  }));
+
+  const analytics = data.analytics;
+  const overview = analytics?.overview || {};
+  const latency = analytics?.latency || {};
+  const branches = analytics?.branches || {};
+  const errors = analytics?.errors || {};
+  const workflowId = analytics?.workflow?.id || filters.workflowId || '';
+  const ignoredStorageKey = workflowId ? `db-analytics-ignored-conditions:${workflowId}` : '';
+
+  const [ignoredConditionIds, setIgnoredConditionIds] = useState([]);
+  useEffect(() => {
+    if (!ignoredStorageKey) {
+      setIgnoredConditionIds([]);
+      return;
+    }
+    try {
+      const raw = window.localStorage?.getItem(ignoredStorageKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      setIgnoredConditionIds(Array.isArray(parsed) ? parsed.map(String) : []);
+    } catch {
+      setIgnoredConditionIds([]);
+    }
+  }, [ignoredStorageKey]);
+
+  const updateIgnoredConditionIds = nextIds => {
+    const normalized = [...new Set((nextIds || []).map(String).filter(Boolean))];
+    setIgnoredConditionIds(normalized);
+    if (ignoredStorageKey) {
+      try {
+        if (normalized.length) window.localStorage?.setItem(ignoredStorageKey, JSON.stringify(normalized));
+        else window.localStorage?.removeItem(ignoredStorageKey);
+      } catch {
+        // Ignore storage write errors
+      }
+    }
+  };
+
+  const ignoreConditionNode = nodeId => {
+    updateIgnoredConditionIds([...ignoredConditionIds, String(nodeId)]);
+  };
+  const restoreConditionNode = nodeId => {
+    updateIgnoredConditionIds(ignoredConditionIds.filter(id => id !== String(nodeId)));
+  };
+  const restoreAllConditionNodes = () => {
+    updateIgnoredConditionIds([]);
+  };
+
+  const allConditionNodes = branches.conditionNodes || [];
+  const ignoredConditionSet = useMemo(() => new Set(ignoredConditionIds), [ignoredConditionIds]);
+  const skeletonModel = useMemo(
+    () => buildConditionSkeletonModel({
+      flowGraph: branches.flowGraph,
+      conditionNodes: allConditionNodes,
+      allNodes: branches.allNodes,
+      ignoredConditionSet,
+      onIgnore: ignoreConditionNode
+    }),
+    [branches.flowGraph, allConditionNodes, branches.allNodes, ignoredConditionSet, ignoredConditionIds]
+  );
+  const visibleConditionNodes = skeletonModel.activeConditions;
+  const ignoredConditionNodes = useMemo(
+    () => allConditionNodes.filter(node => ignoredConditionSet.has(String(node.nodeId))),
+    [allConditionNodes, ignoredConditionSet]
+  );
+
+  const allLatencyNodes = latency.nodes || [];
+  const availableNodeTypes = useMemo(() => {
+    const types = new Set(allLatencyNodes.map(item => item.nodeType).filter(Boolean));
+    return ['ALL', ...types];
+  }, [allLatencyNodes]);
+  const filteredLatencyNodes = useMemo(() => {
+    if (nodeTypeFilter === 'ALL') return allLatencyNodes;
+    return allLatencyNodes.filter(item => item.nodeType === nodeTypeFilter);
+  }, [allLatencyNodes, nodeTypeFilter]);
+  const maxNodeP95Ms = useMemo(() => {
+    return Math.max(1, ...filteredLatencyNodes.map(item => Number(item.p95Ms) || Number(item.avgMs) || 0));
+  }, [filteredLatencyNodes]);
+
+  const openSampleConversation = (sampleConversationId, sampleTriggerMessageId) => {
+    if (!workflowId || !sampleConversationId) return;
+    emitListToolbar('open-db-analytics-conversation', {
+      workflowId,
+      conversationId: sampleConversationId,
+      triggerMessageId: sampleTriggerMessageId || ''
+    });
+  };
+
+  const [activeErrorGroup, setActiveErrorGroup] = useState(null);
+  const [errorOccurrenceKeyword, setErrorOccurrenceKeyword] = useState('');
+  const [visitedErrorKeys, setVisitedErrorKeys] = useState([]);
+
+  useEffect(() => {
+    setActiveErrorGroup(null);
+    setErrorOccurrenceKeyword('');
+    setVisitedErrorKeys([]);
+  }, [analytics]);
+
+  const openErrorGroupDrawer = record => {
+    if (!record) return;
+    setActiveErrorGroup(record);
+    setErrorOccurrenceKeyword('');
+  };
+
+  const allErrorOccurrences = useMemo(() => {
+    if (!activeErrorGroup) return [];
+    const list = Array.isArray(activeErrorGroup.occurrences) && activeErrorGroup.occurrences.length
+      ? activeErrorGroup.occurrences
+      : (activeErrorGroup.sampleConversationId
+          ? [{
+              key: `sample:${activeErrorGroup.sampleConversationId}:${activeErrorGroup.sampleTriggerMessageId || ''}:0`,
+              executionId: '',
+              conversationId: activeErrorGroup.sampleConversationId,
+              triggerMessageId: activeErrorGroup.sampleTriggerMessageId || '',
+              occurredAt: activeErrorGroup.lastOccurredAt || '',
+              durationMs: 0,
+              errorMessage: activeErrorGroup.errorMessage || ''
+            }]
+          : []);
+    return list.map((item, idx) => ({
+      ...item,
+      seqNo: idx + 1,
+      key: item.key || `${item.executionId || idx}:${item.conversationId || ''}:${item.triggerMessageId || ''}:${idx}`
+    }));
+  }, [activeErrorGroup]);
+
+  const filteredErrorOccurrences = useMemo(() => {
+    const kw = errorOccurrenceKeyword.trim().toLowerCase();
+    if (!kw) return allErrorOccurrences;
+    return allErrorOccurrences.filter(item =>
+      String(item.conversationId || '').toLowerCase().includes(kw)
+      || String(item.triggerMessageId || '').toLowerCase().includes(kw)
+      || String(item.occurredAt || '').toLowerCase().includes(kw)
+      || String(item.executionId || '').toLowerCase().includes(kw)
+    );
+  }, [allErrorOccurrences, errorOccurrenceKeyword]);
+
+  const visitedErrorKeySet = useMemo(() => new Set(visitedErrorKeys), [visitedErrorKeys]);
+  const visitedCountInActiveGroup = useMemo(
+    () => allErrorOccurrences.filter(item => visitedErrorKeySet.has(item.key)).length,
+    [allErrorOccurrences, visitedErrorKeySet]
+  );
+
+  const handleLocateErrorOccurrence = occ => {
+    if (!occ?.conversationId) return;
+    if (occ.key && !visitedErrorKeySet.has(occ.key)) {
+      setVisitedErrorKeys(prev => [...prev, occ.key]);
+    }
+    openSampleConversation(occ.conversationId, occ.triggerMessageId);
+  };
+
+  const latencyColumns = [
+    {
+      title: '节点名称',
+      dataIndex: 'nodeName',
+      width: 240,
+      fixed: 'left',
+      render: (value, record) => {
+        const meta = dbNodeMeta(record.nodeType);
+        return <Flex align="center" gap={6} wrap={false}>
+          <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.name}</Tag>
+          <Text strong ellipsis={{ tooltip: `${value || record.nodeId} (${record.nodeId})` }} style={{ maxWidth: 140 }}>{value || record.nodeId}</Text>
+          {record.isHistorical ? <Tag color="gold" bordered={false}>历史版本</Tag> : null}
+        </Flex>;
+      }
+    },
+    {
+      title: '执行次数',
+      dataIndex: 'executionCount',
+      width: 100,
+      align: 'right',
+      sorter: (a, b) => (a.executionCount || 0) - (b.executionCount || 0),
+      render: (value, record) => <Tooltip title={`覆盖 ${record.triggerHitCount || 0} 轮触发（${record.triggerHitRate || 0}%）`}><Text strong>{value || 0}</Text></Tooltip>
+    },
+    {
+      title: '平均耗时',
+      dataIndex: 'avgMs',
+      width: 130,
+      align: 'right',
+      sorter: (a, b) => (a.avgMs || 0) - (b.avgMs || 0),
+      render: value => <Text>{formatAnalyticsDuration(value)}</Text>
+    },
+    {
+      title: 'P50 耗时',
+      dataIndex: 'p50Ms',
+      width: 120,
+      align: 'right',
+      sorter: (a, b) => (a.p50Ms || 0) - (b.p50Ms || 0),
+      render: value => <Text type="secondary">{formatAnalyticsDuration(value)}</Text>
+    },
+    {
+      title: 'P95 耗时 (慢节点定位)',
+      dataIndex: 'p95Ms',
+      width: 240,
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => (a.p95Ms || 0) - (b.p95Ms || 0),
+      render: (value, record) => {
+        const num = Number(value) || 0;
+        const pct = Math.min(100, Math.max(4, Math.round((num / maxNodeP95Ms) * 100)));
+        const isSlow = num >= 3000;
+        const isMedium = num >= 1000 && num < 3000;
+        return <div className="db-analytics-latency-bar-cell">
+          <div className="db-analytics-latency-bar-head">
+            <span className={`db-analytics-latency-value ${isSlow ? 'slow' : isMedium ? 'medium' : ''}`}>{formatAnalyticsDuration(value)}</span>
+            {isSlow ? <Tag color="red" bordered={false}>慢节点</Tag> : null}
+          </div>
+          <div className="db-analytics-progress-track">
+            <div className={`db-analytics-progress-fill ${isSlow ? 'danger' : isMedium ? 'warning' : 'primary'}`} style={{ width: `${pct}%` }} />
+          </div>
+        </div>;
+      }
+    },
+    {
+      title: '最大耗时',
+      dataIndex: 'maxMs',
+      width: 130,
+      align: 'right',
+      sorter: (a, b) => (a.maxMs || 0) - (b.maxMs || 0),
+      render: value => <Text strong>{formatAnalyticsDuration(value)}</Text>
+    },
+    {
+      title: '节点报错率',
+      dataIndex: 'errorRate',
+      width: 120,
+      align: 'right',
+      sorter: (a, b) => (a.errorRate || 0) - (b.errorRate || 0),
+      render: (value, record) => record.errorCount > 0
+        ? <Tag color="red">{value}% ({record.errorCount})</Tag>
+        : <Text type="secondary">0%</Text>
+    },
+    {
+      title: '慢样本排障',
+      key: 'slowestSample',
+      width: 150,
+      align: 'center',
+      render: (_, record) => record.slowestSample?.conversationId
+        ? <Tooltip title={`最慢耗时 ${formatAnalyticsDuration(record.slowestSample.durationMs)} · Conversation: ${record.slowestSample.conversationId}`}>
+            <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openSampleConversation(record.slowestSample.conversationId, record.slowestSample.triggerMessageId)}>查看最慢样本</Button>
+          </Tooltip>
+        : <Text type="secondary">-</Text>
+    }
+  ];
+
+  const allNodesColumns = [
+    {
+      title: '节点名称',
+      dataIndex: 'nodeName',
+      width: 260,
+      render: (value, record) => {
+        const meta = dbNodeMeta(record.nodeType);
+        return <Flex align="center" gap={6} wrap={false}>
+          <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.name}</Tag>
+          <Text strong ellipsis={{ tooltip: `${value || record.nodeId} (${record.nodeId})` }} style={{ maxWidth: 160 }}>{value || record.nodeId}</Text>
+          {record.isHistorical ? <Tag color="gold" bordered={false}>历史版本</Tag> : null}
+        </Flex>;
+      }
+    },
+    {
+      title: '触发命中轮次',
+      dataIndex: 'triggerHitCount',
+      width: 130,
+      align: 'right',
+      sorter: (a, b) => (a.triggerHitCount || 0) - (b.triggerHitCount || 0),
+      render: value => <Text strong>{value || 0} 轮</Text>
+    },
+    {
+      title: <Tooltip title="计算公式：触发命中轮次 ÷ 总触发轮次 × 100%（同一轮触发内多次经过同一节点按 1 轮计）"><span>轮次命中比例</span></Tooltip>,
+      dataIndex: 'triggerHitRate',
+      width: 240,
+      defaultSortOrder: 'descend',
+      sorter: (a, b) => (a.triggerHitRate || 0) - (b.triggerHitRate || 0),
+      render: (value, record) => {
+        const rate = Number(value) || 0;
+        return <Tooltip title={`${record.triggerHitCount || 0} 轮命中 / 共 ${overview.totalTriggers || 0} 轮触发`}>
+          <div className="db-analytics-rate-cell">
+            <div className="db-analytics-progress-track">
+              <div className="db-analytics-progress-fill primary" style={{ width: `${Math.min(100, rate)}%` }} />
+            </div>
+            <span className="db-analytics-rate-text">{rate}%</span>
+          </div>
+        </Tooltip>;
+      }
+    },
+    {
+      title: '节点总执行次数',
+      dataIndex: 'executionCount',
+      width: 130,
+      align: 'right',
+      sorter: (a, b) => (a.executionCount || 0) - (b.executionCount || 0),
+      render: value => <Text>{value || 0} 次</Text>
+    },
+    {
+      title: '成功 / 报错次数',
+      key: 'statusCounts',
+      width: 140,
+      align: 'right',
+      render: (_, record) => <span><Text type="success">{record.successCount || 0}</Text> / <Text type={record.errorCount > 0 ? 'danger' : 'secondary'}>{record.errorCount || 0}</Text></span>
+    },
+    {
+      title: '报错率',
+      dataIndex: 'errorRate',
+      width: 110,
+      align: 'right',
+      sorter: (a, b) => (a.errorRate || 0) - (b.errorRate || 0),
+      render: (value, record) => record.errorCount > 0 ? <Tag color="red">{value}%</Tag> : <Tag color="green">0%</Tag>
+    }
+  ];
+
+  const errorColumns = [
+    {
+      title: '排名',
+      key: 'rank',
+      width: 68,
+      align: 'center',
+      render: (_, __, index) => <span className={`db-analytics-rank-badge ${index < 3 ? 'top' : ''}`}>#{index + 1}</span>
+    },
+    {
+      title: '故障节点',
+      dataIndex: 'nodeName',
+      width: 220,
+      render: (value, record) => {
+        const meta = dbNodeMeta(record.nodeType);
+        return <Flex align="center" gap={6} wrap={false}>
+          <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.name}</Tag>
+          <Text strong ellipsis={{ tooltip: `${value || record.nodeId} (${record.nodeId})` }} style={{ maxWidth: 130 }}>{value || record.nodeId}</Text>
+        </Flex>;
+      }
+    },
+    {
+      title: '错误码 / 异常类型',
+      dataIndex: 'errorCode',
+      width: 180,
+      render: (value, record) => <Space size={4} wrap>
+        <Tag color="red">{value || record.errorClass || record.status || 'ERROR'}</Tag>
+        {record.errorClass && record.errorClass !== value ? <Tag>{record.errorClass}</Tag> : null}
+      </Space>
+    },
+    {
+      title: '错误信息 (error_message)',
+      dataIndex: 'errorMessage',
+      ellipsis: true,
+      render: value => <Flex align="center" gap={6} style={{ minWidth: 0 }}>
+        <Tooltip title={value}><Text className="db-analytics-error-msg" ellipsis>{value || '-'}</Text></Tooltip>
+        {value ? <Tooltip title="复制报错信息"><Button type="text" size="small" shape="circle" icon={<CopyOutlined />} onClick={() => navigator.clipboard?.writeText(value).then(() => window.showGlobalMessage?.('已复制报错信息'))} /></Tooltip> : null}
+      </Flex>
+    },
+    {
+      title: '报错次数 / 占比',
+      dataIndex: 'errorCount',
+      width: 150,
+      align: 'right',
+      render: (value, record) => <Space size={6}>
+        <Text strong type="danger">{value} 次</Text>
+        <Tag color="volcano" bordered={false}>{record.errorShareRate}%</Tag>
+      </Space>
+    },
+    {
+      title: '波及范围',
+      key: 'affected',
+      width: 150,
+      align: 'right',
+      render: (_, record) => <Text type="secondary">{record.affectedConversations} 会话 / {record.affectedTriggers} 轮</Text>
+    },
+    {
+      title: '最近发生时间',
+      dataIndex: 'lastOccurredAt',
+      width: 175,
+      render: value => <Text type="secondary">{value || '-'}</Text>
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 136,
+      align: 'center',
+      render: (_, record) => {
+        const hasOccurrences = (Array.isArray(record.occurrences) && record.occurrences.length > 0) || Boolean(record.sampleConversationId);
+        if (!hasOccurrences) return <Text type="secondary">-</Text>;
+        return <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openErrorGroupDrawer(record)}>
+          定位排障
+        </Button>;
+      }
+    }
+  ];
+
+  const errorOccurrenceColumns = [
+    {
+      title: '序号',
+      dataIndex: 'seqNo',
+      width: 68,
+      align: 'center',
+      render: value => <span className="db-analytics-rank-badge">#{value}</span>
+    },
+    {
+      title: '发生时间',
+      dataIndex: 'occurredAt',
+      width: 170,
+      render: value => <Text type="secondary">{value || '-'}</Text>
+    },
+    {
+      title: '会话 ID (conversation_id)',
+      dataIndex: 'conversationId',
+      width: 200,
+      ellipsis: true,
+      render: value => value
+        ? <Flex align="center" gap={4} style={{ minWidth: 0 }}>
+            <Tooltip title={value}><Text code ellipsis style={{ maxWidth: 155 }}>{value}</Text></Tooltip>
+            <Tooltip title="复制会话 ID">
+              <Button
+                type="text"
+                size="small"
+                shape="circle"
+                icon={<CopyOutlined />}
+                onClick={() => navigator.clipboard?.writeText(value).then(() => window.showGlobalMessage?.('已复制会话 ID'))}
+              />
+            </Tooltip>
+          </Flex>
+        : <Text type="secondary">-</Text>
+    },
+    {
+      title: '触发轮次 ID (trigger_message_id)',
+      dataIndex: 'triggerMessageId',
+      width: 210,
+      ellipsis: true,
+      render: value => value
+        ? <Flex align="center" gap={4} style={{ minWidth: 0 }}>
+            <Tooltip title={value}><Text code ellipsis style={{ maxWidth: 165 }}>{value}</Text></Tooltip>
+            <Tooltip title="复制触发轮次 ID">
+              <Button
+                type="text"
+                size="small"
+                shape="circle"
+                icon={<CopyOutlined />}
+                onClick={() => navigator.clipboard?.writeText(value).then(() => window.showGlobalMessage?.('已复制触发轮次 ID'))}
+              />
+            </Tooltip>
+          </Flex>
+        : <Text type="secondary">-</Text>
+    },
+    {
+      title: '节点耗时',
+      dataIndex: 'durationMs',
+      width: 100,
+      align: 'right',
+      sorter: (a, b) => (a.durationMs || 0) - (b.durationMs || 0),
+      render: value => <Text type="secondary">{formatAnalyticsDuration(value)}</Text>
+    },
+    {
+      title: '操作',
+      key: 'locate',
+      width: 140,
+      align: 'center',
+      fixed: 'right',
+      render: (_, occ) => {
+        const visited = visitedErrorKeySet.has(occ.key);
+        return <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            disabled={!occ.conversationId}
+            onClick={() => handleLocateErrorOccurrence(occ)}
+          >
+            定位排障
+          </Button>
+          {visited ? <Tag color="processing" bordered={false} style={{ marginInlineEnd: 0 }}>已看</Tag> : null}
+        </Space>;
+      }
+    }
+  ];
+
+  return <div className="db-analytics-page">
+    <div className="db-record-toolbar db-analytics-toolbar">
+      <div className="db-analytics-filter-rows">
+        {/* 第一行：数据库选择 + 工作流选择 */}
+        <div className="db-analytics-filter-row db-analytics-filter-row-top">
+          <div className="db-filter-field db-analytics-field-db">
+            <span>数据库</span>
+            <Dropdown
+              menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }}
+              popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>}
+              trigger={['click']}
+              disabled={!connectionConfigItems.length || data.connectionChanging}
+            >
+              <Tooltip title={connectionMeta.title}>
+                <Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态">
+                  <Badge status={connectionMeta.badge} />
+                  <span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span>
+                  <DownOutlined />
+                </Button>
+              </Tooltip>
+            </Dropdown>
+          </div>
+          <div className="db-filter-field db-analytics-field-workflow">
+            <span><b>*</b>工作流</span>
+            <Select
+              className="db-filter-control"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              value={filters.workflowId || undefined}
+              loading={data.workflowsLoading || data.connectionChanging}
+              onOpenChange={open => open && emitListToolbar('ensure-db-workflows')}
+              onChange={value => emitListToolbarChange('db-analytics-workflow-id', value || '')}
+              options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))}
+              placeholder="请选择要分析的工作流"
+            />
+          </div>
+        </div>
+
+        {/* 第二行：时间范围筛选 + 3个按钮 */}
+        <div className="db-analytics-filter-row db-analytics-filter-row-bottom">
+          <div className="db-filter-field db-filter-field-time">
+            <span><b>*</b>统计时间范围（最长 15 天）</span>
+            <DbDateTimeRangePicker
+              className="db-filter-control"
+              maxDays={15}
+              startTime={filters.startTime}
+              endTime={filters.endTime}
+              onChange={values => emitListToolbarChange('db-analytics-time-range', values)}
+            />
+          </div>
+          <div className="db-analytics-row-actions">
+            <Space size={8}>
+              <Button icon={<ReloadOutlined />} onClick={() => emitListToolbar('reset-db-analytics')}>重置</Button>
+              <Button type="primary" icon={<DatabaseOutlined />} loading={data.loading} disabled={!queryReady} onClick={() => emitListToolbar('query-db-analytics')}>开始分析</Button>
+              <Tooltip title="按当前筛选条件重新统计">
+                <Button icon={<ReloadOutlined />} disabled={!queryReady || data.loading} onClick={() => emitListToolbar('refresh-db-analytics')}>刷新数据</Button>
+              </Tooltip>
+            </Space>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {!data.queried && !data.loading ? (
+      <div className="db-record-empty db-analytics-empty">
+        <Text type="secondary">请选择工作流与统计时间范围后，点击「开始分析」生成运行质量与性能报告</Text>
+      </div>
+    ) : (
+      <Spin spinning={data.loading} tip="正在统计工作流运行数据...">
+        {analytics ? (
+          <div className="db-analytics-content">
+            {/* 1. 整体运行概览 */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">一、整体运行概览</span>
+                  {analytics.workflow?.name ? <Tag color="blue">{analytics.workflow.id} · {analytics.workflow.name}</Tag> : null}
+                  <Text type="secondary" className="db-analytics-section-sub">{analytics.timeRange?.startTime} ~ {analytics.timeRange?.endTime}</Text>
+                </div>
+              </div>
+              <div className="db-analytics-kpi-grid">
+                <div className="db-analytics-kpi-card">
+                  <span className="db-analytics-kpi-label">总会话数 (Conversations)</span>
+                  <strong className="db-analytics-kpi-value">{overview.totalConversations || 0}</strong>
+                  <span className="db-analytics-kpi-sub">正常 {Math.max(0, (overview.totalConversations || 0) - (overview.errorConversations || 0))} · 含报错 {overview.errorConversations || 0}</span>
+                </div>
+                <div className="db-analytics-kpi-card">
+                  <span className="db-analytics-kpi-label">总触发轮次 (Triggers)</span>
+                  <strong className="db-analytics-kpi-value">{overview.totalTriggers || 0}</strong>
+                  <span className="db-analytics-kpi-sub">AI回复 {overview.repliedTriggers || 0} ({overview.replyTriggerRate || 0}%) · 不回复 {overview.noReplyTriggers || 0}</span>
+                </div>
+                <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.conversationErrorRate)}`}>
+                  <span className="db-analytics-kpi-label">会话级报错率</span>
+                  <strong className="db-analytics-kpi-value">{overview.conversationErrorRate || 0}%</strong>
+                  <span className="db-analytics-kpi-sub">{overview.errorConversations || 0} / {overview.totalConversations || 0} 个会话出现异常</span>
+                </div>
+                <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.triggerErrorRate)}`}>
+                  <span className="db-analytics-kpi-label">轮次级报错率</span>
+                  <strong className="db-analytics-kpi-value">{overview.triggerErrorRate || 0}%</strong>
+                  <span className="db-analytics-kpi-sub">{overview.errorTriggers || 0} / {overview.totalTriggers || 0} 轮触发异常{overview.pendingTriggers ? ` · 待处理 ${overview.pendingTriggers}` : ''}</span>
+                </div>
+                <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.nodeErrorRate)}`}>
+                  <span className="db-analytics-kpi-label">节点级报错率</span>
+                  <strong className="db-analytics-kpi-value">{overview.nodeErrorRate || 0}%</strong>
+                  <span className="db-analytics-kpi-sub">{overview.errorNodeExecutions || 0} / {overview.totalNodeExecutions || 0} 次节点执行失败</span>
+                </div>
+                <div className="db-analytics-kpi-card">
+                  <span className="db-analytics-kpi-label">单轮端到端 P95 耗时</span>
+                  <strong className="db-analytics-kpi-value">{formatAnalyticsDuration(latency.endToEnd?.p95Ms)}</strong>
+                  <span className="db-analytics-kpi-sub">平均 {formatAnalyticsDuration(latency.endToEnd?.avgMs)} · 最大 {formatAnalyticsDuration(latency.endToEnd?.maxMs)}</span>
+                </div>
+              </div>
+            </section>
+
+            {/* 2. 耗时与性能分析 */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">二、耗时与性能分析</span>
+                  <Text type="secondary" className="db-analytics-section-sub">端到端单轮响应耗时 + 各节点平均 / P50 / P95 / 最大耗时排行</Text>
+                </div>
+                <Space size={8}>
+                  <Text type="secondary">节点类型筛选：</Text>
+                  <Select
+                    size="small"
+                     style={{ width: 160 }}
+                    value={nodeTypeFilter}
+                    onChange={setNodeTypeFilter}
+                    options={availableNodeTypes.map(type => ({
+                      value: type,
+                      label: type === 'ALL' ? '全部节点类型' : `${dbNodeMeta(type).name} (${type})`
+                    }))}
+                  />
+                </Space>
+              </div>
+
+              <div className="db-analytics-e2e-grid">
+                <div className="db-analytics-e2e-card">
+                  <div className="db-analytics-e2e-head">
+                    <div>
+                      <span className="db-analytics-e2e-title">全链路单轮端到端耗时</span>
+                      <span className="db-analytics-e2e-desc">触发器 started_at → 该轮末节点 completed_at（有效样本 {latency.endToEnd?.count || 0} 轮）</span>
+                    </div>
+                    {latency.endToEnd?.slowestSample?.conversationId ? (
+                      <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openSampleConversation(latency.endToEnd.slowestSample.conversationId, latency.endToEnd.slowestSample.triggerMessageId)}>定位最慢轮次</Button>
+                    ) : null}
+                  </div>
+                  <div className="db-analytics-e2e-metrics">
+                    <div><span>平均耗时</span><strong>{formatAnalyticsDuration(latency.endToEnd?.avgMs)}</strong></div>
+                    <div><span>P50 中位数</span><strong>{formatAnalyticsDuration(latency.endToEnd?.p50Ms)}</strong></div>
+                    <div><span>P95 耗时</span><strong className="highlight">{formatAnalyticsDuration(latency.endToEnd?.p95Ms)}</strong></div>
+                    <div><span>最大耗时</span><strong>{formatAnalyticsDuration(latency.endToEnd?.maxMs)}</strong></div>
+                  </div>
+                </div>
+
+                <div className="db-analytics-e2e-card">
+                  <div className="db-analytics-e2e-head">
+                    <div>
+                      <span className="db-analytics-e2e-title">AI 回复端到端耗时</span>
+                      <span className="db-analytics-e2e-desc">触发器 started_at → 发送消息节点 completed_at（有回复样本 {latency.reply?.count || 0} 轮）</span>
+                    </div>
+                    {latency.reply?.slowestSample?.conversationId ? (
+                      <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openSampleConversation(latency.reply.slowestSample.conversationId, latency.reply.slowestSample.triggerMessageId)}>定位最慢回复</Button>
+                    ) : null}
+                  </div>
+                  <div className="db-analytics-e2e-metrics">
+                    <div><span>平均耗时</span><strong>{formatAnalyticsDuration(latency.reply?.avgMs)}</strong></div>
+                    <div><span>P50 中位数</span><strong>{formatAnalyticsDuration(latency.reply?.p50Ms)}</strong></div>
+                    <div><span>P95 耗时</span><strong className="highlight">{formatAnalyticsDuration(latency.reply?.p95Ms)}</strong></div>
+                    <div><span>最大耗时</span><strong>{formatAnalyticsDuration(latency.reply?.maxMs)}</strong></div>
+                  </div>
+                </div>
+              </div>
+
+              <Table
+                className="ant-list-table db-analytics-table"
+                size="small"
+                rowKey="nodeId"
+                columns={latencyColumns}
+                dataSource={filteredLatencyNodes}
+                pagination={filteredLatencyNodes.length > 15 ? { pageSize: 15, showSizeChanger: false } : false}
+                scroll={{ x: 1120 }}
+                locale={{ emptyText: '所选范围内暂无节点耗时数据' }}
+              />
+            </section>
+
+            {/* 3. 分支走向与节点命中统计 */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">三、分支走向与节点命中统计</span>
+                  <Text type="secondary" className="db-analytics-section-sub">条件节点 (condition) 上下游分流骨架图 + 全工作流节点触发命中率</Text>
+                </div>
+                <Radio.Group size="small" value={branchViewTab} onChange={e => setBranchViewTab(e.target.value)} optionType="button" buttonStyle="solid">
+                  <Radio.Button value="skeleton">分流骨架流向图 ({visibleConditionNodes.length}/{allConditionNodes.length})</Radio.Button>
+                  <Radio.Button value="condition">条件分支卡片 ({visibleConditionNodes.length}/{allConditionNodes.length})</Radio.Button>
+                  <Radio.Button value="all">全量节点命中表 ({branches.allNodes?.length || 0})</Radio.Button>
+                </Radio.Group>
+              </div>
+
+              {branchViewTab === 'skeleton' || branchViewTab === 'condition' ? (
+                <>
+                  {ignoredConditionNodes.length > 0 ? (
+                    <div className="db-analytics-ignored-bar">
+                      <span className="db-analytics-ignored-label">已忽略 {ignoredConditionNodes.length} 个条件节点（已自动折叠并直连上下游分流）：</span>
+                      <div className="db-analytics-ignored-tags">
+                        {ignoredConditionNodes.map(node => (
+                          <Tag
+                            key={node.nodeId}
+                            closable
+                            onClose={e => {
+                              e.preventDefault();
+                              restoreConditionNode(node.nodeId);
+                            }}
+                          >
+                            {node.nodeName}
+                          </Tag>
+                        ))}
+                      </div>
+                      <Button type="link" size="small" onClick={restoreAllConditionNodes}>全部恢复</Button>
+                    </div>
+                  ) : null}
+                  {visibleConditionNodes.length ? (
+                    branchViewTab === 'skeleton' ? (
+                      <DbConditionSkeletonCanvas
+                        skeletonModel={skeletonModel}
+                        workflowId={workflowId}
+                        ignoredKey={ignoredConditionIds.join(',')}
+                      />
+                    ) : (
+                      <div className="db-analytics-condition-grid">
+                        {visibleConditionNodes.map(condNode => (
+                          <div key={condNode.nodeId} className="db-analytics-condition-card">
+                            <div className="db-analytics-condition-card-head">
+                              <div className="db-analytics-condition-card-top">
+                                <Flex align="center" gap={6} className="db-analytics-condition-card-title">
+                                  <Tag color={dbNodeMeta('condition').color}>L{condNode.level || 1} 条件分支</Tag>
+                                  <Text strong ellipsis={{ tooltip: condNode.nodeName }}>{condNode.nodeName}</Text>
+                                  {condNode.isHistorical ? <Tag color="gold" bordered={false}>历史节点</Tag> : null}
+                                </Flex>
+                                <Space size={8} align="center" className="db-analytics-condition-card-meta">
+                                  <Text type="secondary">共执行 {condNode.executionCount} 次 · 轮次命中率 {condNode.triggerHitRate}%</Text>
+                                  <Tooltip title="忽略此条件节点的分支走向分析">
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      className="db-analytics-ignore-btn"
+                                      onClick={() => ignoreConditionNode(condNode.nodeId)}
+                                    >
+                                      忽略
+                                    </Button>
+                                  </Tooltip>
+                                </Space>
+                              </div>
+                              {(condNode.upstreamSources || []).length > 0 ? (
+                                <div className="db-analytics-condition-card-from">
+                                  来自：{condNode.upstreamSources.map(u => u.sourceType === 'trigger' ? `⚡${u.nodeName}` : `${u.nodeName}[${u.branchName}]`).join('、')}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="db-analytics-branch-list">
+                              {(condNode.branches || []).map(branch => {
+                                const downstreamList = Array.isArray(branch.downstreamConditions) ? branch.downstreamConditions : [];
+                                return (
+                                  <div key={branch.branchKey} className="db-analytics-branch-row">
+                                    <div className="db-analytics-branch-info">
+                                      <span className="db-analytics-branch-name">{branch.branchName}</span>
+                                      {downstreamList.length > 0 ? (
+                                        <span className="db-analytics-branch-target">
+                                          ↳ 下游分流：{downstreamList.map(d => `${d.nodeName}${d.viaCount > 0 ? `(经${d.viaCount}节点)` : ''}`).join('、')}
+                                        </span>
+                                      ) : branch.targetNodeName ? (
+                                        <span className="db-analytics-branch-target">→ {branch.targetNodeName}</span>
+                                      ) : null}
+                                    </div>
+                                    <div className="db-analytics-branch-bar-wrap">
+                                      <div className="db-analytics-progress-track">
+                                        <div className="db-analytics-progress-fill branch" style={{ width: `${Math.min(100, Number(branch.branchRate) || 0)}%` }} />
+                                      </div>
+                                    </div>
+                                    <div className="db-analytics-branch-stats">
+                                      <strong>{branch.hitCount} 次</strong>
+                                      <span>分支占比 {branch.branchRate}%</span>
+                                      <small>全局轮次 {branch.workflowRate}%</small>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    <div className="db-analytics-sub-empty">
+                      <Text type="secondary">
+                        {allConditionNodes.length ? '当前所有条件分支节点均已被忽略，可点击上方「全部恢复」重新查看' : '当前工作流无条件分支节点'}
+                      </Text>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <Table
+                  className="ant-list-table db-analytics-table"
+                  size="small"
+                  rowKey="nodeId"
+                  columns={allNodesColumns}
+                  dataSource={branches.allNodes || []}
+                  pagination={(branches.allNodes || []).length > 20 ? { pageSize: 20, showSizeChanger: false } : false}
+                  scroll={{ x: 980 }}
+                />
+              )}
+            </section>
+
+            {/* 4. 异常与报错聚合 Top N */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">四、异常与报错聚合 (Top N)</span>
+                  <Text type="secondary" className="db-analytics-section-sub">按 node_name、error_code、error_message 聚合高频故障节点</Text>
+                </div>
+                <Tag color={(errors.totalErrorExecutions || 0) > 0 ? 'red' : 'green'}>
+                  {(errors.totalErrorExecutions || 0) > 0
+                    ? `共 ${errors.totalErrorExecutions} 次节点报错 · ${errors.items?.length || 0} 类故障`
+                    : '0 次报错 · 运行健康'}
+                </Tag>
+              </div>
+
+              {(errors.items || []).length ? (
+                <Table
+                  className="ant-list-table db-analytics-table"
+                  size="small"
+                  rowKey="key"
+                  columns={errorColumns}
+                  dataSource={errors.items || []}
+                  pagination={false}
+                  scroll={{ x: 1120 }}
+                />
+              ) : (
+                <div className="db-analytics-sub-empty healthy">
+                  <CheckCircleFilled style={{ color: '#10b981', fontSize: 18 }} />
+                  <Text type="secondary">所选时间范围内未发现任何节点执行异常或报错</Text>
+                </div>
+              )}
+            </section>
+
+            <Drawer
+              title={activeErrorGroup ? (
+                <Flex align="center" gap={8} wrap="wrap">
+                  <Tag color={dbNodeMeta(activeErrorGroup.nodeType).color} style={{ marginInlineEnd: 0 }}>
+                    {dbNodeMeta(activeErrorGroup.nodeType).name}
+                  </Tag>
+                  <Text strong>{activeErrorGroup.nodeName || activeErrorGroup.nodeId}</Text>
+                  <Text type="secondary" style={{ fontSize: 13, fontWeight: 400 }}>报错明细与逐条定位</Text>
+                  <Tag color="red" style={{ marginInlineEnd: 0 }}>共 {activeErrorGroup.errorCount || allErrorOccurrences.length} 次报错</Tag>
+                </Flex>
+              ) : '报错明细与逐条定位'}
+              placement="right"
+              width={820}
+              open={Boolean(data?.active !== false && activeErrorGroup)}
+              onClose={() => setActiveErrorGroup(null)}
+            >
+              {activeErrorGroup ? (
+                <div className="db-analytics-error-drawer-body">
+                  <div className="db-analytics-error-drawer-summary">
+                    <div className="db-analytics-error-drawer-meta-row">
+                      <Space size={6} wrap>
+                        <Text type="secondary">异常类型：</Text>
+                        <Tag color="red">{activeErrorGroup.errorCode || activeErrorGroup.errorClass || activeErrorGroup.status || 'ERROR'}</Tag>
+                        {activeErrorGroup.errorClass && activeErrorGroup.errorClass !== activeErrorGroup.errorCode ? (
+                          <Tag>{activeErrorGroup.errorClass}</Tag>
+                        ) : null}
+                        <Tag color="volcano" bordered={false}>占总报错 {activeErrorGroup.errorShareRate || 0}%</Tag>
+                        <Tag color="default" bordered={false}>
+                          波及 {activeErrorGroup.affectedConversations || 0} 会话 / {activeErrorGroup.affectedTriggers || 0} 轮触发
+                        </Tag>
+                      </Space>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        最近发生：{activeErrorGroup.lastOccurredAt || '-'}
+                      </Text>
+                    </div>
+                    <div className="db-analytics-error-drawer-msg-box">
+                      <div className="db-analytics-error-drawer-msg-head">
+                        <Text type="secondary" style={{ fontSize: 12 }}>聚合报错信息 (error_message)</Text>
+                        {activeErrorGroup.errorMessage ? (
+                          <Button
+                            type="link"
+                            size="small"
+                            icon={<CopyOutlined />}
+                            onClick={() => navigator.clipboard?.writeText(activeErrorGroup.errorMessage).then(() => window.showGlobalMessage?.('已复制报错信息'))}
+                          >
+                            复制报错
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="db-analytics-error-drawer-msg-content">
+                        {activeErrorGroup.errorMessage || activeErrorGroup.errorSummary || '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="db-analytics-error-drawer-toolbar">
+                    <Space size={8} wrap>
+                      <Text strong>报错记录列表</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        共 {filteredErrorOccurrences.length} 条{errorOccurrenceKeyword.trim() ? `（总计 ${allErrorOccurrences.length} 条）` : ''} · 点击右侧「定位排障」可逐条跳转至对应会话轮次，返回后自动保留当前进度
+                      </Text>
+                      {visitedCountInActiveGroup > 0 ? (
+                        <Tag color="processing" bordered={false}>已定位 {visitedCountInActiveGroup} / {allErrorOccurrences.length} 条</Tag>
+                      ) : null}
+                    </Space>
+                    <Input.Search
+                      allowClear
+                      size="small"
+                      placeholder="搜索会话 ID / 触发轮次 ID / 发生时间..."
+                      value={errorOccurrenceKeyword}
+                      onChange={e => setErrorOccurrenceKeyword(e.target.value)}
+                      style={{ width: 270 }}
+                    />
+                  </div>
+
+                  <Table
+                    className="ant-list-table db-analytics-table db-analytics-error-occurrences-table"
+                    size="small"
+                    rowKey="key"
+                    columns={errorOccurrenceColumns}
+                    dataSource={filteredErrorOccurrences}
+                    scroll={{ x: 760 }}
+                    pagination={{
+                      defaultPageSize: 20,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      showTotal: total => `共 ${total} 条报错记录`
+                    }}
+                  />
+                </div>
+              ) : null}
+            </Drawer>
+          </div>
+        ) : null}
+      </Spin>
+    )}
+  </div>;
+}
+
 function AppTabs({ activeView }) {
-  return <Tabs activeKey={activeView} onChange={value => emitListToolbar('switch-view', { value })} items={[{ key: 'cases', label: '测试用例' }, { key: 'records', label: '测试记录' }, { key: 'dbRecords', label: '会话记录查询（DB）' }, { key: 'labels', label: '标签与场景' }]} />;
+  return <Tabs activeKey={activeView} onChange={value => emitListToolbar('switch-view', { value })} items={[{ key: 'cases', label: '测试用例' }, { key: 'records', label: '测试记录' }, { key: 'dbRecords', label: '会话记录查询（DB）' }, { key: 'dbAnalytics', label: '工作流运行分析（DB）' }, { key: 'labels', label: '标签与场景' }]} />;
 }
 
 function LabelManagementPage({ data }) {
@@ -2646,6 +4499,7 @@ let appTabsRoot;
 let caseListRoot;
 let recordListRoot;
 let dbRecordsRoot;
+let dbAnalyticsRoot;
 let labelManagementRoot;
 let sendDialogRoot;
 let importCaseRoot;
@@ -2771,17 +4625,20 @@ window.renderAntListPages = data => {
   const caseHost = document.getElementById('caseListApp');
   const recordHost = document.getElementById('recordListApp');
   const dbRecordsHost = document.getElementById('dbRecordsApp');
+  const dbAnalyticsHost = document.getElementById('dbAnalyticsApp');
   const labelManagementHost = document.getElementById('labelManagementApp');
   if (!tabsHost || !caseHost || !recordHost || !dbRecordsHost || !labelManagementHost) return;
   appTabsRoot ||= createRoot(tabsHost);
   caseListRoot ||= createRoot(caseHost);
   recordListRoot ||= createRoot(recordHost);
   dbRecordsRoot ||= createRoot(dbRecordsHost);
+  if (dbAnalyticsHost) dbAnalyticsRoot ||= createRoot(dbAnalyticsHost);
   labelManagementRoot ||= createRoot(labelManagementHost);
   appTabsRoot.render(<ConfigProvider componentSize="middle"><AppTabs activeView={data.activeView} /></ConfigProvider>);
   caseListRoot.render(<ConfigProvider componentSize="middle"><CaseListPage data={data.cases} /></ConfigProvider>);
   recordListRoot.render(<ConfigProvider componentSize="middle"><RecordListPage data={data.records} /></ConfigProvider>);
   dbRecordsRoot.render(<ConfigProvider componentSize="middle"><DbRecordsPage data={data.dbRecords} /></ConfigProvider>);
+  if (dbAnalyticsRoot) dbAnalyticsRoot.render(<ConfigProvider componentSize="middle"><DbAnalyticsPage data={data.dbAnalytics} /></ConfigProvider>);
   labelManagementRoot.render(<ConfigProvider componentSize="middle"><LabelManagementPage data={data.management} /></ConfigProvider>);
 };
 

@@ -2251,7 +2251,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
   return [...groups.values()].sort((a, b) => String(b.lastMessageAt || '').localeCompare(String(a.lastMessageAt || ''))).map(group => {
     const sortedMessages = [...group.messages].sort((a, b) => String(a.message_timestamp || '').localeCompare(String(b.message_timestamp || '')));
     const triggerInputs = dbTriggerInputMap(group.executions);
-    const assistantReplies = dbAssistantReplyMap(group.executions);
+    const emptyAssistantReplies = new Map();
     const triggerMeta = dbTriggerMetaMap(group.executions);
     const errors = group.executions.filter(executionHasError);
     return {
@@ -2269,7 +2269,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
         .map(message => {
           const meta = triggerMeta.get(dbTriggerKeyOf(message));
           if (Number(meta?.conversationType) === 3) return String(meta?.eventContent || '');
-          return dbMessageDisplayContent(message, triggerInputs, assistantReplies);
+          return dbMessageDisplayContent(message, triggerInputs, emptyAssistantReplies);
         })
         .filter(value => value !== undefined && value !== ''),
       hasError: errors.length > 0,
@@ -2453,7 +2453,7 @@ async function dbWorkflowVersionsForHistoricalNodes(client, workflowId, currentG
     const result = await client.query(`
       SELECT id, publish_version, graph_snapshot, created_at
       FROM public.workflow_version
-      WHERE workflow_id::text = $1
+      WHERE workflow_id = $1
         AND deleted_at IS NULL
         ${beforeRunClause}
         AND EXISTS (
@@ -2736,6 +2736,7 @@ async function connectDbConnection(configId) {
     const previousPool = dbPool;
     dbPool = candidatePool;
     dbPoolFingerprint = fingerprint;
+    clearDbConversationCandidateCache();
     setDbConnectionState(config, 'connected');
     if (previousPool) await previousPool.end().catch(() => {});
     return dbConnectionStatus(config.id);
@@ -2746,6 +2747,7 @@ async function disconnectDbConnection(configId) {
   return withDbClientQueue(async () => {
     const config = dbConfig(configId);
     const fingerprint = dbConnectionFingerprint(config);
+    clearDbConversationCandidateCache();
     if (dbPool && dbPoolFingerprint === fingerprint) {
       const pool = dbPool;
       dbPool = null;
@@ -2755,6 +2757,43 @@ async function disconnectDbConnection(configId) {
     }
     return dbConnectionStatus(config.id);
   });
+}
+
+const DB_CONVERSATION_CACHE_TTL_MS = 5 * 60 * 1000;
+const DB_CONVERSATION_CACHE_MAX_ENTRIES = 20;
+const dbConversationCandidateCache = new Map();
+
+function clearDbConversationCandidateCache() {
+  dbConversationCandidateCache.clear();
+}
+
+function getDbConversationCandidateCache(cacheKey) {
+  const entry = dbConversationCandidateCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > DB_CONVERSATION_CACHE_TTL_MS) {
+    dbConversationCandidateCache.delete(cacheKey);
+    return null;
+  }
+  // Refresh LRU order
+  dbConversationCandidateCache.delete(cacheKey);
+  dbConversationCandidateCache.set(cacheKey, entry);
+  return entry;
+}
+
+function setDbConversationCandidateCache(cacheKey, allCandidates) {
+  if (dbConversationCandidateCache.has(cacheKey)) {
+    dbConversationCandidateCache.delete(cacheKey);
+  } else if (dbConversationCandidateCache.size >= DB_CONVERSATION_CACHE_MAX_ENTRIES) {
+    const oldestKey = dbConversationCandidateCache.keys().next().value;
+    if (oldestKey !== undefined) dbConversationCandidateCache.delete(oldestKey);
+  }
+  const entry = {
+    createdAt: Date.now(),
+    allCandidates: Array.isArray(allCandidates) ? allCandidates : [],
+    pageItems: new Map()
+  };
+  dbConversationCandidateCache.set(cacheKey, entry);
+  return entry;
 }
 
 function dbDateParam(value, endOfDay = false) {
@@ -2808,249 +2847,263 @@ async function listDbConversations(url) {
   }
   const pageNo = Math.max(1, Number(url.searchParams.get('pageNo') || 1));
   const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || 20)));
+  const forceRefresh = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
+  // 先按必填的工作流和时间范围聚合候选会话，避免在每个可选筛选条件中重复计算最新消息时间。
+  // 界面结束时间包含整秒，用下一秒的排他上界覆盖毫秒数据，保持时间列可用索引。
+  const endExclusive = new Date(endDay + 1000).toISOString().slice(0, 19).replace('T', ' ');
+  const activeCfgId = String(configId || dbConnectionStatus().configId || '').trim();
+  const cacheKey = JSON.stringify([activeCfgId, workflowId, startTime, endExclusive, conversationId, friendNick, keyword, hasError]);
+  const pageCacheKey = `${pageNo}:${pageSize}`;
+  let cachedEntry = forceRefresh ? null : getDbConversationCandidateCache(cacheKey);
+  if (cachedEntry && cachedEntry.pageItems.has(pageCacheKey)) {
+    return {
+      items: cachedEntry.pageItems.get(pageCacheKey),
+      total: cachedEntry.allCandidates.length,
+      pageNo,
+      pageSize
+    };
+  }
+
   return withDbClient(configId, async client => {
-    // 先按必填的工作流和时间范围聚合候选会话，避免在每个可选筛选条件中重复计算最新消息时间。
-    // 界面结束时间包含整秒，用下一秒的排他上界覆盖毫秒数据，保持时间列可用索引。
-    const endExclusive = new Date(endDay + 1000).toISOString().slice(0, 19).replace('T', ' ');
-    const params = [workflowId, startTime, endExclusive];
-    const where = [];
-    if (conversationId) {
-      params.push(`%${conversationId}%`);
-      where.push(`candidate.conversation_id ILIKE $${params.length}`);
-    }
-    // 昵称只读取触发器的身份字段，并与列表显示使用同一个值。
-    const nicknameJoin = friendNick ? `JOIN LATERAL (
-      SELECT identity.friend_nick
-      FROM (
-        SELECT m.trigger_message_id
-        FROM public.conversation_messages m
-        WHERE m.workflow_id = candidate.workflow_id
-          AND m.conversation_id = candidate.conversation_id
-          AND m.deleted_at IS NULL
-        ORDER BY m.message_timestamp DESC NULLS LAST, m.id DESC
-        OFFSET 0
-      ) recent
-      JOIN LATERAL (
-        SELECT COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
-                        NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) AS friend_nick
-        FROM public.workflow_node_executions e
-        WHERE e.workflow_id = candidate.workflow_id
-          AND e.trigger_message_id = recent.trigger_message_id
-          AND e.deleted_at IS NULL
-          AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
-          AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
-                       NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) IS NOT NULL
-        ORDER BY e.id DESC
+    if (!cachedEntry) {
+      const params = [workflowId, startTime, endExclusive];
+      const where = [];
+      let activeConversationIdClause = '';
+      if (conversationId) {
+        params.push(`%${conversationId}%`);
+        activeConversationIdClause = `AND m.conversation_id ILIKE $${params.length}`;
+        where.push(`candidate.conversation_id ILIKE $${params.length}`);
+      }
+      // 昵称只读取触发器的身份字段，并与列表显示使用同一个值。
+      const nicknameJoin = friendNick ? `JOIN LATERAL (
+        SELECT identity.friend_nick
+        FROM (
+          SELECT m.trigger_message_id
+          FROM public.conversation_messages m
+          WHERE m.workflow_id = candidate.workflow_id
+            AND m.conversation_id = candidate.conversation_id
+            AND m.deleted_at IS NULL
+          ORDER BY m.message_timestamp DESC NULLS LAST, m.id DESC
+          OFFSET 0
+        ) recent
+        JOIN LATERAL (
+          SELECT COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                          NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) AS friend_nick
+          FROM public.workflow_node_executions e
+          WHERE e.workflow_id = candidate.workflow_id
+            AND e.trigger_message_id = recent.trigger_message_id
+            AND e.deleted_at IS NULL
+            AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+            AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                         NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) IS NOT NULL
+          ORDER BY e.id DESC
+          LIMIT 1
+        ) identity ON TRUE
         LIMIT 1
-      ) identity ON TRUE
-      LIMIT 1
-    ) nickname ON TRUE` : '';
-    if (friendNick) {
-      // 用户输入的 % 和 _ 按昵称字符处理，避免被解释为 SQL 通配符。
-      params.push(`%${friendNick.replace(/[\\%_]/g, '\\$&')}%`);
-      where.push(`nickname.friend_nick ILIKE $${params.length}`);
-    }
-    if (keyword) {
-      params.push(`%${keyword}%`);
-      where.push(`EXISTS (
-        SELECT 1 FROM public.conversation_messages m
-        WHERE m.workflow_id = candidate.workflow_id
-          AND m.conversation_id = candidate.conversation_id
-          AND m.deleted_at IS NULL
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM public.workflow_node_executions e
-              WHERE e.workflow_id = m.workflow_id
-                AND e.trigger_message_id = m.trigger_message_id
-                AND e.deleted_at IS NULL
-                AND e.node_name = '灵犀触发器'
-                AND e.outputs::text ILIKE $${params.length}
-            )
-            OR (
-              UPPER(COALESCE(m.role, '')) = 'USER'
-              AND NOT EXISTS (
+      ) nickname ON TRUE` : '';
+      if (friendNick) {
+        // 用户输入的 % 和 _ 按昵称字符处理，避免被解释为 SQL 通配符。
+        params.push(`%${friendNick.replace(/[\\%_]/g, '\\$&')}%`);
+        where.push(`nickname.friend_nick ILIKE $${params.length}`);
+      }
+      if (keyword) {
+        params.push(`%${keyword}%`);
+        where.push(`EXISTS (
+          SELECT 1 FROM public.conversation_messages m
+          WHERE m.workflow_id = candidate.workflow_id
+            AND m.conversation_id = candidate.conversation_id
+            AND m.deleted_at IS NULL
+            AND (
+              EXISTS (
                 SELECT 1
                 FROM public.workflow_node_executions e
                 WHERE e.workflow_id = m.workflow_id
                   AND e.trigger_message_id = m.trigger_message_id
                   AND e.deleted_at IS NULL
                   AND e.node_name = '灵犀触发器'
+                  AND e.outputs::text ILIKE $${params.length}
               )
-              AND m.content ILIKE $${params.length}
-            )
-            OR (
-              UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
-              AND EXISTS (
-                SELECT 1
-                FROM public.workflow_node_executions send
-                WHERE send.workflow_id = m.workflow_id
-                  AND send.trigger_message_id = m.trigger_message_id
-                  AND send.deleted_at IS NULL
-                  AND send.node_type = 'lingxi_send'
-                  AND send.inputs::text ILIKE '%actionType%'
-                  AND send.inputs::text ILIKE '%actionContent%'
-                  AND send.inputs::text ILIKE '%6%'
+              OR (
+                UPPER(COALESCE(m.role, '')) = 'USER'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM public.workflow_node_executions e
+                  WHERE e.workflow_id = m.workflow_id
+                    AND e.trigger_message_id = m.trigger_message_id
+                    AND e.deleted_at IS NULL
+                    AND e.node_name = '灵犀触发器'
+                )
+                AND m.content ILIKE $${params.length}
               )
-              AND EXISTS (
-                SELECT 1
-                FROM public.workflow_node_executions e
-                WHERE e.workflow_id = m.workflow_id
-                  AND e.trigger_message_id = m.trigger_message_id
-                  AND e.deleted_at IS NULL
-                  AND (
-                    e.inputs::text ILIKE $${params.length}
-                    OR e.outputs::text ILIKE $${params.length}
-                  )
+              OR (
+                UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
+                AND EXISTS (
+                  SELECT 1
+                  FROM public.workflow_node_executions send
+                  WHERE send.workflow_id = m.workflow_id
+                    AND send.trigger_message_id = m.trigger_message_id
+                    AND send.deleted_at IS NULL
+                    AND send.node_type = 'lingxi_send'
+                    AND send.inputs::text ILIKE '%actionType%'
+                    AND send.inputs::text ILIKE '%actionContent%'
+                    AND send.inputs::text ILIKE '%6%'
+                )
+                AND EXISTS (
+                  SELECT 1
+                  FROM public.workflow_node_executions e
+                  WHERE e.workflow_id = m.workflow_id
+                    AND e.trigger_message_id = m.trigger_message_id
+                    AND e.deleted_at IS NULL
+                    AND (
+                      e.inputs::text ILIKE $${params.length}
+                      OR e.outputs::text ILIKE $${params.length}
+                    )
+                )
+              )
+              OR (
+                UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM public.workflow_node_executions send
+                  WHERE send.workflow_id = m.workflow_id
+                    AND send.trigger_message_id = m.trigger_message_id
+                    AND send.deleted_at IS NULL
+                    AND send.node_type = 'lingxi_send'
+                    AND send.inputs::text ILIKE '%actionType%'
+                    AND send.inputs::text ILIKE '%actionContent%'
+                    AND send.inputs::text ILIKE '%6%'
+                )
+                AND m.content ILIKE $${params.length}
+              )
+              OR (
+                UPPER(COALESCE(m.role, '')) NOT IN ('USER', 'ASSISTANT')
+                AND m.content ILIKE $${params.length}
               )
             )
-            OR (
-              UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
-              AND NOT EXISTS (
-                SELECT 1
-                FROM public.workflow_node_executions send
-                WHERE send.workflow_id = m.workflow_id
-                  AND send.trigger_message_id = m.trigger_message_id
-                  AND send.deleted_at IS NULL
-                  AND send.node_type = 'lingxi_send'
-                  AND send.inputs::text ILIKE '%actionType%'
-                  AND send.inputs::text ILIKE '%actionContent%'
-                  AND send.inputs::text ILIKE '%6%'
-              )
-              AND m.content ILIKE $${params.length}
+        )`);
+      }
+      if (hasError === 'true') {
+        where.push(`EXISTS (
+          SELECT 1
+          FROM public.conversation_messages m
+          JOIN public.workflow_node_executions e
+           ON e.workflow_id = m.workflow_id
+           AND e.trigger_message_id = m.trigger_message_id
+           AND e.deleted_at IS NULL
+          WHERE m.workflow_id = candidate.workflow_id
+            AND m.conversation_id = candidate.conversation_id
+            AND m.deleted_at IS NULL
+            AND (
+              COALESCE(e.error_message, '') <> ''
+              OR COALESCE(e.error_class, '') <> ''
+              OR COALESCE(e.error_code, '') <> ''
+              OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
             )
-            OR (
-              UPPER(COALESCE(m.role, '')) NOT IN ('USER', 'ASSISTANT')
-              AND m.content ILIKE $${params.length}
+        )`);
+      } else if (hasError === 'false') {
+        where.push(`NOT EXISTS (
+          SELECT 1
+          FROM public.conversation_messages m
+          JOIN public.workflow_node_executions e
+           ON e.workflow_id = m.workflow_id
+           AND e.trigger_message_id = m.trigger_message_id
+           AND e.deleted_at IS NULL
+          WHERE m.workflow_id = candidate.workflow_id
+            AND m.conversation_id = candidate.conversation_id
+            AND m.deleted_at IS NULL
+            AND (
+              COALESCE(e.error_message, '') <> ''
+              OR COALESCE(e.error_class, '') <> ''
+              OR COALESCE(e.error_code, '') <> ''
+              OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
             )
-          )
-      )`);
-    }
-    if (hasError === 'true') {
-      where.push(`EXISTS (
-        SELECT 1
-        FROM public.conversation_messages m
-        JOIN public.workflow_node_executions e
-         ON e.workflow_id = m.workflow_id
-         AND e.trigger_message_id = m.trigger_message_id
-         AND e.deleted_at IS NULL
-        WHERE m.workflow_id = candidate.workflow_id
-          AND m.conversation_id = candidate.conversation_id
-          AND m.deleted_at IS NULL
-          AND (
-            COALESCE(e.error_message, '') <> ''
-            OR COALESCE(e.error_class, '') <> ''
-            OR COALESCE(e.error_code, '') <> ''
-            OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
-          )
-      )`);
-    } else if (hasError === 'false') {
-      where.push(`NOT EXISTS (
-        SELECT 1
-        FROM public.conversation_messages m
-        JOIN public.workflow_node_executions e
-         ON e.workflow_id = m.workflow_id
-         AND e.trigger_message_id = m.trigger_message_id
-         AND e.deleted_at IS NULL
-        WHERE m.workflow_id = candidate.workflow_id
-          AND m.conversation_id = candidate.conversation_id
-          AND m.deleted_at IS NULL
-          AND (
-            COALESCE(e.error_message, '') <> ''
-            OR COALESCE(e.error_class, '') <> ''
-            OR COALESCE(e.error_code, '') <> ''
-            OR UPPER(COALESCE(e.status, '')) NOT IN ('SUCCESS', 'COMPLETED')
-          )
-      )`);
-    }
-    const pageParams = [...params, pageSize, (pageNo - 1) * pageSize];
-    // 日期表示期间有过消息；最近消息时间仅用于排序，不再决定会话是否入选。
-    const conversationSql = `WITH active_conversations AS MATERIALIZED (
-        SELECT DISTINCT m.workflow_id, m.conversation_id
-        FROM public.conversation_messages m
-        WHERE m.workflow_id = $1
-          AND m.deleted_at IS NULL
-          AND UPPER(COALESCE(m.role, '')) = 'USER'
-          AND m.message_timestamp >= $2 AND m.message_timestamp < $3
-      ), grouped AS MATERIALIZED (
-        SELECT c.workflow_id,
-               c.conversation_id,
-               COALESCE(
-                 MAX(m.message_timestamp) FILTER (WHERE UPPER(COALESCE(m.role, '')) = 'USER'),
-                 MAX(m.message_timestamp),
-                 MAX(c.last_message_at)
-               ) AS last_message_at
-        FROM public.conversations c
-        JOIN active_conversations active
-          ON active.workflow_id = c.workflow_id
-         AND active.conversation_id = c.conversation_id
-        LEFT JOIN public.conversation_messages m
-          ON m.workflow_id = c.workflow_id
-         AND m.conversation_id = c.conversation_id
-         AND m.deleted_at IS NULL
-        WHERE c.deleted_at IS NULL
-          AND c.workflow_id = $1
-        GROUP BY c.workflow_id, c.conversation_id
-      ), candidates AS MATERIALIZED (
-        SELECT *
-        FROM grouped
-      ), filtered AS MATERIALIZED (
-        SELECT candidate.*${friendNick ? ', nickname.friend_nick' : ''}
-        FROM candidates candidate
-        ${nicknameJoin}
-        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ), page AS (
-        SELECT filtered.*, COUNT(*) OVER() AS total_count
+        )`);
+      }
+      // 日期表示期间有过消息；最近消息时间仅用于排序，不再决定会话是否入选。
+      const conversationSql = `WITH active_conversations AS MATERIALIZED (
+          SELECT m.workflow_id,
+                 m.conversation_id,
+                 MAX(m.message_timestamp) AS window_last_user_at
+          FROM public.conversation_messages m
+          WHERE m.workflow_id = $1
+            AND m.deleted_at IS NULL
+            AND UPPER(COALESCE(m.role, '')) = 'USER'
+            AND m.message_timestamp >= $2 AND m.message_timestamp < $3
+            ${activeConversationIdClause}
+          GROUP BY m.workflow_id, m.conversation_id
+        ), candidates AS MATERIALIZED (
+          SELECT c.workflow_id,
+                 c.conversation_id,
+                 c.status,
+                 COALESCE(
+                   GREATEST(active.window_last_user_at, c.last_message_at),
+                   active.window_last_user_at,
+                   c.last_message_at
+                 ) AS last_message_at
+          FROM active_conversations active
+          JOIN public.conversations c
+            ON c.workflow_id = active.workflow_id
+           AND c.conversation_id = active.conversation_id
+           AND c.deleted_at IS NULL
+          WHERE c.workflow_id = $1
+        ), filtered AS (
+          SELECT candidate.*${friendNick ? ', nickname.friend_nick' : ''}
+          FROM candidates candidate
+          ${nicknameJoin}
+          ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+        )
+        SELECT workflow_id,
+               conversation_id,
+               status,
+               last_message_at${friendNick ? ', friend_nick' : ''}
         FROM filtered
-        ORDER BY last_message_at DESC NULLS LAST, workflow_id, conversation_id
-        LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}
-      )
-      SELECT c.workflow_id, c.conversation_id, c.status, page.last_message_at, page.total_count${friendNick ? ", page.friend_nick" : ""}
-      FROM public.conversations c
-      JOIN page
-        ON page.workflow_id = c.workflow_id
-       AND page.conversation_id = c.conversation_id
-      ORDER BY page.last_message_at DESC NULLS LAST, c.workflow_id, c.conversation_id`;
-    const conversations = (await client.query(conversationSql, pageParams)).rows;
+        ORDER BY last_message_at DESC NULLS LAST, workflow_id, conversation_id`;
+      const allCandidates = (await client.query(conversationSql, params)).rows;
+      cachedEntry = setDbConversationCandidateCache(cacheKey, allCandidates);
+    }
+
+    const total = cachedEntry.allCandidates.length;
+    const offset = (pageNo - 1) * pageSize;
+    const conversations = cachedEntry.allCandidates.slice(offset, offset + pageSize);
     const keys = conversations.map(item => [String(item.workflow_id), item.conversation_id]);
-    const total = Number(conversations[0]?.total_count || 0);
     if (!keys.length) return { items: [], total, pageNo, pageSize };
-    const workflowIds = keys.map(([id]) => id);
     const conversationIds = keys.map(([, id]) => id);
     const messages = (await client.query(`
-      WITH selected_conversations AS (
-        SELECT * FROM UNNEST($1::text[], $2::text[]) AS pair(workflow_id, conversation_id)
-      )
       SELECT m.id, m.workflow_id, m.conversation_id, m.role, m.content, m.content_type, m.message_timestamp, m.trigger_message_id
       FROM public.conversation_messages m
-      JOIN selected_conversations pair
-        ON m.workflow_id::text = pair.workflow_id
-       AND m.conversation_id = pair.conversation_id
-      WHERE m.deleted_at IS NULL
-      ORDER BY message_timestamp ASC NULLS LAST, id ASC
-    `, [workflowIds, conversationIds])).rows;
-    const triggerPairs = [...new Map(messages
-      .map(message => [dbWorkflowIdOf(message), dbTriggerIdOf(message)])
-      .filter(([, triggerId]) => Boolean(triggerId))
-      .map(([messageWorkflowId, triggerId]) => [`${messageWorkflowId}\n${triggerId}`, [messageWorkflowId, triggerId]]))
-      .values()];
-    const executions = triggerPairs.length ? (await client.query(`
-      WITH selected_triggers AS (
-        SELECT * FROM UNNEST($1::text[], $2::text[]) AS pair(workflow_id, trigger_message_id)
-      )
+      WHERE m.workflow_id = $1
+        AND m.conversation_id = ANY($2::text[])
+        AND m.deleted_at IS NULL
+      ORDER BY m.message_timestamp ASC NULLS LAST, m.id ASC
+    `, [workflowId, conversationIds])).rows;
+    const triggerIds = [...new Set(messages.map(dbTriggerIdOf).filter(Boolean))];
+    const executions = triggerIds.length ? (await client.query(`
       SELECT e.workflow_id,
              e.trigger_message_id,
              e.node_id,
              e.node_type,
              e.node_name,
-             CASE WHEN e.node_type = 'lingxi_send' OR e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-               THEN e.inputs ELSE NULL END AS inputs,
              CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-               THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'inputMessageList', e.outputs::jsonb -> 'inputMessageList', 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
-               WHEN e.node_type = 'agent'
-                 THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
-               WHEN e.node_type IN ('condition', 'set_variable')
-                 THEN e.outputs
+               THEN jsonb_build_object(
+                 'friendNick', e.inputs::jsonb -> 'friendNick',
+                 'input', e.inputs::jsonb -> 'input',
+                 'inputList', e.inputs::jsonb -> 'inputList',
+                 'inputMessageList', e.inputs::jsonb -> 'inputMessageList',
+                 'inputListMessageList', e.inputs::jsonb -> 'inputListMessageList'
+               )
+               ELSE NULL
+             END AS inputs,
+             CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
+               THEN jsonb_build_object(
+                 'input', e.outputs::jsonb -> 'input',
+                 'friendNick', e.outputs::jsonb -> 'friendNick',
+                 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime',
+                 'inputList', e.outputs::jsonb -> 'inputList',
+                 'inputMessageList', e.outputs::jsonb -> 'inputMessageList',
+                 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList',
+                 'conversationType', e.outputs::jsonb -> 'conversationType',
+                 'eventContent', e.outputs::jsonb -> 'eventContent'
+               )
                ELSE NULL
              END AS outputs,
              e.status,
@@ -3058,13 +3111,25 @@ async function listDbConversations(url) {
              e.error_class,
              e.error_code
       FROM public.workflow_node_executions e
-      JOIN selected_triggers pair
-        ON e.workflow_id::text = pair.workflow_id
-       AND e.trigger_message_id = pair.trigger_message_id
-      WHERE e.deleted_at IS NULL
-    `, [triggerPairs.map(([messageWorkflowId]) => messageWorkflowId), triggerPairs.map(([, triggerId]) => triggerId)])).rows : [];
+      WHERE e.workflow_id = $1
+        AND e.trigger_message_id = ANY($2::text[])
+        AND e.deleted_at IS NULL
+        AND (
+          e.node_type = 'lingxi_trigger'
+          OR e.node_name = '灵犀触发器'
+          OR COALESCE(BTRIM(e.error_message), '') <> ''
+          OR COALESCE(BTRIM(e.error_class), '') <> ''
+          OR COALESCE(BTRIM(e.error_code), '') <> ''
+          OR (
+            COALESCE(BTRIM(e.status), '') <> ''
+            AND UPPER(BTRIM(e.status)) NOT IN ('SUCCESS', 'COMPLETED')
+          )
+        )
+    `, [workflowId, triggerIds])).rows : [];
+    const items = buildDbConversationRows({ conversations, messages, executions });
+    cachedEntry.pageItems.set(pageCacheKey, items);
     return {
-      items: buildDbConversationRows({ conversations, messages, executions }),
+      items,
       total,
       pageNo,
       pageSize
@@ -3086,6 +3151,1264 @@ async function listDbWorkflows(url) {
       id: String(workflow.id || ''),
       name: String(workflow.name || '')
     }));
+  });
+}
+
+function dbRate(numerator, denominator) {
+  const num = Number(numerator || 0);
+  const den = Number(denominator || 0);
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return 0;
+  return Number(((num / den) * 100).toFixed(2));
+}
+
+function dbPercentile(sortedValues, percentile) {
+  if (!Array.isArray(sortedValues) || !sortedValues.length) return 0;
+  if (sortedValues.length === 1) return Math.round(sortedValues[0]);
+  const pos = (sortedValues.length - 1) * percentile;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  const next = sortedValues[base + 1] ?? sortedValues[base];
+  return Math.round(sortedValues[base] + rest * (next - sortedValues[base]));
+}
+
+function dbExtractMatchedBranches(outputValue, branchItems = [], defaultBranchLabel = '默认') {
+  const output = parseDbJson(outputValue, outputValue && typeof outputValue === 'object' ? outputValue : null) || {};
+  const matched = [];
+  const appendMatched = value => {
+    if (value === null || value === undefined || value === '' || value === 'null') return;
+    if (Array.isArray(value)) {
+      value.forEach(appendMatched);
+      return;
+    }
+    if (typeof value === 'object') {
+      appendMatched(value.id ?? value.branchId ?? value.label ?? value.name);
+      return;
+    }
+    const raw = String(value).trim();
+    if (!raw) return;
+    const branch = branchItems.find(item => item.id === raw || item.label === raw || (item.isDefault && raw === 'default'));
+    const key = branch ? branch.id : raw === 'default' ? 'default' : raw;
+    if (key && !matched.includes(key)) matched.push(key);
+  };
+  appendMatched(output.matchedBranchInfo);
+  appendMatched(output.matchedBranches);
+  appendMatched(output.matchedBranch);
+  return matched;
+}
+
+function aggregateRawWorkflowAnalyticsInput({ messages = [], executions = [] }) {
+  const activeMessages = messages.filter(item => String(item?.role || 'USER').toUpperCase() === 'USER');
+  const conversationIds = new Set(activeMessages.map(item => String(item.conversation_id ?? item.conversationId ?? '')).filter(Boolean));
+  const triggerToConversation = new Map();
+  activeMessages.forEach(item => {
+    const triggerId = dbTriggerIdOf(item);
+    const convId = String(item.conversation_id ?? item.conversationId ?? '');
+    if (triggerId && !triggerToConversation.has(triggerId)) {
+      triggerToConversation.set(triggerId, convId);
+    }
+  });
+  executions.forEach(item => {
+    const triggerId = dbTriggerIdOf(item);
+    const convId = String(item.conversation_id ?? item.conversationId ?? '');
+    if (triggerId && !triggerToConversation.has(triggerId)) {
+      triggerToConversation.set(triggerId, convId);
+    }
+    if (convId) conversationIds.add(convId);
+  });
+
+  const normalizedExecs = executions
+    .map((item, idx) => {
+      const triggerId = dbTriggerIdOf(item);
+      if (!triggerId || !triggerToConversation.has(triggerId)) return null;
+      const convId = String(item.conversation_id ?? item.conversationId ?? triggerToConversation.get(triggerId) ?? '');
+      const nodeId = String(item.node_id ?? item.nodeId ?? item.node_name ?? item.nodeName ?? 'unknown').trim() || 'unknown';
+      const nodeName = String(item.node_name ?? item.nodeName ?? nodeId).trim() || nodeId;
+      const nodeType = String(item.node_type ?? item.nodeType ?? 'unknown').trim() || 'unknown';
+      const status = String(item.status || '').trim();
+      const errorMessage = String(item.error_message ?? item.errorMessage ?? '').trim();
+      const errorClass = String(item.error_class ?? item.errorClass ?? '').trim();
+      const errorCode = String(item.error_code ?? item.errorCode ?? '').trim();
+      const isError = executionHasError(item);
+      const inputsText = typeof item.inputs === 'string' ? item.inputs : JSON.stringify(item.inputs || {});
+      const isReplySend = Boolean(item.is_reply_send ?? item.isReplySend) || (
+        nodeType === 'lingxi_send'
+        && /actionType/i.test(inputsText)
+        && /actionContent/i.test(inputsText)
+        && /6/.test(inputsText)
+      );
+      const durationMs = Math.max(0, Number(item.duration_ms ?? item.durationMs ?? 0) || 0);
+      const startedAt = item.started_at ?? item.startedAt ?? '';
+      const completedAt = item.completed_at ?? item.completedAt ?? '';
+      const startMs = startedAt ? Date.parse(String(startedAt).replace(' ', 'T')) : Number.NaN;
+      const endMs = completedAt
+        ? Date.parse(String(completedAt).replace(' ', 'T'))
+        : (Number.isFinite(startMs) ? startMs + durationMs : Number.NaN);
+      const executionId = String(item.id ?? item.execution_id ?? item.executionId ?? '').trim();
+      return {
+        idx,
+        executionId,
+        triggerId,
+        convId,
+        nodeId,
+        nodeName,
+        nodeType,
+        status,
+        errorMessage,
+        errorClass,
+        errorCode,
+        isError,
+        isReplySend,
+        durationMs,
+        startedAt,
+        completedAt,
+        startMs,
+        endMs,
+        outputs: item.outputs ?? item.condition_outputs ?? item.condition_output
+      };
+    })
+    .filter(Boolean);
+
+  const executedTriggers = new Set(normalizedExecs.map(e => e.triggerId));
+  const repliedTriggers = new Set(normalizedExecs.filter(e => e.isReplySend && !e.isError).map(e => e.triggerId));
+  const errorConversations = new Set(normalizedExecs.filter(e => e.isError && e.convId).map(e => e.convId));
+  const errorTriggers = new Set(normalizedExecs.filter(e => e.isError).map(e => e.triggerId));
+  const errorNodeExecutions = normalizedExecs.filter(e => e.isError).length;
+
+  const overview = {
+    total_conversations: conversationIds.size,
+    total_triggers: triggerToConversation.size,
+    executed_triggers: executedTriggers.size,
+    replied_triggers: repliedTriggers.size,
+    error_conversations: errorConversations.size,
+    error_triggers: errorTriggers.size,
+    total_node_executions: normalizedExecs.length,
+    error_node_executions: errorNodeExecutions
+  };
+
+  const byTrigger = new Map();
+  normalizedExecs.forEach(e => {
+    if (!byTrigger.has(e.triggerId)) byTrigger.set(e.triggerId, []);
+    byTrigger.get(e.triggerId).push(e);
+  });
+
+  const e2eSamples = [];
+  const replySamples = [];
+  byTrigger.forEach((items, triggerId) => {
+    const convId = items[0]?.convId || '';
+    const triggerStarts = items
+      .filter(i => i.nodeType === 'lingxi_trigger' || i.nodeName === '灵犀触发器')
+      .map(i => i.startMs)
+      .filter(Number.isFinite);
+    const allStarts = items.map(i => i.startMs).filter(Number.isFinite);
+    const minStart = triggerStarts.length ? Math.min(...triggerStarts) : (allStarts.length ? Math.min(...allStarts) : Number.NaN);
+    const allEnds = items.map(i => i.endMs).filter(Number.isFinite);
+    const maxEnd = allEnds.length ? Math.max(...allEnds) : Number.NaN;
+    const sumDuration = items.reduce((sum, i) => sum + i.durationMs, 0);
+    const e2eMs = Number.isFinite(minStart) && Number.isFinite(maxEnd) && maxEnd > minStart
+      ? Math.round(maxEnd - minStart)
+      : sumDuration;
+    e2eSamples.push({ triggerId, convId, ms: e2eMs });
+
+    const replyEnds = items.filter(i => i.isReplySend && !i.isError).map(i => i.endMs).filter(Number.isFinite);
+    if (items.some(i => i.isReplySend && !i.isError)) {
+      const maxReplyEnd = replyEnds.length ? Math.max(...replyEnds) : Number.NaN;
+      const replyMs = Number.isFinite(minStart) && Number.isFinite(maxReplyEnd) && maxReplyEnd >= minStart
+        ? Math.round(maxReplyEnd - minStart)
+        : sumDuration;
+      replySamples.push({ triggerId, convId, ms: replyMs });
+    }
+  });
+
+  const sortedE2e = [...e2eSamples].sort((a, b) => a.ms - b.ms);
+  const slowestE2e = [...e2eSamples].sort((a, b) => b.ms - a.ms)[0] || null;
+  const sortedReply = [...replySamples].sort((a, b) => a.ms - b.ms);
+  const slowestReply = [...replySamples].sort((a, b) => b.ms - a.ms)[0] || null;
+
+  const latency = {
+    e2e_count: e2eSamples.length,
+    e2e_avg_ms: e2eSamples.length ? Math.round(e2eSamples.reduce((s, i) => s + i.ms, 0) / e2eSamples.length) : 0,
+    e2e_p50_ms: dbPercentile(sortedE2e.map(i => i.ms), 0.5),
+    e2e_p95_ms: dbPercentile(sortedE2e.map(i => i.ms), 0.95),
+    e2e_max_ms: slowestE2e ? slowestE2e.ms : 0,
+    slowest_e2e_conversation_id: slowestE2e?.convId || '',
+    slowest_e2e_trigger_id: slowestE2e?.triggerId || '',
+    reply_count: replySamples.length,
+    reply_avg_ms: replySamples.length ? Math.round(replySamples.reduce((s, i) => s + i.ms, 0) / replySamples.length) : 0,
+    reply_p50_ms: dbPercentile(sortedReply.map(i => i.ms), 0.5),
+    reply_p95_ms: dbPercentile(sortedReply.map(i => i.ms), 0.95),
+    reply_max_ms: slowestReply ? slowestReply.ms : 0,
+    slowest_reply_conversation_id: slowestReply?.convId || '',
+    slowest_reply_trigger_id: slowestReply?.triggerId || ''
+  };
+
+  const byNode = new Map();
+  normalizedExecs.forEach(e => {
+    if (!byNode.has(e.nodeId)) byNode.set(e.nodeId, []);
+    byNode.get(e.nodeId).push(e);
+  });
+
+  const nodes = [...byNode.entries()].map(([nodeId, items]) => {
+    const latest = items.at(-1);
+    const durations = items.map(i => i.durationMs).sort((a, b) => a - b);
+    const slowest = [...items].sort((a, b) => b.durationMs - a.durationMs || b.idx - a.idx)[0];
+    return {
+      node_id: nodeId,
+      node_name: latest.nodeName,
+      node_type: latest.nodeType,
+      execution_count: items.length,
+      trigger_count: new Set(items.map(i => i.triggerId)).size,
+      conversation_count: new Set(items.map(i => i.convId).filter(Boolean)).size,
+      error_count: items.filter(i => i.isError).length,
+      avg_duration_ms: Math.round(durations.reduce((s, d) => s + d, 0) / durations.length),
+      p50_duration_ms: dbPercentile(durations, 0.5),
+      p95_duration_ms: dbPercentile(durations, 0.95),
+      max_duration_ms: slowest ? slowest.durationMs : 0,
+      slowest_conversation_id: slowest?.convId || '',
+      slowest_trigger_id: slowest?.triggerId || ''
+    };
+  });
+
+  const conditions = normalizedExecs
+    .filter(e => e.nodeType === 'condition')
+    .map(e => ({
+      node_id: e.nodeId,
+      node_name: e.nodeName,
+      condition_output: typeof e.outputs === 'string' ? e.outputs : JSON.stringify(e.outputs || {}),
+      execution_count: 1,
+      trigger_count: 1
+    }));
+
+  const errorMap = new Map();
+  normalizedExecs.filter(e => e.isError).forEach(e => {
+    const msg = e.errorMessage.slice(0, 300);
+    const key = `${e.nodeId}\n${e.status}\n${e.errorCode}\n${e.errorClass}\n${msg}`;
+    if (!errorMap.has(key)) {
+      errorMap.set(key, {
+        node_id: e.nodeId,
+        node_name: e.nodeName,
+        node_type: e.nodeType,
+        status: e.status,
+        error_code: e.errorCode,
+        error_class: e.errorClass,
+        error_message: msg,
+        items: []
+      });
+    }
+    errorMap.get(key).items.push(e);
+  });
+
+  const errors = [...errorMap.values()].map(group => {
+    const sortedItems = [...group.items].sort((a, b) => {
+      const aMs = Number.isFinite(a.endMs) ? a.endMs : (Number.isFinite(a.startMs) ? a.startMs : -Infinity);
+      const bMs = Number.isFinite(b.endMs) ? b.endMs : (Number.isFinite(b.startMs) ? b.startMs : -Infinity);
+      if (bMs !== aMs) return bMs - aMs;
+      return b.idx - a.idx;
+    });
+    const latest = sortedItems[0] || group.items.at(-1);
+    return {
+      node_id: group.node_id,
+      node_name: group.node_name,
+      node_type: group.node_type,
+      status: group.status,
+      error_code: group.error_code,
+      error_class: group.error_class,
+      error_message: group.error_message,
+      error_count: group.items.length,
+      trigger_count: new Set(group.items.map(i => i.triggerId)).size,
+      conversation_count: new Set(group.items.map(i => i.convId).filter(Boolean)).size,
+      last_occurred_at: latest?.completedAt || latest?.startedAt || '',
+      sample_conversation_id: latest?.convId || '',
+      sample_trigger_id: latest?.triggerId || '',
+      occurrences: sortedItems.map(item => ({
+        execution_id: item.executionId || '',
+        conversation_id: item.convId || '',
+        trigger_id: item.triggerId || '',
+        occurred_at: item.completedAt || item.startedAt || '',
+        duration_ms: item.durationMs || 0,
+        error_message: item.errorMessage.slice(0, 500)
+      }))
+    };
+  }).sort((a, b) => b.error_count - a.error_count);
+
+  return { overview, latency, nodes, conditions, errors };
+}
+
+function buildDbWorkflowAnalytics({
+  workflow = null,
+  startTime = '',
+  endTime = '',
+  overview = null,
+  latency = null,
+  nodes = null,
+  conditions = null,
+  errors = null,
+  messages = [],
+  executions = []
+} = {}) {
+  const aggregated = overview
+    ? { overview: overview || {}, latency: latency || {}, nodes: nodes || [], conditions: conditions || [], errors: errors || [] }
+    : aggregateRawWorkflowAnalyticsInput({ messages, executions });
+
+  const ov = aggregated.overview || {};
+  const lat = aggregated.latency || {};
+  const nodeRows = Array.isArray(aggregated.nodes) ? aggregated.nodes : [];
+  const conditionRows = Array.isArray(aggregated.conditions) ? aggregated.conditions : [];
+  const errorRows = Array.isArray(aggregated.errors) ? aggregated.errors : [];
+
+  const totalConversations = Number(ov.total_conversations || 0);
+  const totalUserMessages = Number(ov.total_triggers || 0);
+  const executedTriggers = Number(ov.executed_triggers || 0);
+  const totalTriggers = executedTriggers > 0 ? executedTriggers : totalUserMessages;
+  const repliedTriggers = Number(ov.replied_triggers || 0);
+  const noReplyTriggers = Math.max(0, executedTriggers - repliedTriggers);
+  const pendingTriggers = Math.max(0, totalUserMessages - executedTriggers);
+  const errorConversations = Number(ov.error_conversations || 0);
+  const errorTriggers = Number(ov.error_triggers || 0);
+  const totalNodeExecutions = Number(ov.total_node_executions || 0);
+  const errorNodeExecutions = Number(ov.error_node_executions || 0);
+
+  const workflowGraph = parseDbJson(workflow?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
+  const graphNodes = Array.isArray(workflowGraph.nodes) ? workflowGraph.nodes : [];
+  const graphEdges = Array.isArray(workflowGraph.edges) ? workflowGraph.edges : [];
+  const graphNodeById = new Map(graphNodes.map(node => [String(node.id || ''), node]));
+  const nodeStatsById = new Map(nodeRows.map(row => [String(row.node_id || ''), row]));
+
+  const resolveNodeMeta = (nodeId, fallbackName = '', fallbackType = '') => {
+    const graphNode = graphNodeById.get(String(nodeId || ''));
+    const statRow = nodeStatsById.get(String(nodeId || ''));
+    const nodeName = (graphNode ? dbGraphNodeLabel(graphNode) : '') || String(statRow?.node_name || fallbackName || nodeId || '未命名节点');
+    const nodeType = (graphNode ? dbGraphNodeType(graphNode) : '') || String(statRow?.node_type || fallbackType || 'unknown');
+    return {
+      nodeId: String(nodeId || ''),
+      nodeName,
+      nodeType,
+      inCurrentGraph: Boolean(graphNode),
+      graphNode
+    };
+  };
+
+  // 1. Latency & Slow Nodes
+  const latencyNodes = nodeRows.map(row => {
+    const meta = resolveNodeMeta(row.node_id, row.node_name, row.node_type);
+    const executionCount = Number(row.execution_count || 0);
+    const triggerCount = Number(row.trigger_count || 0);
+    const errorCount = Number(row.error_count || 0);
+    const avgDurationMs = Number(row.avg_duration_ms || 0);
+    const p50DurationMs = Number(row.p50_duration_ms || 0);
+    const p95DurationMs = Number(row.p95_duration_ms || 0);
+    const maxDurationMs = Number(row.max_duration_ms || 0);
+    return {
+      nodeId: meta.nodeId,
+      nodeName: meta.nodeName,
+      nodeType: meta.nodeType,
+      inCurrentGraph: meta.inCurrentGraph,
+      isHistorical: !meta.inCurrentGraph,
+      executionCount,
+      triggerCount,
+      triggerHitCount: triggerCount,
+      triggerHitRate: Math.min(100, dbRate(triggerCount, totalTriggers)),
+      conversationCount: Number(row.conversation_count || 0),
+      errorCount,
+      errorRate: dbRate(errorCount, executionCount),
+      avgMs: avgDurationMs,
+      p50Ms: p50DurationMs,
+      p95Ms: p95DurationMs,
+      maxMs: maxDurationMs,
+      avgDurationMs,
+      p50DurationMs,
+      p95DurationMs,
+      maxDurationMs,
+      slowestSample: row.slowest_trigger_id ? {
+        conversationId: String(row.slowest_conversation_id || ''),
+        triggerMessageId: String(row.slowest_trigger_id || ''),
+        durationMs: maxDurationMs
+      } : null
+    };
+  }).sort((a, b) => b.p95DurationMs - a.p95DurationMs || b.avgDurationMs - a.avgDurationMs || b.maxDurationMs - a.maxDurationMs || b.executionCount - a.executionCount);
+
+  // 2. All Nodes Hit Stats (graph nodes + historical executed nodes)
+  const allNodeIds = [
+    ...graphNodes.map(node => String(node.id || '')).filter(Boolean),
+    ...nodeRows.map(row => String(row.node_id || '')).filter(nodeId => nodeId && !graphNodeById.has(nodeId))
+  ];
+  const allNodes = allNodeIds.map(nodeId => {
+    const meta = resolveNodeMeta(nodeId);
+    const row = nodeStatsById.get(nodeId);
+    const executionCount = Number(row?.execution_count || 0);
+    const triggerCount = Number(row?.trigger_count || 0);
+    const conversationCount = Number(row?.conversation_count || 0);
+    const errorCount = Number(row?.error_count || 0);
+    const successCount = Math.max(0, executionCount - errorCount);
+    return {
+      nodeId,
+      nodeName: meta.nodeName,
+      nodeType: meta.nodeType,
+      inCurrentGraph: meta.inCurrentGraph,
+      isHistorical: !meta.inCurrentGraph,
+      executionCount,
+      triggerCount,
+      triggerHitCount: triggerCount,
+      conversationCount,
+      triggerHitRate: Math.min(100, dbRate(triggerCount, totalTriggers)),
+      successCount,
+      errorCount,
+      errorRate: dbRate(errorCount, executionCount),
+      successRate: executionCount > 0 ? dbRate(successCount, executionCount) : 100,
+      avgDurationMs: Number(row?.avg_duration_ms || 0),
+      p95DurationMs: Number(row?.p95_duration_ms || 0),
+      maxDurationMs: Number(row?.max_duration_ms || 0)
+    };
+  }).sort((a, b) => b.triggerCount - a.triggerCount || b.executionCount - a.executionCount || Number(b.inCurrentGraph) - Number(a.inCurrentGraph));
+
+  // 3. Condition Nodes Branch Distribution
+  const conditionNodeIds = [...new Set([
+    ...graphNodes.filter(node => dbGraphNodeType(node) === 'condition').map(node => String(node.id || '')),
+    ...nodeRows.filter(row => String(row.node_type || '') === 'condition').map(row => String(row.node_id || '')),
+    ...conditionRows.map(row => String(row.node_id || ''))
+  ].filter(Boolean))];
+
+  const conditionNodes = conditionNodeIds.map(nodeId => {
+    const meta = resolveNodeMeta(nodeId);
+    const statRow = nodeStatsById.get(nodeId);
+    const config = meta.graphNode?.data?.config || {};
+    const configBranches = Array.isArray(config.branches) ? config.branches : [];
+    const elseBranchObj = config.elseBranch && typeof config.elseBranch === 'object' ? config.elseBranch : null;
+    const defaultId = String(elseBranchObj?.id || 'default').trim() || 'default';
+    const defaultLabel = String(elseBranchObj?.label || elseBranchObj?.name || config.defaultBranch || '默认').trim() || '默认';
+    const branchItems = configBranches
+      .map((branch, idx) => ({
+        id: String(branch?.id || branch?.label || branch?.name || `branch_${idx}`).trim(),
+        label: String(branch?.label || branch?.name || branch?.id || `分支 ${idx + 1}`).trim(),
+        branchIndex: idx,
+        isDefault: false,
+        isHistorical: false
+      }))
+      .filter(item => item.id && item.label);
+    if (!branchItems.some(item => item.id === defaultId || item.id === 'default' || item.label === defaultLabel)) {
+      branchItems.push({ id: defaultId, label: defaultLabel, branchIndex: branchItems.length, isDefault: true, isHistorical: false });
+    }
+
+    const outgoingEdges = graphEdges.filter(edge => String(edge?.source || '') === nodeId);
+    const claimedEdgeSet = new Set();
+    const resolveBranchTargets = branchItem => {
+      const idx = branchItem.branchIndex;
+      const indexHandles = Number.isInteger(idx)
+        ? [String(idx), `branch_${idx}`, `branch-${idx}`, `case_${idx}`, `case-${idx}`, `handle_${idx}`, `handle-${idx}`]
+        : [];
+      const matchedEdges = outgoingEdges.filter(edge => {
+        if (claimedEdgeSet.has(edge)) return false;
+        const sourceHandle = String(edge?.sourceHandle || '').trim();
+        const edgeLabel = String(edge?.label || '').trim();
+        if (!sourceHandle && !edgeLabel) return false;
+        if (
+          sourceHandle === branchItem.id
+          || sourceHandle === branchItem.label
+          || edgeLabel === branchItem.id
+          || edgeLabel === branchItem.label
+          || (!branchItem.isDefault && indexHandles.includes(sourceHandle))
+        ) {
+          claimedEdgeSet.add(edge);
+          return true;
+        }
+        if (
+          branchItem.isDefault
+          && ['default', 'else', 'otherwise', 'fallback', '默认', '其他', '否则', defaultId, defaultLabel].some(
+            k => k && (sourceHandle === k || edgeLabel === k)
+          )
+        ) {
+          claimedEdgeSet.add(edge);
+          return true;
+        }
+        return false;
+      });
+      const seenTargets = new Set();
+      return matchedEdges.map(edge => {
+        const targetId = String(edge.target || '');
+        if (!targetId || seenTargets.has(targetId)) return null;
+        seenTargets.add(targetId);
+        const targetMeta = resolveNodeMeta(targetId);
+        return {
+          nodeId: targetId,
+          nodeName: targetMeta.nodeName,
+          nodeType: targetMeta.nodeType
+        };
+      }).filter(Boolean);
+    };
+
+    const hitCountByBranchId = new Map(branchItems.map(item => [item.id, 0]));
+    const rowsForCondition = conditionRows.filter(row => String(row.node_id || '') === nodeId);
+    let unmatchedCount = 0;
+
+    rowsForCondition.forEach(row => {
+      const count = Number(row.execution_count || 0);
+      if (count <= 0) return;
+      const matchedKeys = dbExtractMatchedBranches(row.condition_output, branchItems, defaultLabel);
+      if (!matchedKeys.length) {
+        unmatchedCount += count;
+        return;
+      }
+      matchedKeys.forEach(key => {
+        let branch = branchItems.find(item => item.id === key || item.label === key || (item.isDefault && (key === 'default' || key === 'else')));
+        if (!branch) {
+          branch = { id: key, label: key, isDefault: key === 'default' || key === 'else', isHistorical: true };
+          branchItems.push(branch);
+          hitCountByBranchId.set(branch.id, 0);
+        }
+        hitCountByBranchId.set(branch.id, (hitCountByBranchId.get(branch.id) || 0) + count);
+      });
+    });
+
+    const executionCount = Number(statRow?.execution_count || rowsForCondition.reduce((s, r) => s + Number(r.execution_count || 0), 0));
+    const triggerCount = Number(statRow?.trigger_count || executionCount);
+
+    const branches = branchItems.map(item => {
+      const hitCount = hitCountByBranchId.get(item.id) || 0;
+      const targetNodes = resolveBranchTargets(item);
+      return {
+        id: item.id,
+        branchKey: item.id,
+        label: item.label,
+        branchName: item.label,
+        isDefault: item.isDefault,
+        isHistorical: item.isHistorical,
+        targetNodes,
+        targetNodeName: targetNodes.map(t => t.nodeName).join('、'),
+        hitCount,
+        branchRate: dbRate(hitCount, executionCount),
+        workflowRate: Math.min(100, dbRate(hitCount, totalTriggers))
+      };
+    });
+
+    const unclaimedEdges = outgoingEdges.filter(edge => !claimedEdgeSet.has(edge));
+    if (unclaimedEdges.length && branches.length) {
+      const emptyBranches = branches.filter(b => !b.targetNodes.length);
+      const fallbackBranch = [...branches].sort((a, b) => (b.hitCount - a.hitCount) || (Number(a.isDefault) - Number(b.isDefault)))[0];
+      unclaimedEdges.forEach((edge, idx) => {
+        const targetId = String(edge.target || '').trim();
+        if (!targetId) return;
+        const targetBranch = emptyBranches[idx] || fallbackBranch;
+        if (targetBranch.targetNodes.some(t => t.nodeId === targetId)) return;
+        const targetMeta = resolveNodeMeta(targetId);
+        targetBranch.targetNodes.push({
+          nodeId: targetId,
+          nodeName: targetMeta.nodeName,
+          nodeType: targetMeta.nodeType
+        });
+        targetBranch.targetNodeName = targetBranch.targetNodes.map(t => t.nodeName).join('、');
+      });
+    }
+
+    if (unmatchedCount > 0) {
+      branches.push({
+        id: '__unmatched__',
+        branchKey: '__unmatched__',
+        label: '未记录/异常未命中',
+        branchName: '未记录/异常未命中',
+        isDefault: false,
+        isHistorical: false,
+        targetNodes: [],
+        targetNodeName: '',
+        hitCount: unmatchedCount,
+        branchRate: dbRate(unmatchedCount, executionCount),
+        workflowRate: Math.min(100, dbRate(unmatchedCount, totalTriggers))
+      });
+    }
+
+    return {
+      nodeId,
+      nodeName: meta.nodeName,
+      inCurrentGraph: meta.inCurrentGraph,
+      isHistorical: !meta.inCurrentGraph,
+      position: {
+        x: Number(meta.graphNode?.position?.x || 0),
+        y: Number(meta.graphNode?.position?.y || 0)
+      },
+      executionCount,
+      triggerCount,
+      triggerHitRate: Math.min(100, dbRate(triggerCount, totalTriggers)),
+      branches
+    };
+  });
+
+  const allNodesById = new Map(allNodes.map(item => [item.nodeId, item]));
+  const flowGraph = {
+    nodes: graphNodes.map(node => {
+      const nodeId = String(node?.id || '').trim();
+      if (!nodeId) return null;
+      const meta = resolveNodeMeta(nodeId);
+      const stat = allNodesById.get(nodeId);
+      return {
+        nodeId,
+        nodeName: meta.nodeName,
+        nodeType: meta.nodeType,
+        position: {
+          x: Number(node?.position?.x || 0),
+          y: Number(node?.position?.y || 0)
+        },
+        executionCount: stat?.executionCount || 0,
+        triggerCount: stat?.triggerCount || 0,
+        triggerHitCount: stat?.triggerHitCount || 0,
+        triggerHitRate: stat?.triggerHitRate || 0,
+        errorCount: stat?.errorCount || 0
+      };
+    }).filter(Boolean),
+    edges: graphEdges.map((edge, idx) => {
+      const source = String(edge?.source || '').trim();
+      const target = String(edge?.target || '').trim();
+      if (!source || !target) return null;
+      return {
+        id: String(edge?.id || `edge-${idx}-${source}-${target}`),
+        source,
+        target,
+        sourceHandle: String(edge?.sourceHandle || '').trim(),
+        label: String(edge?.label || '').trim()
+      };
+    }).filter(Boolean)
+  };
+
+  // Enrich conditionNodes with topological level, upstreamSources, and per-branch downstreamConditions
+  const conditionNodeSet = new Set(conditionNodes.map(c => c.nodeId));
+  const outgoingEdgesBySource = new Map();
+  flowGraph.edges.forEach(edge => {
+    if (!outgoingEdgesBySource.has(edge.source)) outgoingEdgesBySource.set(edge.source, []);
+    outgoingEdgesBySource.get(edge.source).push(edge);
+  });
+
+  const traceDownstreamFromTargets = startTargets => {
+    const downstreamConditions = [];
+    const seenConditionIds = new Set();
+    const visited = new Set();
+    const queue = [];
+    const terminalNodeTypes = new Set();
+    const allViaNodes = [];
+    const seenViaIds = new Set();
+
+    (startTargets || []).forEach(target => {
+      const targetId = String(target?.nodeId || '').trim();
+      if (!targetId) return;
+      if (conditionNodeSet.has(targetId)) {
+        if (!seenConditionIds.has(targetId)) {
+          seenConditionIds.add(targetId);
+          const condMeta = resolveNodeMeta(targetId);
+          downstreamConditions.push({
+            nodeId: targetId,
+            nodeName: condMeta.nodeName,
+            viaCount: 0,
+            viaNodes: []
+          });
+        }
+      } else if (!visited.has(targetId)) {
+        visited.add(targetId);
+        const meta = resolveNodeMeta(targetId, target.nodeName, target.nodeType);
+        const viaItem = { nodeId: meta.nodeId, nodeName: meta.nodeName, nodeType: meta.nodeType };
+        queue.push({ currentId: targetId, viaNodes: [viaItem] });
+      }
+    });
+
+    while (queue.length > 0) {
+      const { currentId, viaNodes } = queue.shift();
+      viaNodes.forEach(v => {
+        if (!seenViaIds.has(v.nodeId)) {
+          seenViaIds.add(v.nodeId);
+          allViaNodes.push(v);
+        }
+      });
+      const nextEdges = outgoingEdgesBySource.get(currentId) || [];
+      if (!nextEdges.length) {
+        const lastMeta = resolveNodeMeta(currentId);
+        terminalNodeTypes.add(lastMeta.nodeType);
+      }
+      nextEdges.forEach(edge => {
+        const nextId = edge.target;
+        if (!nextId) return;
+        if (conditionNodeSet.has(nextId)) {
+          if (!seenConditionIds.has(nextId)) {
+            seenConditionIds.add(nextId);
+            const condMeta = resolveNodeMeta(nextId);
+            downstreamConditions.push({
+              nodeId: nextId,
+              nodeName: condMeta.nodeName,
+              viaCount: viaNodes.length,
+              viaNodes
+            });
+          }
+        } else if (!visited.has(nextId)) {
+          visited.add(nextId);
+          const nextMeta = resolveNodeMeta(nextId);
+          if (nextMeta.nodeType === 'lingxi_send' || nextMeta.nodeType === 'output') {
+            terminalNodeTypes.add(nextMeta.nodeType);
+          }
+          queue.push({
+            currentId: nextId,
+            viaNodes: [...viaNodes, { nodeId: nextMeta.nodeId, nodeName: nextMeta.nodeName, nodeType: nextMeta.nodeType }]
+          });
+        }
+      });
+    }
+
+    return {
+      downstreamConditions,
+      hasReplySend: terminalNodeTypes.has('lingxi_send') || allViaNodes.some(v => v.nodeType === 'lingxi_send'),
+      viaCount: allViaNodes.length,
+      viaNodes: allViaNodes
+    };
+  };
+
+  const upstreamByConditionId = new Map(conditionNodes.map(c => [c.nodeId, []]));
+  const triggerFlowNodes = flowGraph.nodes.filter(n => n.nodeType === 'lingxi_trigger');
+  triggerFlowNodes.forEach(trig => {
+    const directTargets = (outgoingEdgesBySource.get(trig.nodeId) || []).map(e => resolveNodeMeta(e.target));
+    const traced = traceDownstreamFromTargets(directTargets);
+    traced.downstreamConditions.forEach(dc => {
+      upstreamByConditionId.get(dc.nodeId)?.push({
+        sourceType: 'trigger',
+        nodeId: trig.nodeId,
+        nodeName: trig.nodeName,
+        branchKey: '',
+        branchName: '',
+        hitCount: trig.triggerHitCount || trig.executionCount || 0,
+        viaCount: dc.viaCount,
+        viaNodes: dc.viaNodes
+      });
+    });
+  });
+
+  conditionNodes.forEach(condNode => {
+    condNode.branches.forEach(branch => {
+      const traced = traceDownstreamFromTargets(branch.targetNodes);
+      branch.downstreamConditions = traced.downstreamConditions;
+      branch.hasReplySend = traced.hasReplySend;
+      branch.viaCount = traced.viaCount;
+      branch.viaNodes = traced.viaNodes;
+      traced.downstreamConditions.forEach(dc => {
+        if (dc.nodeId === condNode.nodeId) return;
+        upstreamByConditionId.get(dc.nodeId)?.push({
+          sourceType: 'condition',
+          nodeId: condNode.nodeId,
+          nodeName: condNode.nodeName,
+          branchKey: branch.branchKey,
+          branchName: branch.branchName,
+          hitCount: branch.hitCount,
+          branchRate: branch.branchRate,
+          viaCount: dc.viaCount,
+          viaNodes: dc.viaNodes
+        });
+      });
+    });
+  });
+
+  const distFromTrigger = new Map();
+  const bfsQueue = [];
+  triggerFlowNodes.forEach(trig => {
+    distFromTrigger.set(trig.nodeId, 0);
+    bfsQueue.push(trig.nodeId);
+  });
+  while (bfsQueue.length > 0) {
+    const curr = bfsQueue.shift();
+    const d = distFromTrigger.get(curr) || 0;
+    (outgoingEdgesBySource.get(curr) || []).forEach(edge => {
+      if (edge.target && !distFromTrigger.has(edge.target)) {
+        distFromTrigger.set(edge.target, d + 1);
+        bfsQueue.push(edge.target);
+      }
+    });
+  }
+
+  const condById = new Map(conditionNodes.map(c => [c.nodeId, c]));
+  const condOutMap = new Map(conditionNodes.map(c => [c.nodeId, new Set()]));
+  conditionNodes.forEach(c => {
+    (upstreamByConditionId.get(c.nodeId) || []).forEach(u => {
+      if (u.sourceType === 'condition' && u.nodeId !== c.nodeId && condOutMap.has(u.nodeId)) {
+        condOutMap.get(u.nodeId).add(c.nodeId);
+      }
+    });
+  });
+
+  const canReachCond = (fromId, targetId) => {
+    const visited = new Set([fromId]);
+    const q = [fromId];
+    while (q.length > 0) {
+      const curr = q.shift();
+      const nexts = condOutMap.get(curr);
+      if (!nexts) continue;
+      for (const nxt of nexts) {
+        if (nxt === targetId) return true;
+        if (!visited.has(nxt)) {
+          visited.add(nxt);
+          q.push(nxt);
+        }
+      }
+    }
+    return false;
+  };
+
+  const isPriorCondition = (aId, bId) => {
+    const da = distFromTrigger.has(aId) ? distFromTrigger.get(aId) : Number.MAX_SAFE_INTEGER;
+    const db = distFromTrigger.has(bId) ? distFromTrigger.get(bId) : Number.MAX_SAFE_INTEGER;
+    if (da !== db) return da < db;
+    const ca = condById.get(aId);
+    const cb = condById.get(bId);
+    const xa = Number(ca?.position?.x || 0);
+    const xb = Number(cb?.position?.x || 0);
+    if (Math.abs(xa - xb) > 10) return xa < xb;
+    const ta = Number(ca?.triggerCount || ca?.executionCount || 0);
+    const tb = Number(cb?.triggerCount || cb?.executionCount || 0);
+    if (ta !== tb) return ta > tb;
+    return String(aId).localeCompare(String(bId)) < 0;
+  };
+
+  const forwardEdges = [];
+  condOutMap.forEach((targets, uId) => {
+    targets.forEach(vId => {
+      const inCycle = canReachCond(vId, uId);
+      if (inCycle && isPriorCondition(vId, uId)) return;
+      forwardEdges.push([uId, vId]);
+    });
+  });
+
+  const relaxForwardLevels = lvlMap => {
+    for (let pass = 0; pass < conditionNodes.length; pass++) {
+      let changed = false;
+      forwardEdges.forEach(([uId, vId]) => {
+        const uLvl = lvlMap.get(uId) || 1;
+        const vLvl = lvlMap.get(vId) || 1;
+        if (vLvl < uLvl + 1) {
+          lvlMap.set(vId, uLvl + 1);
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
+  };
+
+  const conditionLevelMap = new Map(conditionNodes.map(c => [c.nodeId, 1]));
+  relaxForwardLevels(conditionLevelMap);
+
+  const hasIncomingCond = new Set(forwardEdges.map(([, vId]) => vId));
+  const hasIncomingTrig = new Set();
+  conditionNodes.forEach(c => {
+    if ((upstreamByConditionId.get(c.nodeId) || []).some(u => u.sourceType === 'trigger')) {
+      hasIncomingTrig.add(c.nodeId);
+    }
+  });
+
+  const orderedCondIds = conditionNodes.map(c => c.nodeId).sort((a, b) => (isPriorCondition(a, b) ? -1 : 1));
+  if (!hasIncomingTrig.size && orderedCondIds.length > 0) {
+    hasIncomingTrig.add(orderedCondIds[0]);
+  }
+
+  orderedCondIds.forEach(nodeId => {
+    if (hasIncomingCond.has(nodeId) || hasIncomingTrig.has(nodeId)) return;
+    const cond = condById.get(nodeId);
+    const posX = Number(cond?.position?.x || 0);
+    const hits = Number(cond?.triggerCount || cond?.executionCount || 0);
+    let baseLevel = hasIncomingTrig.size > 0 ? 2 : 1;
+    orderedCondIds.forEach(otherId => {
+      if (otherId === nodeId) return;
+      const otherCond = condById.get(otherId);
+      const otherLvl = conditionLevelMap.get(otherId) || 1;
+      const otherX = Number(otherCond?.position?.x || 0);
+      const otherHits = Number(otherCond?.triggerCount || otherCond?.executionCount || 0);
+      if (flowGraph.edges.length > 0 && cond?.inCurrentGraph !== false && otherCond?.inCurrentGraph !== false && posX > 0 && otherX > 0) {
+        if (otherX + 60 < posX) {
+          baseLevel = Math.max(baseLevel, otherLvl + 1);
+        }
+      } else if (otherHits > hits) {
+        baseLevel = Math.max(baseLevel, otherLvl + 1);
+      }
+    });
+    if ((conditionLevelMap.get(nodeId) || 1) < baseLevel) {
+      conditionLevelMap.set(nodeId, baseLevel);
+      relaxForwardLevels(conditionLevelMap);
+    }
+  });
+
+  conditionNodes.forEach(c => {
+    c.level = conditionLevelMap.get(c.nodeId) || 1;
+    c.upstreamSources = upstreamByConditionId.get(c.nodeId) || [];
+  });
+  conditionNodes.sort((a, b) => (a.level - b.level) || (Number(b.inCurrentGraph) - Number(a.inCurrentGraph)) || ((a.position?.x || 0) - (b.position?.x || 0)) || (b.executionCount - a.executionCount));
+
+  // 4. Error Aggregation Top N
+  const errorsList = errorRows.map((row, index) => {
+    const meta = resolveNodeMeta(row.node_id, row.node_name, row.node_type);
+    const errorCount = Number(row.error_count || 0);
+    const errorCode = String(row.error_code || '').trim();
+    const errorClass = String(row.error_class || '').trim();
+    const status = String(row.status || 'FAILED').trim();
+    const errorMessage = String(row.error_message || '').trim();
+    const triggerCount = Number(row.trigger_count || 0);
+    const conversationCount = Number(row.conversation_count || 0);
+    const sampleConversationId = String(row.sample_conversation_id || '');
+    const sampleTriggerMessageId = String(row.sample_trigger_id || '');
+    const lastOccurredAt = formatDbDisplayDateTimeLoose(row.last_occurred_at);
+    const rawOccurrences = Array.isArray(row.occurrences) ? row.occurrences : [];
+    const occurrences = rawOccurrences.length
+      ? rawOccurrences.map((occ, occIndex) => ({
+          key: `${occ.execution_id || occIndex}:${occ.conversation_id || ''}:${occ.trigger_id || ''}:${occIndex}`,
+          executionId: String(occ.execution_id ?? occ.executionId ?? ''),
+          conversationId: String(occ.conversation_id ?? occ.conversationId ?? ''),
+          triggerMessageId: String(occ.trigger_id ?? occ.triggerMessageId ?? ''),
+          occurredAt: formatDbDisplayDateTimeLoose(occ.occurred_at ?? occ.occurredAt),
+          durationMs: Math.max(0, Number(occ.duration_ms ?? occ.durationMs ?? 0) || 0),
+          errorMessage: String(occ.error_message ?? occ.errorMessage ?? errorMessage).trim()
+        }))
+      : (sampleConversationId
+          ? [{
+              key: `sample:${sampleConversationId}:${sampleTriggerMessageId}:0`,
+              executionId: '',
+              conversationId: sampleConversationId,
+              triggerMessageId: sampleTriggerMessageId,
+              occurredAt: lastOccurredAt,
+              durationMs: 0,
+              errorMessage
+            }]
+          : []);
+    return {
+      key: `${meta.nodeId}:${status}:${errorCode}:${errorClass}:${index}`,
+      nodeId: meta.nodeId,
+      nodeName: meta.nodeName,
+      nodeType: meta.nodeType,
+      inCurrentGraph: meta.inCurrentGraph,
+      isHistorical: !meta.inCurrentGraph,
+      status,
+      errorCode,
+      errorClass,
+      errorMessage,
+      errorSummary: errorMessage || errorClass || errorCode || status || '执行异常',
+      errorCount,
+      errorShareRate: dbRate(errorCount, errorNodeExecutions),
+      triggerCount,
+      affectedTriggers: triggerCount,
+      conversationCount,
+      affectedConversations: conversationCount,
+      lastOccurredAt,
+      sampleConversationId,
+      sampleTriggerMessageId,
+      occurrences
+    };
+  });
+
+  const e2eMaxMs = Number(lat.e2e_max_ms || 0);
+  const replyMaxMs = Number(lat.reply_max_ms || 0);
+
+  return {
+    workflow: workflow ? {
+      id: String(workflow.id || workflow.workflow_id || ''),
+      name: String(workflow.name || ''),
+      status: workflow.status ?? '',
+      publishVersion: workflow.publish_version ?? ''
+    } : null,
+    timeRange: {
+      startTime: String(startTime || ''),
+      endTime: String(endTime || '')
+    },
+    overview: {
+      totalConversations,
+      totalTriggers,
+      totalUserMessages,
+      executedTriggers,
+      repliedTriggers,
+      replyTriggerRate: dbRate(repliedTriggers, totalTriggers),
+      noReplyTriggers,
+      pendingTriggers,
+      errorConversations,
+      conversationErrorRate: dbRate(errorConversations, totalConversations),
+      errorTriggers,
+      triggerErrorRate: dbRate(errorTriggers, totalTriggers),
+      totalNodeExecutions,
+      errorNodeExecutions,
+      nodeErrorRate: dbRate(errorNodeExecutions, totalNodeExecutions)
+    },
+    latency: {
+      endToEnd: {
+        count: Number(lat.e2e_count || 0),
+        avgMs: Number(lat.e2e_avg_ms || 0),
+        p50Ms: Number(lat.e2e_p50_ms || 0),
+        p95Ms: Number(lat.e2e_p95_ms || 0),
+        maxMs: e2eMaxMs,
+        slowestSample: lat.slowest_e2e_trigger_id ? {
+          conversationId: String(lat.slowest_e2e_conversation_id || ''),
+          triggerMessageId: String(lat.slowest_e2e_trigger_id || ''),
+          durationMs: e2eMaxMs
+        } : null
+      },
+      reply: {
+        count: Number(lat.reply_count || 0),
+        avgMs: Number(lat.reply_avg_ms || 0),
+        p50Ms: Number(lat.reply_p50_ms || 0),
+        p95Ms: Number(lat.reply_p95_ms || 0),
+        maxMs: replyMaxMs,
+        slowestSample: lat.slowest_reply_trigger_id ? {
+          conversationId: String(lat.slowest_reply_conversation_id || ''),
+          triggerMessageId: String(lat.slowest_reply_trigger_id || ''),
+          durationMs: replyMaxMs
+        } : null
+      },
+      nodes: latencyNodes
+    },
+    branches: {
+      flowGraph,
+      conditionNodes,
+      allNodes
+    },
+    errors: {
+      totalErrorExecutions: errorNodeExecutions,
+      items: errorsList
+    }
+  };
+}
+
+async function queryDbWorkflowAnalytics(url) {
+  const configId = url.searchParams.get('configId') || '';
+  const workflowId = String(url.searchParams.get('workflowId') || '').trim();
+  if (!workflowId) {
+    const err = new Error('工作流ID为必填项');
+    err.statusCode = 400;
+    throw err;
+  }
+  const startTime = dbDateParam(url.searchParams.get('startTime'));
+  const endTime = dbDateParam(url.searchParams.get('endTime'), true);
+  if (!startTime || !endTime) {
+    const err = new Error('学员消息时间为必填项');
+    err.statusCode = 400;
+    throw err;
+  }
+  const startDay = dbDateRangeTimestamp(startTime);
+  const endDay = dbDateRangeTimestamp(endTime);
+  if (!Number.isFinite(startDay) || !Number.isFinite(endDay) || endDay < startDay) {
+    const err = new Error('学员消息时间无效');
+    err.statusCode = 400;
+    throw err;
+  }
+  if ((endDay + 1000 - startDay) / 86400000 > 15) {
+    const err = new Error('学员消息时间最多15天');
+    err.statusCode = 400;
+    throw err;
+  }
+  return withDbClient(configId, async client => {
+    const endExclusive = new Date(endDay + 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const workflowResult = await client.query(
+      'SELECT id, name, status, publish_version, graph_json FROM public.workflow WHERE id = $1 AND deleted_at IS NULL LIMIT 1',
+      [workflowId]
+    );
+    const analyticsSql = `
+      WITH active_messages AS MATERIALIZED (
+        SELECT m.conversation_id,
+               NULLIF(BTRIM(m.trigger_message_id), '') AS trigger_message_id,
+               m.message_timestamp
+        FROM public.conversation_messages m
+        WHERE m.workflow_id = $1
+          AND m.deleted_at IS NULL
+          AND UPPER(COALESCE(m.role, '')) = 'USER'
+          AND m.message_timestamp >= $2
+          AND m.message_timestamp < $3
+      ),
+      active_triggers AS MATERIALIZED (
+        SELECT DISTINCT ON (trigger_message_id)
+               trigger_message_id,
+               conversation_id,
+               message_timestamp
+        FROM active_messages
+        WHERE trigger_message_id IS NOT NULL
+        ORDER BY trigger_message_id, message_timestamp ASC NULLS LAST
+      ),
+      execs AS MATERIALIZED (
+        SELECT e.id,
+               e.trigger_message_id,
+               t.conversation_id,
+               COALESCE(NULLIF(BTRIM(e.node_id), ''), COALESCE(NULLIF(BTRIM(e.node_name), ''), 'unknown')) AS node_id,
+               COALESCE(NULLIF(BTRIM(e.node_name), ''), COALESCE(NULLIF(BTRIM(e.node_id), ''), '未命名节点')) AS node_name,
+               COALESCE(NULLIF(BTRIM(e.node_type), ''), 'unknown') AS node_type,
+               COALESCE(NULLIF(BTRIM(e.status), ''), '') AS status,
+               COALESCE(NULLIF(BTRIM(e.error_message), ''), '') AS error_message,
+               COALESCE(NULLIF(BTRIM(e.error_class), ''), '') AS error_class,
+               COALESCE(NULLIF(BTRIM(e.error_code), ''), '') AS error_code,
+               (
+                 COALESCE(BTRIM(e.error_message), '') <> ''
+                 OR COALESCE(BTRIM(e.error_class), '') <> ''
+                 OR COALESCE(BTRIM(e.error_code), '') <> ''
+                 OR (
+                   COALESCE(BTRIM(e.status), '') <> ''
+                   AND UPPER(BTRIM(e.status)) NOT IN ('SUCCESS', 'COMPLETED')
+                 )
+               ) AS is_error,
+               (
+                 e.node_type = 'lingxi_send'
+                 AND e.inputs::text ILIKE '%actionType%'
+                 AND e.inputs::text ILIKE '%actionContent%'
+                 AND e.inputs::text ILIKE '%6%'
+               ) AS is_reply_send,
+               CASE
+                 WHEN e.node_type = 'condition' AND e.outputs IS NOT NULL AND BTRIM(e.outputs::text) LIKE '{%'
+                   THEN jsonb_build_object(
+                     'matchedBranchInfo', e.outputs::jsonb -> 'matchedBranchInfo',
+                     'matchedBranches', e.outputs::jsonb -> 'matchedBranches',
+                     'matchedBranch', e.outputs::jsonb -> 'matchedBranch'
+                   )::text
+                 ELSE NULL
+               END AS condition_output,
+               e.started_at,
+               e.completed_at,
+               GREATEST(COALESCE(e.duration_ms, 0), 0)::bigint AS duration_ms
+        FROM active_triggers t
+        JOIN public.workflow_node_executions e
+          ON e.workflow_id = $1
+         AND e.trigger_message_id = t.trigger_message_id
+         AND e.deleted_at IS NULL
+      ),
+      overview_stats AS (
+        SELECT
+          (SELECT COUNT(DISTINCT conversation_id) FROM active_messages) AS total_conversations,
+          (SELECT COUNT(*) FROM active_triggers) AS total_triggers,
+          COUNT(DISTINCT trigger_message_id) AS executed_triggers,
+          COUNT(DISTINCT trigger_message_id) FILTER (WHERE is_reply_send AND NOT is_error) AS replied_triggers,
+          COUNT(DISTINCT conversation_id) FILTER (WHERE is_error) AS error_conversations,
+          COUNT(DISTINCT trigger_message_id) FILTER (WHERE is_error) AS error_triggers,
+          COUNT(*) AS total_node_executions,
+          COUNT(*) FILTER (WHERE is_error) AS error_node_executions
+        FROM execs
+      ),
+      trigger_spans AS (
+        SELECT
+          trigger_message_id,
+          conversation_id,
+          COALESCE(
+            MIN(started_at) FILTER (WHERE node_type = 'lingxi_trigger' OR node_name = '灵犀触发器'),
+            MIN(started_at)
+          ) AS trigger_started_at,
+          MAX(
+            COALESCE(
+              completed_at,
+              started_at + (duration_ms * INTERVAL '1 millisecond')
+            )
+          ) AS last_completed_at,
+          MAX(
+            COALESCE(
+              completed_at,
+              started_at + (duration_ms * INTERVAL '1 millisecond')
+            )
+          ) FILTER (WHERE is_reply_send AND NOT is_error) AS reply_completed_at,
+          SUM(duration_ms)::bigint AS sum_duration_ms,
+          BOOL_OR(is_reply_send AND NOT is_error) AS has_reply
+        FROM execs
+        GROUP BY trigger_message_id, conversation_id
+      ),
+      trigger_latencies AS (
+        SELECT
+          trigger_message_id,
+          conversation_id,
+          CASE
+            WHEN last_completed_at IS NOT NULL AND trigger_started_at IS NOT NULL AND last_completed_at > trigger_started_at
+              THEN ROUND(EXTRACT(EPOCH FROM (last_completed_at - trigger_started_at)) * 1000)::bigint
+            ELSE sum_duration_ms
+          END AS e2e_ms,
+          CASE
+            WHEN has_reply AND reply_completed_at IS NOT NULL AND trigger_started_at IS NOT NULL AND reply_completed_at >= trigger_started_at
+              THEN ROUND(EXTRACT(EPOCH FROM (reply_completed_at - trigger_started_at)) * 1000)::bigint
+            WHEN has_reply
+              THEN sum_duration_ms
+            ELSE NULL
+          END AS reply_ms
+        FROM trigger_spans
+      ),
+      latency_stats AS (
+        SELECT
+          COUNT(*) AS e2e_count,
+          COALESCE(ROUND(AVG(e2e_ms))::bigint, 0) AS e2e_avg_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY e2e_ms))::bigint, 0) AS e2e_p50_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY e2e_ms))::bigint, 0) AS e2e_p95_ms,
+          COALESCE(MAX(e2e_ms), 0) AS e2e_max_ms,
+          (ARRAY_AGG(conversation_id ORDER BY e2e_ms DESC NULLS LAST, trigger_message_id))[1] AS slowest_e2e_conversation_id,
+          (ARRAY_AGG(trigger_message_id ORDER BY e2e_ms DESC NULLS LAST, trigger_message_id))[1] AS slowest_e2e_trigger_id,
+          COUNT(reply_ms) AS reply_count,
+          COALESCE(ROUND(AVG(reply_ms))::bigint, 0) AS reply_avg_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY reply_ms))::bigint, 0) AS reply_p50_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY reply_ms))::bigint, 0) AS reply_p95_ms,
+          COALESCE(MAX(reply_ms), 0) AS reply_max_ms,
+          (ARRAY_AGG(conversation_id ORDER BY reply_ms DESC NULLS LAST, trigger_message_id) FILTER (WHERE reply_ms IS NOT NULL))[1] AS slowest_reply_conversation_id,
+          (ARRAY_AGG(trigger_message_id ORDER BY reply_ms DESC NULLS LAST, trigger_message_id) FILTER (WHERE reply_ms IS NOT NULL))[1] AS slowest_reply_trigger_id
+        FROM trigger_latencies
+      ),
+      node_stats AS (
+        SELECT
+          node_id,
+          (ARRAY_AGG(node_name ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS node_name,
+          (ARRAY_AGG(node_type ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS node_type,
+          COUNT(*) AS execution_count,
+          COUNT(DISTINCT trigger_message_id) AS trigger_count,
+          COUNT(DISTINCT conversation_id) AS conversation_count,
+          COUNT(*) FILTER (WHERE is_error) AS error_count,
+          COALESCE(ROUND(AVG(duration_ms))::bigint, 0) AS avg_duration_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms))::bigint, 0) AS p50_duration_ms,
+          COALESCE(ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms))::bigint, 0) AS p95_duration_ms,
+          COALESCE(MAX(duration_ms), 0) AS max_duration_ms,
+          (ARRAY_AGG(conversation_id ORDER BY duration_ms DESC NULLS LAST, started_at DESC NULLS LAST, id DESC))[1] AS slowest_conversation_id,
+          (ARRAY_AGG(trigger_message_id ORDER BY duration_ms DESC NULLS LAST, started_at DESC NULLS LAST, id DESC))[1] AS slowest_trigger_id
+        FROM execs
+        GROUP BY node_id
+      ),
+      condition_stats AS (
+        SELECT
+          node_id,
+          (ARRAY_AGG(node_name ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS node_name,
+          condition_output,
+          COUNT(*) AS execution_count,
+          COUNT(DISTINCT trigger_message_id) AS trigger_count
+        FROM execs
+        WHERE node_type = 'condition'
+        GROUP BY node_id, condition_output
+      ),
+      error_stats AS (
+        SELECT
+          node_id,
+          (ARRAY_AGG(node_name ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS node_name,
+          (ARRAY_AGG(node_type ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS node_type,
+          status,
+          error_code,
+          error_class,
+          LEFT(error_message, 300) AS error_message,
+          COUNT(*) AS error_count,
+          COUNT(DISTINCT trigger_message_id) AS trigger_count,
+          COUNT(DISTINCT conversation_id) AS conversation_count,
+          MAX(COALESCE(completed_at, started_at)) AS last_occurred_at,
+          (ARRAY_AGG(conversation_id ORDER BY COALESCE(completed_at, started_at) DESC NULLS LAST, id DESC))[1] AS sample_conversation_id,
+          (ARRAY_AGG(trigger_message_id ORDER BY COALESCE(completed_at, started_at) DESC NULLS LAST, id DESC))[1] AS sample_trigger_id,
+          jsonb_agg(
+            jsonb_build_object(
+              'execution_id', id,
+              'conversation_id', conversation_id,
+              'trigger_id', trigger_message_id,
+              'occurred_at', COALESCE(completed_at, started_at),
+              'duration_ms', duration_ms,
+              'error_message', LEFT(error_message, 500)
+            )
+            ORDER BY COALESCE(completed_at, started_at) DESC NULLS LAST, id DESC
+          ) AS occurrences
+        FROM execs
+        WHERE is_error
+        GROUP BY node_id, status, error_code, error_class, LEFT(error_message, 300)
+        ORDER BY error_count DESC, last_occurred_at DESC NULLS LAST
+        LIMIT 30
+      )
+      SELECT
+        (SELECT row_to_json(overview_stats) FROM overview_stats) AS overview,
+        (SELECT row_to_json(latency_stats) FROM latency_stats) AS latency,
+        COALESCE((SELECT json_agg(row_to_json(node_stats)) FROM node_stats), '[]'::json) AS nodes,
+        COALESCE((SELECT json_agg(row_to_json(condition_stats)) FROM condition_stats), '[]'::json) AS conditions,
+        COALESCE((SELECT json_agg(row_to_json(error_stats)) FROM error_stats), '[]'::json) AS errors
+    `;
+    const statsRow = (await client.query(analyticsSql, [workflowId, startTime, endExclusive])).rows[0] || {};
+    return buildDbWorkflowAnalytics({
+      workflow: workflowResult.rows[0] || { id: workflowId, name: '' },
+      startTime,
+      endTime,
+      overview: statsRow.overview || {},
+      latency: statsRow.latency || {},
+      nodes: statsRow.nodes || [],
+      conditions: statsRow.conditions || [],
+      errors: statsRow.errors || []
+    });
   });
 }
 
@@ -3114,7 +4437,7 @@ async function dbConversationConfigIdForRoute(workflowId, conversationId) {
     });
     try {
       const result = await pool.query(
-        'SELECT 1 FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL LIMIT 1',
+        'SELECT 1 FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL LIMIT 1',
         [workflowId, conversationId]
       );
       if (result.rowCount) return config.id;
@@ -3140,11 +4463,11 @@ async function dbConversationDetail(url) {
   const configId = requestedConfigId || await dbConversationConfigIdForRoute(workflowId, conversationId);
   return withDbClient(configId, async client => {
     const [workflow, messages, variables] = await Promise.all([
-      client.query('SELECT * FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
+      client.query('SELECT * FROM public.workflow WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
       client.query(`
         SELECT *
         FROM public.conversation_messages
-        WHERE workflow_id::text = $1
+        WHERE workflow_id = $1
           AND conversation_id = $2
           AND deleted_at IS NULL
         ORDER BY message_timestamp ASC NULLS LAST, id ASC
@@ -3152,7 +4475,7 @@ async function dbConversationDetail(url) {
       client.query(`
         SELECT DISTINCT ON (variable_key) *
         FROM public.conversation_variables
-        WHERE workflow_id::text = $1
+        WHERE workflow_id = $1
           AND conversation_id = $2
           AND deleted_at IS NULL
         ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
@@ -3160,6 +4483,12 @@ async function dbConversationDetail(url) {
     ]);
     const triggerIds = [...new Set(messages.rows.map(dbTriggerIdOf).filter(Boolean))];
     const runId = `platform:${workflowId}:${conversationId}`;
+    const executionWhereClause = triggerIds.length
+      ? 'e.trigger_message_id = ANY($2::text[])'
+      : 'e.run_id = $2';
+    const executionParams = triggerIds.length
+      ? [workflowId, triggerIds]
+      : [workflowId, runId];
     const executions = (await client.query(`
       SELECT e.id,
              e.workflow_id,
@@ -3187,20 +4516,17 @@ async function dbConversationDetail(url) {
              e.completed_at,
              e.duration_ms
       FROM public.workflow_node_executions e
-      WHERE e.workflow_id::text = $1
+      WHERE e.workflow_id = $1
         AND e.deleted_at IS NULL
-        AND (
-          e.trigger_message_id = ANY($2::text[])
-          OR e.run_id = $3
-        )
+        AND ${executionWhereClause}
       ORDER BY e.started_at ASC NULLS LAST, e.id ASC
-    `, [workflowId, triggerIds, runId])).rows;
+    `, executionParams)).rows;
     const referencedNodeIds = dbReferencedOutputNodeIds(executions);
     if (referencedNodeIds.length && triggerIds.length) {
       const referencedOutputs = (await client.query(`
         SELECT e.trigger_message_id, e.node_id, e.outputs
         FROM public.workflow_node_executions e
-        WHERE e.workflow_id::text = $1
+        WHERE e.workflow_id = $1
           AND e.trigger_message_id = ANY($2::text[])
           AND e.node_id = ANY($3::text[])
           AND e.deleted_at IS NULL
@@ -3240,8 +4566,8 @@ async function dbConversationNodeExecution(url) {
     const execution = await client.query(`
       SELECT *
       FROM public.workflow_node_executions
-      WHERE id::text = $1
-        AND workflow_id::text = $2
+      WHERE id = $1
+        AND workflow_id = $2
         AND trigger_message_id = $3
         AND deleted_at IS NULL
       LIMIT 1
@@ -3267,11 +4593,11 @@ async function dbConversationHistoricalNode(url) {
   }
   return withDbClient(configId, async client => {
     const [workflow, executionResult] = await Promise.all([
-      client.query('SELECT id, graph_json FROM public.workflow WHERE id::text = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
+      client.query('SELECT id, graph_json FROM public.workflow WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
       client.query(`
         SELECT *
         FROM public.workflow_node_executions
-        WHERE workflow_id::text = $1
+        WHERE workflow_id = $1
           AND trigger_message_id = $2
           AND deleted_at IS NULL
         ORDER BY started_at ASC NULLS LAST, id ASC
@@ -3304,7 +4630,7 @@ async function dbConversationVariables(url) {
     const variables = await client.query(`
       SELECT DISTINCT ON (variable_key) *
       FROM public.conversation_variables
-      WHERE workflow_id::text = $1
+      WHERE workflow_id = $1
         AND conversation_id = $2
         AND deleted_at IS NULL
       ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
@@ -3351,16 +4677,15 @@ async function sendDbConversationMessage(req) {
   // Fetch executions from database
   const executions = await withDbClient(configId, async client => {
     const triggerIds = (await client.query(
-      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL",
+      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL",
       [workflowId, conversationId]
     )).rows.map(r => r.trigger_message_id).filter(Boolean);
     
     if (!triggerIds.length) return [];
     
-    const runId = "platform:" + workflowId + ":" + conversationId;
     return (await client.query(
-      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id::text = $1 AND e.deleted_at IS NULL AND (e.trigger_message_id = ANY($2::text[]) OR e.run_id = $3) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
-      [workflowId, triggerIds, runId]
+      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id = $1 AND e.deleted_at IS NULL AND e.trigger_message_id = ANY($2::text[]) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
+      [workflowId, triggerIds]
     )).rows;
   });
   
@@ -3396,6 +4721,7 @@ async function sendDbConversationMessage(req) {
     : { ...snapshot, mqResult: failedMqResult(gateway.error) };
   
   const summary = summarizeMqSend([sentSnapshot], gateway.ready);
+  clearDbConversationCandidateCache();
   
   return {
     success: sentSnapshot.mqResult?.success || false,
@@ -3424,16 +4750,15 @@ async function previewDbConversationPayload(url) {
   
   const executions = await withDbClient(configId, async client => {
     const triggerIds = (await client.query(
-      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id::text = $1 AND conversation_id = $2 AND deleted_at IS NULL",
+      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL",
       [workflowId, conversationId]
     )).rows.map(r => r.trigger_message_id).filter(Boolean);
     
     if (!triggerIds.length) return [];
     
-    const runId = "platform:" + workflowId + ":" + conversationId;
     return (await client.query(
-      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id::text = $1 AND e.deleted_at IS NULL AND (e.trigger_message_id = ANY($2::text[]) OR e.run_id = $3) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
-      [workflowId, triggerIds, runId]
+      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id = $1 AND e.deleted_at IS NULL AND e.trigger_message_id = ANY($2::text[]) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
+      [workflowId, triggerIds]
     )).rows;
   });
   
@@ -4004,6 +5329,9 @@ async function handleApi(req, res, pathname, url) {
     if (req.method === 'GET' && pathname === '/api/db/workflows') {
       return json(res, 200, await listDbWorkflows(url));
     }
+    if (req.method === 'GET' && pathname === '/api/db/analytics') {
+      return json(res, 200, await queryDbWorkflowAnalytics(url));
+    }
     if (req.method === 'GET' && pathname === '/api/db/conversations/detail') {
       return json(res, 200, await dbConversationDetail(url));
     }
@@ -4160,7 +5488,9 @@ if (require.main === module) {
 module.exports = {
   buildDbConversationDetail,
   buildDbConversationRows,
+  buildDbWorkflowAnalytics,
   listDbWorkflows,
+  queryDbWorkflowAnalytics,
   prepareDbConversationPayload,
   buildSnapshots,
   casesFromCsvText,

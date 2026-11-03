@@ -20,7 +20,7 @@ function dbQueryDateBoundary(value, endOfDay = false) {
 
 const initialDbTimeRange = defaultDbTimeRange();
 const APP_ACTIVE_VIEW_STORAGE_KEY = 'lingxi-mq-active-view';
-const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'labels']);
+const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'dbAnalytics', 'labels']);
 const DB_DETAIL_ROUTE_PARAMS = ['dbDetail', 'dbWorkflowId', 'dbConversationId', 'dbConfigId'];
 
 const state = {
@@ -94,6 +94,13 @@ const state = {
   dbHasError: '',
   dbStartTime: initialDbTimeRange[0],
   dbEndTime: initialDbTimeRange[1],
+  dbAnalyticsWorkflowId: '',
+  dbAnalyticsStartTime: initialDbTimeRange[0],
+  dbAnalyticsEndTime: initialDbTimeRange[1],
+  dbAnalyticsLoading: false,
+  dbAnalyticsQueried: false,
+  dbAnalyticsData: null,
+  dbReturnView: '',
   casePageNo: 1,
   recordPageNo: 1,
   dbPageNo: 1,
@@ -342,11 +349,13 @@ function setView(name, options = {}) {
   $('casesView').classList.toggle('active', name === 'cases');
   $('recordsView').classList.toggle('active', name === 'records');
   $('dbRecordsView').classList.toggle('active', name === 'dbRecords');
+  $('dbAnalyticsView').classList.toggle('active', name === 'dbAnalytics');
   $('labelsView').classList.toggle('active', name === 'labels');
   if (name !== 'cases') document.body.classList.remove('case-detail-open');
   if (name !== 'records') document.body.classList.remove('record-detail-open');
   if (name !== 'dbRecords') {
     document.body.classList.remove('db-record-detail-open');
+    state.dbReturnView = '';
     if (readDbConversationDetailRoute()) clearDbConversationDetailRoute();
   }
   if (name === 'cases') showCaseList(false);
@@ -359,6 +368,14 @@ function setView(name, options = {}) {
     if (!options.skipDbAutoLoad) {
       loadDbConfigs().catch(showError);
       loadDbSavedFilters().catch(showError);
+    }
+  }
+  if (name === 'dbAnalytics') {
+    if (!state.dbAnalyticsWorkflowId && state.dbWorkflowId) {
+      state.dbAnalyticsWorkflowId = state.dbWorkflowId;
+    }
+    if (!options.skipDbAutoLoad) {
+      loadDbConfigs().catch(showError);
     }
   }
   renderListToolbars();
@@ -515,6 +532,11 @@ function showDbConversationList(render = true, options = {}) {
   document.body.classList.remove('db-record-detail-open');
   window.renderDbConversationDetailChrome?.(null);
   if (!options.preserveRoute) clearDbConversationDetailRoute();
+  if (!options.preserveRoute && state.dbReturnView === 'dbAnalytics') {
+    state.dbReturnView = '';
+    setView('dbAnalytics', { skipDbAutoLoad: true });
+    return;
+  }
   if (render) renderDbRecordsPage();
 }
 
@@ -531,7 +553,15 @@ function renderListToolbars() {
   window.renderUpdateManagerButton?.({ visible, currentVersion: state.updateStatus.currentVersion, updateAvailable: state.updateCheck?.updateAvailable });
   if (!window.renderAntListPages) return;
   window.renderAntListPages({
-    activeView: $('labelsView').classList.contains('active') ? 'labels' : $('dbRecordsView').classList.contains('active') ? 'dbRecords' : $('recordsView').classList.contains('active') ? 'records' : 'cases',
+    activeView: $('labelsView').classList.contains('active')
+      ? 'labels'
+      : $('dbAnalyticsView').classList.contains('active')
+        ? 'dbAnalytics'
+        : $('dbRecordsView').classList.contains('active')
+          ? 'dbRecords'
+          : $('recordsView').classList.contains('active')
+            ? 'records'
+            : 'cases',
     cases: state.caseListData || {
       items: [],
       search: state.caseSearch,
@@ -559,6 +589,7 @@ function renderListToolbars() {
       total: 0
     },
     dbRecords: dbRecordPageData(),
+    dbAnalytics: dbAnalyticsPageData(),
     management: labelManagementData()
   });
 }
@@ -1708,6 +1739,25 @@ function dbRecordPageData() {
   };
 }
 
+function dbAnalyticsPageData() {
+  return {
+    active: $('dbAnalyticsView').classList.contains('active'),
+    configs: state.dbConfigs,
+    connection: state.dbConnection,
+    connectionChanging: state.dbConnectionChanging,
+    workflows: state.dbWorkflows,
+    workflowsLoading: state.dbWorkflowsLoading,
+    filters: {
+      workflowId: state.dbAnalyticsWorkflowId,
+      startTime: state.dbAnalyticsStartTime,
+      endTime: state.dbAnalyticsEndTime
+    },
+    loading: state.dbAnalyticsLoading,
+    queried: state.dbAnalyticsQueried,
+    analytics: state.dbAnalyticsData
+  };
+}
+
 function renderDbRecordsPage() {
   renderListToolbars();
   syncDbConversationDetailChrome();
@@ -1783,7 +1833,8 @@ async function refreshDbConnectionStatus() {
 }
 
 function pollDbConnectionStatus() {
-  if (!$('dbRecordsView')?.classList.contains('active') || state.dbConnectionChanging) return;
+  const isDbViewActive = $('dbRecordsView')?.classList.contains('active') || $('dbAnalyticsView')?.classList.contains('active');
+  if (!isDbViewActive || state.dbConnectionChanging) return;
   refreshDbConnectionStatus().catch(() => {});
 }
 
@@ -1840,6 +1891,8 @@ async function switchDbConnection(configId) {
       state.dbActiveWorkflowId = '';
       state.dbActiveConversationId = '';
       state.dbRecordPage = 'list';
+      state.dbAnalyticsQueried = false;
+      state.dbAnalyticsData = null;
       clearDbConversationDetailRoute();
     }
     toast(changedConfig ? `已切换至数据库：${state.dbConnection.name}` : '数据库连接正常');
@@ -1894,7 +1947,7 @@ function applyDbSavedFilter(filters) {
   state.dbKeyword = filters?.keyword || '';
   state.dbHasError = filters?.hasError || '';
   state.dbPageNo = 1;
-  queryDbConversations().catch(showError);
+  queryDbConversations({ forceRefresh: true }).catch(showError);
 }
 
 function resetDbConversationFilters() {
@@ -1949,6 +2002,8 @@ async function deleteDbConfig(configId) {
     state.dbActiveWorkflowId = '';
     state.dbActiveConversationId = '';
     state.dbRecordPage = 'list';
+    state.dbAnalyticsQueried = false;
+    state.dbAnalyticsData = null;
     clearDbConversationDetailRoute();
   }
   renderDbRecordsPage();
@@ -1974,7 +2029,7 @@ async function testDbConfig(configId) {
   }
 }
 
-async function queryDbConversations() {
+async function queryDbConversations({ forceRefresh = false } = {}) {
   if (!state.dbWorkflowId.trim() || !state.dbStartTime || !state.dbEndTime) {
     toast('请选择工作流和学员消息时间后再查询', 'warning');
     return;
@@ -1999,6 +2054,7 @@ async function queryDbConversations() {
       pageNo: String(state.dbPageNo),
       pageSize: String(state.dbPageSize)
     });
+    if (forceRefresh) params.set('refresh', '1');
     if (state.dbWorkflowId.trim()) params.set('workflowId', state.dbWorkflowId.trim());
     if (state.dbConversationId.trim()) params.set('conversationId', state.dbConversationId.trim());
     if (state.dbFriendNick.trim()) params.set('friendNick', state.dbFriendNick.trim());
@@ -2014,6 +2070,51 @@ async function queryDbConversations() {
     state.dbConversationLoading = false;
     renderDbRecordsPage();
   }
+}
+
+async function queryDbAnalytics() {
+  if (!state.dbAnalyticsWorkflowId.trim() || !state.dbAnalyticsStartTime || !state.dbAnalyticsEndTime) {
+    toast('请选择工作流和统计时间范围后再分析', 'warning');
+    return;
+  }
+  if (!await ensureDbEnvironmentConfigured()) return;
+  state.dbAnalyticsLoading = true;
+  state.dbAnalyticsQueried = true;
+  renderDbRecordsPage();
+  try {
+    await ensureDbConnected();
+    const params = new URLSearchParams({
+      workflowId: state.dbAnalyticsWorkflowId.trim(),
+      startTime: dbQueryDateBoundary(state.dbAnalyticsStartTime),
+      endTime: dbQueryDateBoundary(state.dbAnalyticsEndTime, true)
+    });
+    appendDbConfigId(params);
+    state.dbAnalyticsData = await api(`/api/db/analytics?${params}`);
+  } finally {
+    state.dbAnalyticsLoading = false;
+    renderDbRecordsPage();
+  }
+}
+
+function resetDbAnalyticsFilters() {
+  const [startTime, endTime] = defaultDbTimeRange();
+  state.dbAnalyticsWorkflowId = '';
+  state.dbAnalyticsStartTime = startTime;
+  state.dbAnalyticsEndTime = endTime;
+  state.dbAnalyticsQueried = false;
+  state.dbAnalyticsData = null;
+  renderDbRecordsPage();
+}
+
+async function openDbAnalyticsConversation(workflowId, conversationId, triggerMessageId = '') {
+  const targetWorkflowId = String(workflowId || state.dbAnalyticsWorkflowId || '').trim();
+  const targetConversationId = String(conversationId || '').trim();
+  if (!targetWorkflowId || !targetConversationId) return;
+  setView('dbRecords', { skipDbAutoLoad: true, preserveDbRoute: true });
+  state.dbReturnView = 'dbAnalytics';
+  await openDbConversationDetail(targetWorkflowId, targetConversationId, {
+    selectedTriggerMessageId: String(triggerMessageId || '').trim()
+  });
 }
 
 async function openDbConversationDetail(workflowId, conversationId, options = {}) {
@@ -2051,7 +2152,11 @@ async function openDbConversationDetail(workflowId, conversationId, options = {}
       state.dbConnection = await api(`/api/db-configs/status?configId=${encodeURIComponent(resolvedConfigId)}`);
     }
     state.dbConversationDetail = detail;
-    if (!preserveDetail) state.dbSelectedTriggerMessageId = detail.selectedTriggerMessageId || '';
+    if (!preserveDetail) {
+      const requestedTriggerId = String(options.selectedTriggerMessageId || '').trim();
+      const hasRequestedTrigger = requestedTriggerId && (detail.messages || []).some(item => item.triggerMessageId === requestedTriggerId);
+      state.dbSelectedTriggerMessageId = hasRequestedTrigger ? requestedTriggerId : (detail.selectedTriggerMessageId || '');
+    }
     if (resolvedConfigId) setDbConversationDetailRoute(workflowId, conversationId, resolvedConfigId);
   } finally {
     if (!preserveDetail) state.dbConversationDetailLoading = false;
@@ -2652,10 +2757,14 @@ function bindEvents() {
     if (type === 'ensure-db-workflows') ensureDbWorkflowsReady().catch(showError);
     if (type === 'query-db-conversations') {
       state.dbPageNo = 1;
-      queryDbConversations().catch(showError);
+      queryDbConversations({ forceRefresh: true }).catch(showError);
     }
-    if (type === 'refresh-db-conversations') queryDbConversations().catch(showError);
+    if (type === 'refresh-db-conversations') queryDbConversations({ forceRefresh: true }).catch(showError);
     if (type === 'reset-db-conversations') resetDbConversationFilters();
+    if (type === 'query-db-analytics') queryDbAnalytics().catch(showError);
+    if (type === 'refresh-db-analytics') queryDbAnalytics().catch(showError);
+    if (type === 'reset-db-analytics') resetDbAnalyticsFilters();
+    if (type === 'open-db-analytics-conversation') openDbAnalyticsConversation(workflowId, conversationId, triggerMessageId).catch(showError);
     if (type === 'save-db-filter') saveDbSavedFilter(name).catch(showError);
     if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
     if (type === 'apply-db-filter') applyDbSavedFilter(filters);
@@ -2782,6 +2891,15 @@ function bindEvents() {
     if (type === 'db-time-range') {
       state.dbStartTime = Array.isArray(value) ? value[0] || '' : '';
       state.dbEndTime = Array.isArray(value) ? value[1] || '' : '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-analytics-workflow-id') {
+      state.dbAnalyticsWorkflowId = value || '';
+      renderDbRecordsPage();
+    }
+    if (type === 'db-analytics-time-range') {
+      state.dbAnalyticsStartTime = Array.isArray(value) ? value[0] || '' : '';
+      state.dbAnalyticsEndTime = Array.isArray(value) ? value[1] || '' : '';
       renderDbRecordsPage();
     }
   });
