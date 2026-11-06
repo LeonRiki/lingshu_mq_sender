@@ -20,7 +20,7 @@ function dbQueryDateBoundary(value, endOfDay = false) {
 
 const initialDbTimeRange = defaultDbTimeRange();
 const APP_ACTIVE_VIEW_STORAGE_KEY = 'lingxi-mq-active-view';
-const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'dbAnalytics', 'labels']);
+const APP_VIEW_NAMES = new Set(['cases', 'records', 'dbRecords', 'dbAnalytics']);
 const DB_DETAIL_ROUTE_PARAMS = ['dbDetail', 'dbWorkflowId', 'dbConversationId', 'dbConfigId'];
 
 const state = {
@@ -35,6 +35,7 @@ const state = {
   dbWorkflows: [],
   dbWorkflowsLoading: false,
   dbSavedFilters: [],
+  dbSelectedSavedFilterId: null,
   dbConversationItems: [],
   dbConversationQueried: false,
   dbConversationLoading: false,
@@ -348,6 +349,7 @@ function setView(name, options = {}) {
   name = nextView;
   $('casesView').classList.toggle('active', name === 'cases');
   $('recordsView').classList.toggle('active', name === 'records');
+  $('testCenterTabs').classList.toggle('active', name === 'cases' || name === 'records');
   $('dbRecordsView').classList.toggle('active', name === 'dbRecords');
   $('dbAnalyticsView').classList.toggle('active', name === 'dbAnalytics');
   $('labelsView').classList.toggle('active', name === 'labels');
@@ -1704,6 +1706,7 @@ function dbRecordPageData() {
     workflows: state.dbWorkflows,
     workflowsLoading: state.dbWorkflowsLoading,
     savedFilters: state.dbSavedFilters,
+    selectedSavedFilterName: state.dbSavedFilters.find(filter => filter.id === state.dbSelectedSavedFilterId)?.name || '',
     filters: {
       workflowId: state.dbWorkflowId,
       conversationId: state.dbConversationId,
@@ -1940,17 +1943,20 @@ async function deleteDbSavedFilter(id) {
   toast('筛选条件已删除');
 }
 
-function applyDbSavedFilter(filters) {
+function applyDbSavedFilter(filters, id) {
+  state.dbSelectedSavedFilterId = id || null;
   state.dbWorkflowId = filters?.workflowId || '';
   state.dbConversationId = filters?.conversationId || '';
   state.dbFriendNick = filters?.friendNick || '';
   state.dbKeyword = filters?.keyword || '';
   state.dbHasError = filters?.hasError || '';
   state.dbPageNo = 1;
+  renderDbRecordsPage();
   queryDbConversations({ forceRefresh: true }).catch(showError);
 }
 
 function resetDbConversationFilters() {
+  state.dbSelectedSavedFilterId = null;
   const [startTime, endTime] = defaultDbTimeRange();
   state.dbWorkflowId = '';
   state.dbConversationId = '';
@@ -2031,7 +2037,7 @@ async function testDbConfig(configId) {
 
 async function queryDbConversations({ forceRefresh = false } = {}) {
   if (!state.dbWorkflowId.trim() || !state.dbStartTime || !state.dbEndTime) {
-    toast('请选择工作流和学员消息时间后再查询', 'warning');
+    toast('请选择工作流和消息时间后再查询', 'warning');
     return;
   }
   if (!await ensureDbEnvironmentConfigured()) return;
@@ -2767,7 +2773,7 @@ function bindEvents() {
     if (type === 'open-db-analytics-conversation') openDbAnalyticsConversation(workflowId, conversationId, triggerMessageId).catch(showError);
     if (type === 'save-db-filter') saveDbSavedFilter(name).catch(showError);
     if (type === 'delete-db-filter') deleteDbSavedFilter(id).catch(showError);
-    if (type === 'apply-db-filter') applyDbSavedFilter(filters);
+    if (type === 'apply-db-filter') applyDbSavedFilter(filters, id);
     if (type === 'open-db-conversation') openDbConversationDetail(workflowId, conversationId, { listScrollTop }).catch(showError);
     if (type === 'open-db-conversation-preview') openDbConversationPreview(workflowId, conversationId).catch(showError);
     if (type === 'close-db-conversation-preview') closeDbConversationPreview();

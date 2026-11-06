@@ -1,5 +1,7 @@
 # 本地运行数据和私有配置
 node_modules/
+.agents/
+skills-lock.json
 cache/
 cases/
 records/

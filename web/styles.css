@@ -101,7 +101,8 @@ button:disabled {
 
 .topbar {
   height: 64px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
@@ -110,6 +111,8 @@ button:disabled {
 }
 
 .topbar-actions {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -467,6 +470,10 @@ main {
   grid-template-columns: 340px minmax(0, 1fr);
 }
 
+#testCenterTabs.active ~ .view.active {
+  height: calc(100% - 48px);
+}
+
 .view.list.active,
 .view.detail.active {
   grid-template-columns: 1fr;
@@ -543,6 +550,8 @@ main {
 }
 
 #appTabs {
+  grid-column: 2;
+  min-width: 0;
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -559,6 +568,99 @@ main {
 
 #appTabs .ant-tabs-nav::before {
   border-bottom: 0;
+}
+
+#appTabs .ant-tabs-tab {
+  padding: 0 4px;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+#appTabs .ant-tabs-ink-bar {
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+}
+
+#testCenterTabs {
+  display: none;
+  height: 48px;
+  padding: 0 24px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.test-center-links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: 100%;
+}
+
+.test-center-links button {
+  position: relative;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #404040;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.test-center-links button[aria-current] {
+  color: #262626;
+  font-weight: 600;
+}
+
+.test-center-links button:hover {
+  color: #262626;
+  filter: none;
+}
+
+.test-center-links button[aria-current]::after {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 20px;
+  height: 2px;
+  border-radius: 2px;
+  background: #1677ff;
+  transform: translateX(-50%);
+  content: '';
+}
+
+.test-center-links button:focus-visible {
+  outline: 2px solid #1677ff;
+  outline-offset: 3px;
+}
+
+#casesView.list .sidebar,
+#recordsView.list .sidebar {
+  padding-top: 20px;
+  background: #fff;
+}
+
+#casesView .list-page-toolbar,
+#recordsView .list-page-toolbar {
+  margin-bottom: 4px;
+}
+
+#testCenterTabs.active {
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    display: flex;
+    gap: 20px;
+  }
+
+  #appTabs {
+    flex: 1;
+    overflow: hidden;
+  }
 }
 
 #caseListApp,
@@ -774,6 +876,23 @@ main {
   min-width: 0;
 }
 
+.case-list-toolbar .list-page-filters {
+  flex: 1 1 700px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.case-list-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.case-label-management {
+  height: min(640px, calc(100dvh - 160px));
+  overflow: auto;
+  padding-top: 8px;
+}
+
 .db-record-page {
   display: flex;
   height: 100%;
@@ -784,10 +903,70 @@ main {
 
 .db-record-toolbar {
   flex: 0 0 auto;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  padding: 14px 18px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
+}
+
+.db-filter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.db-filter-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.db-filter-title-icon {
+  font-size: 15px;
+  color: #1677ff;
+}
+
+.db-filter-datasource {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-filter-datasource-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.db-datasource-trigger {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.db-datasource-trigger:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.db-datasource-trigger .ant-badge-status-dot {
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
 }
 
 .db-filter-grid {
@@ -796,16 +975,26 @@ main {
   gap: 12px;
 }
 
+.db-filter-title .db-selected-filter-name {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #666;
+  font-size: 14px;
+  font-weight: 400;
+}
+
 .db-filter-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
-  gap: 16px 16px;
+  gap: 16px 20px;
   width: 100%;
 }
 
 .db-filter-row-primary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
 }
 
@@ -814,11 +1003,11 @@ main {
 }
 
 .db-filter-row-primary .db-filter-field-time {
-  grid-column: span 3;
+  grid-column: span 2;
 }
 
 .db-filter-row-secondary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .db-filter-field {
@@ -835,6 +1024,14 @@ main {
   font-weight: 400;
   text-align: right;
   white-space: nowrap;
+}
+
+#dbRecordsView .db-filter-grid .db-filter-field {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+#dbRecordsView .db-filter-grid .db-filter-field > span {
+  font-size: 14px;
 }
 
 .db-filter-field > span b {
@@ -887,9 +1084,17 @@ main {
 
 .db-record-list-heading {
   display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
+}
+
+.db-record-list-bar {
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: #1677ff;
+  border-radius: 2px;
 }
 
 .db-record-total {
@@ -3607,11 +3812,13 @@ pre {
 }
 
 .case-detail-open .topbar {
+  display: flex;
   justify-content: flex-start;
 }
 
 .record-detail-open .topbar,
 .db-record-detail-open .topbar {
+  display: flex;
   justify-content: flex-start;
 }
 
@@ -5861,6 +6068,41 @@ pre {
   padding: 14px 16px;
 }
 
+.db-analytics-toolbar .db-filter-field > span,
+.db-analytics-toolbar .db-filter-datasource-label,
+.db-analytics-toolbar .db-datetime-presets .ant-radio-button-wrapper {
+  font-size: 14px;
+}
+
+.db-analytics-header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-analytics-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+}
+
+.db-analytics-time-field {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.db-analytics-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .db-analytics-filter-rows {
   display: flex;
   flex-direction: column;
@@ -6905,12 +7147,17 @@ pre {
   line-height: 30px;
   padding: 0 10px;
   font-size: 13px;
-  border-radius: 4px;
-  border-inline-start-width: 1px !important;
+  border-radius: 0;
 }
 
-.db-datetime-presets .ant-radio-button-wrapper:not(:first-child)::before {
-  display: none !important;
+.db-datetime-presets .ant-radio-button-wrapper:first-child {
+  border-start-start-radius: 4px;
+  border-end-start-radius: 4px;
+}
+
+.db-datetime-presets .ant-radio-button-wrapper:last-child {
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
 }
 
 .db-datetime-inputs {
@@ -6936,3 +7183,1002 @@ pre {
   flex: 0 0 190px;
   width: 190px;
 }
+
+.db-datetime-range-selector.no-presets {
+  width: 100%;
+}
+
+.db-datetime-range-selector.no-presets .db-datetime-inputs {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.db-datetime-range-selector.no-presets .db-datetime-date-picker {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+}
+
+.db-datetime-range-selector.no-presets .db-datetime-time-picker {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+}
+
+/* 表格状态列微胶囊软着色样式 (现代发光状态指示圆点) */
+.db-record-table .ant-tag {
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-weight: 500;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 20px;
+}
+
+.db-record-table .ant-tag-green {
+  background: #f0fdf4 !important;
+  border-color: #bbf7d0 !important;
+  color: #15803d !important;
+}
+
+.db-record-table .ant-tag-green::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.db-record-table .ant-tag-red {
+  background: #fef2f2 !important;
+  border-color: #fecaca !important;
+  color: #b91c1c !important;
+}
+
+.db-record-table .ant-tag-red::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+/* 常用筛选标签 Chip 风格优化 */
+.db-saved-filter {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px 1px 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  transition: all 0.2s ease;
+}
+
+.db-saved-filter:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.db-saved-filter .ant-btn {
+  height: 24px !important;
+  line-height: 24px !important;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1d4ed8;
+  padding: 0 4px;
+}
+
+.db-saved-filter .ant-btn.ant-btn-circle {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  font-size: 10px;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+}
+
+.db-saved-filter .ant-btn.ant-btn-circle:hover {
+  color: #ef4444 !important;
+  background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* 查询主按钮轻度微弥散阴影 */
+.db-filter-actions .ant-btn-primary {
+  box-shadow: 0 2px 6px -1px rgba(22, 119, 255, 0.32);
+}
+
+/* ==================== 工作流运行分析：技术视角 & 业务运营视角扩展样式 ==================== */
+.db-analytics-view-switcher {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.db-analytics-view-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.db-analytics-view-tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.db-analytics-view-tab:hover {
+  border-color: #93c5fd;
+  background: #f0f9ff;
+}
+
+.db-analytics-view-tab.active {
+  border-color: #2563eb;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+  box-shadow: 0 2px 10px -2px rgba(37, 99, 235, 0.16);
+}
+
+.db-analytics-view-tab-icon {
+  font-size: 20px;
+  line-height: 1;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.db-analytics-view-tab.active .db-analytics-view-tab-icon {
+  border-color: #bfdbfe;
+  background: #dbeafe;
+}
+
+.db-analytics-view-tab-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.db-analytics-view-tab-text strong {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.db-analytics-view-tab.active .db-analytics-view-tab-text strong {
+  color: #1d4ed8;
+}
+
+.db-analytics-view-tab-text small {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.db-analytics-subcard-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-analytics-subcard-title::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: #3b82f6;
+}
+
+/* 1. 主链路漏斗与转化分析 */
+.db-analytics-funnel-layout {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .db-analytics-funnel-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-analytics-funnel-stages,
+.db-analytics-funnel-conds {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.db-analytics-funnel-stage-row {
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.db-analytics-funnel-stage-row:last-child {
+  margin-bottom: 0;
+}
+
+.db-analytics-funnel-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.db-analytics-funnel-stage-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.db-analytics-funnel-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.db-analytics-funnel-step-num.success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.db-analytics-funnel-stage-name strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.db-analytics-funnel-stage-name small {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.db-analytics-funnel-stage-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.db-analytics-funnel-count {
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.db-analytics-funnel-step-rate {
+  color: #475569;
+  font-size: 12px;
+}
+
+.db-analytics-funnel-step-rate.has-drop {
+  color: #d97706;
+}
+
+.db-analytics-funnel-bar-track {
+  height: 10px;
+  background: #f1f5f9;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.db-analytics-funnel-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.db-analytics-funnel-bar-fill.success {
+  background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+}
+
+.db-analytics-funnel-stage-drop-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #475569;
+  background: #f8fafc;
+  padding: 5px 10px;
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+
+.db-analytics-funnel-note-pass {
+  color: #059669;
+}
+
+.db-analytics-funnel-note-drop {
+  color: #d97706;
+}
+
+.db-analytics-funnel-cond-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 430px;
+  overflow-y: auto;
+}
+
+.db-analytics-funnel-cond-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.db-analytics-funnel-cond-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.db-analytics-funnel-dual-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  display: flex;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.db-analytics-funnel-dual-bar .pass {
+  background: #10b981;
+  height: 100%;
+}
+
+.db-analytics-funnel-dual-bar .drop {
+  background: #f59e0b;
+  height: 100%;
+}
+
+.db-analytics-funnel-cond-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.db-analytics-funnel-cond-foot .pass-label {
+  color: #059669;
+  font-weight: 500;
+}
+
+.db-analytics-funnel-cond-foot .drop-label {
+  color: #d97706;
+  font-weight: 500;
+}
+
+.db-analytics-funnel-cond-drops {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #f1f5f9;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 2. 未回复（静默）原因归因看板 */
+.db-analytics-noreply-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .db-analytics-noreply-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-analytics-noreply-reasons,
+.db-analytics-noreply-branches,
+.db-analytics-noreply-reasons-full {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.db-analytics-noreply-reasons-full .db-analytics-noreply-reason-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.db-analytics-noreply-reason-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.db-analytics-noreply-reason-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-analytics-noreply-reason-card.error_interrupted {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.db-analytics-noreply-reason-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.db-analytics-noreply-reason-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.db-analytics-noreply-reason-val {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.db-analytics-noreply-reason-val strong {
+  font-size: 20px;
+  color: #0f172a;
+}
+
+.db-analytics-noreply-reason-val span {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.db-analytics-noreply-reason-rates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.db-analytics-noreply-reason-global-rate {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.db-analytics-noreply-reason-desc {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.db-analytics-silent-branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-analytics-silent-branch-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.db-analytics-silent-branch-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.db-analytics-silent-branch-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.db-analytics-silent-branch-stats {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.db-analytics-silent-branch-stats strong {
+  color: #0f172a;
+}
+
+.db-analytics-silent-branch-stats span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+/* 3. 条件分支走向时序趋势 */
+.db-analytics-trend-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.db-analytics-trend-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.db-analytics-trend-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.db-analytics-trend-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.db-analytics-trend-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.db-analytics-trend-legend-item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.db-analytics-trend-legend-item small {
+  color: #64748b;
+}
+
+.db-analytics-trend-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.db-analytics-trend-columns {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 190px;
+  padding: 14px 12px 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.db-analytics-trend-col {
+  flex: 1 0 42px;
+  max-width: 72px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.db-analytics-trend-col-total {
+  font-size: 11px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.db-analytics-trend-col-stack {
+  width: 28px;
+  flex: 1;
+  background: #f1f5f9;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.db-analytics-trend-col-seg {
+  width: 100%;
+  transition: height 0.25s ease;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.db-analytics-trend-col-seg:last-child {
+  border-bottom: none;
+}
+
+.db-analytics-trend-col-label {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.db-analytics-trend-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.db-analytics-trend-tooltip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.db-analytics-trend-tooltip-row i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.db-analytics-trend-table-wrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.db-analytics-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.db-analytics-mini-table th,
+.db-analytics-mini-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.db-analytics-mini-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+
+.db-analytics-mini-table tr:last-child td {
+  border-bottom: none;
+}
+
+.db-analytics-trend-th-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.db-analytics-trend-cell-rate {
+  font-weight: 600;
+  color: #0f172a;
+  margin-right: 4px;
+}
+
+.db-analytics-trend-cell-count {
+  color: #64748b;
+}
+
+/* 4. 对话互动深度与咨询时段分布 */
+.db-analytics-ops-bottom-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+@media (max-width: 1180px) {
+  .db-analytics-ops-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-analytics-ops-subcard {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.db-analytics-ops-subcard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.db-analytics-depth-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.db-analytics-depth-row {
+  display: grid;
+  grid-template-columns: 150px 1fr 90px;
+  align-items: center;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.db-analytics-depth-label {
+  display: flex;
+  flex-direction: column;
+}
+
+.db-analytics-depth-label strong {
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.db-analytics-depth-label small {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.db-analytics-depth-stats {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.db-analytics-depth-stats strong {
+  color: #0f172a;
+}
+
+.db-analytics-depth-stats span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.db-analytics-hourly-chart {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(18px, 1fr));
+  gap: 4px;
+  height: 185px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 10px 8px;
+  align-items: end;
+}
+
+.db-analytics-hourly-col {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.db-analytics-hourly-bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.db-analytics-hourly-val {
+  font-size: 10px;
+  color: #475569;
+  margin-bottom: 2px;
+  line-height: 1;
+}
+
+.db-analytics-hourly-bar-total {
+  width: 14px;
+  max-width: 100%;
+  background: #bfdbfe;
+  border-radius: 4px 4px 2px 2px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  transition: height 0.25s ease;
+}
+
+.db-analytics-hourly-bar-reply {
+  width: 100%;
+  background: #2563eb;
+  border-radius: 2px;
+}
+
+.db-analytics-hourly-label {
+  font-size: 10px;
+  color: #64748b;
+  line-height: 1;
+}
+
+/* 按日会话数与触发轮次折线图 */
+.db-analytics-daily-chart-card {
+  margin-top: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px 10px;
+}
+
+.db-analytics-daily-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.db-analytics-daily-chart-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.db-analytics-daily-chart-title strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.db-analytics-daily-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.db-analytics-daily-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+  font-weight: 500;
+}
+
+.db-analytics-daily-legend-item i {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+  position: relative;
+}
+
+.db-analytics-daily-legend-item i::after {
+  content: '';
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffffff;
+  top: -2px;
+  left: 3.5px;
+}
+
+.db-analytics-daily-legend-item.trigger i {
+  background: #10b981;
+}
+
+.db-analytics-daily-legend-item.trigger i::after {
+  border: 2px solid #10b981;
+}
+
+.db-analytics-daily-legend-item.conv i {
+  background: #3b82f6;
+}
+
+.db-analytics-daily-legend-item.conv i::after {
+  border: 2px solid #3b82f6;
+}
+
+.db-analytics-daily-svg-wrap {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 8px 2px;
+  overflow-x: auto;
+}
+
+.db-analytics-daily-svg {
+  width: 100%;
+  min-width: 560px;
+  height: 195px;
+  display: block;
+}
+
+.db-analytics-daily-point-group {
+  cursor: pointer;
+}
+
+.db-analytics-daily-hover-guide {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.db-analytics-daily-point-group:hover .db-analytics-daily-hover-guide {
+  opacity: 1;
+}
+
+.db-analytics-daily-point-group:hover circle {
+  r: 6px;
+}
+
+

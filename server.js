@@ -1367,6 +1367,7 @@ function saveDbConfig(value) {
   }
   if (existingIndex >= 0) configs[existingIndex] = config;
   else configs.push(config);
+  clearDbConversationCandidateCache();
   writePrivateJson(DB_CONFIGS_FILE, { configs });
   return publicDbConfig(config);
 }
@@ -1381,6 +1382,7 @@ async function deleteDbConfig(configId) {
     throw err;
   }
   const [config] = configs.splice(existingIndex, 1);
+  clearDbConversationCandidateCache();
   const deletingConnectedConfig = dbConnectionState.configId === config.id
     && dbConnectionState.fingerprint === dbConnectionFingerprint(config);
   if (deletingConnectedConfig) {
@@ -1583,6 +1585,44 @@ async function withDbClientQueue(callback) {
   }
 }
 
+// 测试库升级为 event_id 后，在读取边界提供旧字段别名；线上旧结构直接使用原查询。
+async function dbSchemaReadClient(client) {
+  const columns = (await client.query(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name IN ('conversation_messages', 'workflow_node_executions')
+      AND column_name IN ('trigger_message_id', 'event_id', 'run_id', 'temporal_workflow_id')
+  `)).rows;
+  const aliases = ['conversation_messages', 'workflow_node_executions'].map(table => {
+    const available = new Set(columns.filter(column => column.table_name === table).map(column => column.column_name));
+    const fields = [['trigger_message_id', 'event_id'], ['run_id', 'temporal_workflow_id']]
+      .filter(([legacy, current]) => !available.has(legacy) && available.has(current))
+      .map(([legacy, current]) => `source.${current} AS ${legacy}`);
+    return { table, fields };
+  }).filter(item => item.fields.length);
+  if (!aliases.length) return client;
+  return {
+    query(sql, params) {
+      const definitions = [];
+      let text = sql;
+      for (const { table, fields } of aliases) {
+        const original = `public.${table}`;
+        if (!text.includes(original)) continue;
+        const alias = `mq_compatible_${table}`;
+        text = text.replaceAll(original, alias);
+        definitions.push(`${alias} AS NOT MATERIALIZED (SELECT source.*, ${fields.join(', ')} FROM ${original} source)`);
+      }
+      if (definitions.length) {
+        text = /^\s*WITH\s+/i.test(text)
+          ? text.replace(/^(\s*WITH\s+)/i, `$1${definitions.join(', ')}, `)
+          : `WITH ${definitions.join(', ')} ${text}`;
+      }
+      return client.query(text, params);
+    }
+  };
+}
+
 async function withDbClientOnce(configId, callback, { allowConnect = false } = {}) {
   const config = dbConfig(configId);
   const fingerprint = dbConnectionFingerprint(config);
@@ -1611,7 +1651,7 @@ async function withDbClientOnce(configId, callback, { allowConnect = false } = {
   setDbConnectionState(config, 'connected');
   try {
     await client.query('BEGIN READ ONLY');
-    const result = await callback(client);
+    const result = await callback(await dbSchemaReadClient(client));
     await client.query('COMMIT');
     return result;
   } catch (err) {
@@ -2851,8 +2891,15 @@ async function listDbConversations(url) {
   // 先按必填的工作流和时间范围聚合候选会话，避免在每个可选筛选条件中重复计算最新消息时间。
   // 界面结束时间包含整秒，用下一秒的排他上界覆盖毫秒数据，保持时间列可用索引。
   const endExclusive = new Date(endDay + 1000).toISOString().slice(0, 19).replace('T', ' ');
-  const activeCfgId = String(configId || dbConnectionStatus().configId || '').trim();
-  const cacheKey = JSON.stringify([activeCfgId, workflowId, startTime, endExclusive, conversationId, friendNick, keyword, hasError]);
+  const config = dbConfig(configId);
+  const fingerprint = dbConnectionFingerprint(config);
+  const connection = dbConnectionStatus(config.id);
+  if (!dbPool || dbPoolFingerprint !== fingerprint || connection.status !== 'connected') {
+    const error = new Error('数据库未连接，请先点击“建立连接”后再查询');
+    error.statusCode = 409;
+    throw error;
+  }
+  const cacheKey = JSON.stringify([config.id, fingerprint, workflowId, startTime, endExclusive, conversationId, friendNick, keyword, hasError]);
   const pageCacheKey = `${pageNo}:${pageSize}`;
   let cachedEntry = forceRefresh ? null : getDbConversationCandidateCache(cacheKey);
   if (cachedEntry && cachedEntry.pageItems.has(pageCacheKey)) {
@@ -3019,7 +3066,8 @@ async function listDbConversations(url) {
             )
         )`);
       }
-      // 日期表示期间有过消息；最近消息时间仅用于排序，不再决定会话是否入选。
+      // 以学员消息确定候选会话；允许缺少会话主记录，但排除明确软删除的会话。
+      // 最近消息时间仅用于排序，不再决定会话是否入选。
       const conversationSql = `WITH active_conversations AS MATERIALIZED (
           SELECT m.workflow_id,
                  m.conversation_id,
@@ -3032,8 +3080,8 @@ async function listDbConversations(url) {
             ${activeConversationIdClause}
           GROUP BY m.workflow_id, m.conversation_id
         ), candidates AS MATERIALIZED (
-          SELECT c.workflow_id,
-                 c.conversation_id,
+          SELECT active.workflow_id,
+                 active.conversation_id,
                  c.status,
                  COALESCE(
                    GREATEST(active.window_last_user_at, c.last_message_at),
@@ -3041,11 +3089,10 @@ async function listDbConversations(url) {
                    c.last_message_at
                  ) AS last_message_at
           FROM active_conversations active
-          JOIN public.conversations c
+          LEFT JOIN public.conversations c
             ON c.workflow_id = active.workflow_id
            AND c.conversation_id = active.conversation_id
-           AND c.deleted_at IS NULL
-          WHERE c.workflow_id = $1
+          WHERE c.deleted_at IS NULL
         ), filtered AS (
           SELECT candidate.*${friendNick ? ', nickname.friend_nick' : ''}
           FROM candidates candidate
@@ -3378,6 +3425,154 @@ function aggregateRawWorkflowAnalyticsInput({ messages = [], executions = [] }) 
       trigger_count: 1
     }));
 
+  const conditionTimeStats = normalizedExecs
+    .filter(e => e.nodeType === 'condition')
+    .map(e => {
+      const rawTime = String(e.startedAt || e.completedAt || '').trim();
+      const hourMatch = rawTime.match(/^\d{4}-(\d{2}-\d{2})[T\s](\d{2})/);
+      const dateMatch = rawTime.match(/^(\d{4}-\d{2}-\d{2})/);
+      const timeBucket = hourMatch ? `${hourMatch[1]} ${hourMatch[2]}:00` : (dateMatch ? dateMatch[1] : '未知日期');
+      return {
+        node_id: e.nodeId,
+        time_bucket: timeBucket,
+        condition_output: typeof e.outputs === 'string' ? e.outputs : JSON.stringify(e.outputs || {}),
+        execution_count: 1,
+        trigger_count: 1
+      };
+    });
+
+  const noReplyStats = [];
+  const noReplyOccByType = new Map();
+  byTrigger.forEach((items, triggerId) => {
+    if (repliedTriggers.has(triggerId)) return;
+    const convId = items[0]?.convId || '';
+    const hasError = items.some(i => i.isError);
+    const condItems = items.filter(i => i.nodeType === 'condition');
+    const lastCond = condItems.at(-1);
+    const lastItem = items.at(-1);
+    const triggerItem = items.find(i => i.nodeType === 'lingxi_trigger' || i.nodeName === '灵犀触发器') || items[0];
+    const occurredAt = triggerItem?.startedAt || lastItem?.completedAt || lastItem?.startedAt || '';
+    const sumDurationMs = items.reduce((s, i) => s + i.durationMs, 0);
+    const reasonType = hasError ? 'error_interrupted' : (lastCond ? 'condition_silent' : 'normal_no_send');
+    const condOutputStr = lastCond ? (typeof lastCond.outputs === 'string' ? lastCond.outputs : JSON.stringify(lastCond.outputs || {})) : null;
+    if (!noReplyOccByType.has(reasonType)) noReplyOccByType.set(reasonType, []);
+    noReplyOccByType.get(reasonType).push({
+      conversation_id: convId,
+      trigger_id: triggerId,
+      occurred_at: occurredAt,
+      duration_ms: sumDurationMs,
+      last_node_id: lastItem?.nodeId || '',
+      last_node_name: lastItem?.nodeName || '',
+      last_node_type: lastItem?.nodeType || '',
+      cond_node_id: lastCond?.nodeId || '',
+      cond_node_name: lastCond?.nodeName || '',
+      cond_output: condOutputStr
+    });
+    noReplyStats.push({
+      reason_type: reasonType,
+      cond_node_id: lastCond?.nodeId || '',
+      cond_node_name: lastCond?.nodeName || '',
+      cond_output: condOutputStr,
+      trigger_count: 1,
+      conversation_count: convId ? 1 : 0,
+      sample_conversation_id: convId,
+      sample_trigger_id: triggerId
+    });
+  });
+  // Attach occurrences to the first row of each reason_type in noReplyStats
+  const attachedReasonTypes = new Set();
+  noReplyStats.forEach(row => {
+    if (!attachedReasonTypes.has(row.reason_type)) {
+      attachedReasonTypes.add(row.reason_type);
+      row.occurrences = noReplyOccByType.get(row.reason_type) || [];
+    }
+  });
+
+  const dailyMap = new Map();
+  activeMessages.forEach(msg => {
+    const triggerId = dbTriggerIdOf(msg);
+    if (!triggerId) return;
+    const convId = String(msg.conversation_id ?? msg.conversationId ?? '');
+    const rawTs = String(msg.message_timestamp ?? msg.messageTimestamp ?? '').trim();
+    const dateMatch = rawTs.match(/^(\d{4}-\d{2}-\d{2})/);
+    let dayStr = dateMatch ? dateMatch[1] : '';
+    if (!dayStr && rawTs) {
+      const d = new Date(rawTs.replace(' ', 'T'));
+      if (!Number.isNaN(d.getTime())) {
+        dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }
+    }
+    if (!dayStr) return;
+    if (!dailyMap.has(dayStr)) {
+      dailyMap.set(dayStr, {
+        day_date: dayStr,
+        convs: new Set(),
+        errorConvs: new Set(),
+        trigger_count: 0,
+        replied_count: 0,
+        error_trigger_count: 0
+      });
+    }
+    const entry = dailyMap.get(dayStr);
+    if (convId) entry.convs.add(convId);
+    entry.trigger_count += 1;
+    if (repliedTriggers.has(triggerId)) entry.replied_count += 1;
+    if (errorTriggers.has(triggerId)) {
+      entry.error_trigger_count += 1;
+      if (convId) entry.errorConvs.add(convId);
+    }
+  });
+  const dailyTrend = [...dailyMap.values()]
+    .sort((a, b) => a.day_date.localeCompare(b.day_date))
+    .map(item => ({
+      day_date: item.day_date,
+      conversation_count: item.convs.size,
+      trigger_count: item.trigger_count,
+      replied_count: item.replied_count,
+      error_trigger_count: item.error_trigger_count,
+      error_conversation_count: item.errorConvs.size
+    }));
+
+  const convTurnMap = new Map();
+  triggerToConversation.forEach((convId, triggerId) => {
+    if (!convId) return;
+    if (!convTurnMap.has(convId)) convTurnMap.set(convId, []);
+    convTurnMap.get(convId).push(triggerId);
+  });
+  const convTurnEntries = [...convTurnMap.entries()].map(([convId, tIds]) => ({
+    convId,
+    turnCount: tIds.length,
+    latestTriggerId: tIds.at(-1) || ''
+  })).sort((a, b) => b.turnCount - a.turnCount);
+  const totalConvsForDepth = convTurnEntries.length;
+  const convDepth = {
+    total_convs: totalConvsForDepth,
+    avg_turns: totalConvsForDepth ? Number((convTurnEntries.reduce((s, c) => s + c.turnCount, 0) / totalConvsForDepth).toFixed(1)) : 0,
+    max_turns: convTurnEntries[0]?.turnCount || 0,
+    turns_1: convTurnEntries.filter(c => c.turnCount === 1).length,
+    turns_2_3: convTurnEntries.filter(c => c.turnCount >= 2 && c.turnCount <= 3).length,
+    turns_4_6: convTurnEntries.filter(c => c.turnCount >= 4 && c.turnCount <= 6).length,
+    turns_7_plus: convTurnEntries.filter(c => c.turnCount >= 7).length,
+    top_conversation_id: convTurnEntries[0]?.convId || '',
+    top_trigger_id: convTurnEntries[0]?.latestTriggerId || ''
+  };
+
+  const hourlyMap = new Map();
+  activeMessages.forEach(msg => {
+    const triggerId = dbTriggerIdOf(msg);
+    if (!triggerId) return;
+    const rawTs = String(msg.message_timestamp ?? msg.messageTimestamp ?? '').trim();
+    const d = rawTs ? new Date(rawTs.replace(' ', 'T')) : null;
+    if (!d || Number.isNaN(d.getTime())) return;
+    const hr = d.getHours();
+    if (!hourlyMap.has(hr)) hourlyMap.set(hr, { hour_of_day: hr, trigger_count: 0, replied_count: 0, error_count: 0 });
+    const entry = hourlyMap.get(hr);
+    entry.trigger_count += 1;
+    if (repliedTriggers.has(triggerId)) entry.replied_count += 1;
+    if (errorTriggers.has(triggerId)) entry.error_count += 1;
+  });
+  const hourlyActivity = [...hourlyMap.values()].sort((a, b) => a.hour_of_day - b.hour_of_day);
+
   const errorMap = new Map();
   normalizedExecs.filter(e => e.isError).forEach(e => {
     const msg = e.errorMessage.slice(0, 300);
@@ -3430,7 +3625,7 @@ function aggregateRawWorkflowAnalyticsInput({ messages = [], executions = [] }) 
     };
   }).sort((a, b) => b.error_count - a.error_count);
 
-  return { overview, latency, nodes, conditions, errors };
+  return { overview, latency, nodes, conditions, conditionTimeStats, noReplyStats, convDepth, hourlyActivity, dailyTrend, errors };
 }
 
 function buildDbWorkflowAnalytics({
@@ -3441,18 +3636,39 @@ function buildDbWorkflowAnalytics({
   latency = null,
   nodes = null,
   conditions = null,
+  conditionTimeStats = null,
+  noReplyStats = null,
+  convDepth = null,
+  hourlyActivity = null,
+  dailyTrend = null,
   errors = null,
   messages = [],
   executions = []
 } = {}) {
   const aggregated = overview
-    ? { overview: overview || {}, latency: latency || {}, nodes: nodes || [], conditions: conditions || [], errors: errors || [] }
+    ? {
+        overview: overview || {},
+        latency: latency || {},
+        nodes: nodes || [],
+        conditions: conditions || [],
+        conditionTimeStats: conditionTimeStats || [],
+        noReplyStats: noReplyStats || [],
+        convDepth: convDepth || {},
+        hourlyActivity: hourlyActivity || [],
+        dailyTrend: dailyTrend || [],
+        errors: errors || []
+      }
     : aggregateRawWorkflowAnalyticsInput({ messages, executions });
 
   const ov = aggregated.overview || {};
   const lat = aggregated.latency || {};
   const nodeRows = Array.isArray(aggregated.nodes) ? aggregated.nodes : [];
   const conditionRows = Array.isArray(aggregated.conditions) ? aggregated.conditions : [];
+  const conditionTimeRows = Array.isArray(aggregated.conditionTimeStats) ? aggregated.conditionTimeStats : [];
+  const noReplyRows = Array.isArray(aggregated.noReplyStats) ? aggregated.noReplyStats : [];
+  const convDepthRow = aggregated.convDepth || {};
+  const hourlyRows = Array.isArray(aggregated.hourlyActivity) ? aggregated.hourlyActivity : [];
+  const dailyTrendRows = Array.isArray(aggregated.dailyTrend) ? aggregated.dailyTrend : [];
   const errorRows = Array.isArray(aggregated.errors) ? aggregated.errors : [];
 
   const totalConversations = Number(ov.total_conversations || 0);
@@ -4026,8 +4242,528 @@ function buildDbWorkflowAnalytics({
   conditionNodes.forEach(c => {
     c.level = conditionLevelMap.get(c.nodeId) || 1;
     c.upstreamSources = upstreamByConditionId.get(c.nodeId) || [];
+    const defaultBranchItem = c.branches.find(b => b.isDefault);
+    const defaultLabel = defaultBranchItem ? defaultBranchItem.label : '默认';
+    const timeRowsForCond = conditionTimeRows.filter(r => String(r.node_id || '') === c.nodeId);
+    const bucketMap = new Map();
+    timeRowsForCond.forEach(r => {
+      const bucket = String(r.time_bucket || '').trim() || '未知';
+      const count = Number(r.execution_count || 0);
+      if (count <= 0) return;
+      if (!bucketMap.has(bucket)) {
+        bucketMap.set(bucket, { total: 0, byBranchId: new Map() });
+      }
+      const bEntry = bucketMap.get(bucket);
+      bEntry.total += count;
+      const matchedKeys = dbExtractMatchedBranches(r.condition_output, c.branches, defaultLabel);
+      if (!matchedKeys.length) {
+        bEntry.byBranchId.set('__unmatched__', (bEntry.byBranchId.get('__unmatched__') || 0) + count);
+        return;
+      }
+      matchedKeys.forEach(key => {
+        const branch = c.branches.find(item => item.id === key || item.label === key || (item.isDefault && (key === 'default' || key === 'else')));
+        const bId = branch ? branch.id : key;
+        bEntry.byBranchId.set(bId, (bEntry.byBranchId.get(bId) || 0) + count);
+      });
+    });
+    c.timeSeries = [...bucketMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([bucket, bEntry]) => {
+        const label = bucket.replace(/^\d{4}-/, '');
+        return {
+          bucket,
+          label,
+          timeBucket: label,
+          total: bEntry.total,
+          totalCount: bEntry.total,
+          branches: c.branches.map(b => {
+            const hitCount = bEntry.byBranchId.get(b.id) || 0;
+            const rate = dbRate(hitCount, bEntry.total);
+            return {
+              id: b.id,
+              branchKey: b.id,
+              label: b.label,
+              branchName: b.label,
+              isDefault: b.isDefault,
+              hitCount,
+              rate,
+              branchRate: rate
+            };
+          })
+        };
+      });
   });
   conditionNodes.sort((a, b) => (a.level - b.level) || (Number(b.inCurrentGraph) - Number(a.inCurrentGraph)) || ((a.position?.x || 0) - (b.position?.x || 0)) || (b.executionCount - a.executionCount));
+
+  // 5. Operations & Funnel Analytics
+  const activeCondNodes = conditionNodes.filter(c => c.inCurrentGraph !== false || c.triggerCount > 0);
+  const conditionFunnelSteps = activeCondNodes.map(c => {
+    const branchesWithFlow = c.branches.filter(b => b.hasReplySend || (b.downstreamConditions && b.downstreamConditions.length > 0));
+    const activeBranches = branchesWithFlow.length > 0
+      ? branchesWithFlow
+      : c.branches.filter(b => !b.isDefault && b.id !== '__unmatched__');
+    const activeBranchIds = new Set(activeBranches.map(b => b.id));
+    const forwardCount = c.branches.filter(b => activeBranchIds.has(b.id)).reduce((s, b) => s + (b.hitCount || 0), 0);
+    const dropBranches = c.branches
+      .filter(b => !activeBranchIds.has(b.id) && (b.hitCount || 0) > 0)
+      .sort((a, b) => b.hitCount - a.hitCount);
+    const dropCount = Math.max(0, c.triggerCount - forwardCount);
+    const passCount = Math.min(c.triggerCount, forwardCount);
+    const passRate = dbRate(passCount, c.triggerCount);
+    const dropRate = dbRate(dropCount, c.triggerCount);
+    const globalReachRate = Math.min(100, dbRate(c.triggerCount, totalTriggers));
+    return {
+      nodeId: c.nodeId,
+      nodeName: c.nodeName,
+      level: c.level,
+      reachedCount: c.triggerCount,
+      triggerHitCount: c.triggerCount,
+      reachedRate: globalReachRate,
+      globalReachRate,
+      forwardCount: passCount,
+      passCount,
+      forwardRate: passRate,
+      passRate,
+      dropCount,
+      dropRate,
+      activeBranches: activeBranches.map(b => ({ id: b.id, branchKey: b.id, label: b.label, branchName: b.label, hitCount: b.hitCount, branchRate: b.branchRate, hasReplySend: b.hasReplySend })),
+      dropBranches: dropBranches.map(b => ({ id: b.id, branchKey: b.id, label: b.label, branchName: b.label, hitCount: b.hitCount, branchRate: b.branchRate }))
+    };
+  });
+
+  // Macro conversion funnel stages
+  const firstLevelConds = activeCondNodes.filter(c => c.level === 1);
+  const reachedFirstCondCount = firstLevelConds.length
+    ? Math.min(executedTriggers, Math.max(...firstLevelConds.map(c => c.triggerCount), firstLevelConds.reduce((s, c) => s + c.triggerCount, 0)))
+    : executedTriggers;
+  const entryCount = totalUserMessages || totalTriggers;
+  const funnelStages = [
+    {
+      key: 'trigger_entry',
+      stageName: '收到学员消息触发',
+      title: '收到学员消息触发',
+      subtitle: '进入工作流触发器',
+      stageType: 'entry',
+      level: 0,
+      count: entryCount,
+      globalRate: 100,
+      stepRate: 100,
+      dropCount: pendingTriggers,
+      dropRate: dbRate(pendingTriggers, entryCount),
+      dropSummary: pendingTriggers > 0 ? `${pendingTriggers} 轮待处理/未启动` : '全部进入工作流执行',
+      dropReasons: pendingTriggers > 0 ? `${pendingTriggers} 轮待处理/未启动` : ''
+    }
+  ];
+  if (activeCondNodes.length > 0) {
+    // Group by condition level to form clean sequential funnel stages
+    const maxLevel = Math.max(...activeCondNodes.map(c => c.level));
+    let prevCount = entryCount;
+    for (let lvl = 1; lvl <= maxLevel; lvl++) {
+      const lvlConds = conditionFunnelSteps.filter(c => c.level === lvl);
+      if (!lvlConds.length) continue;
+      const primaryCond = [...lvlConds].sort((a, b) => b.reachedCount - a.reachedCount)[0];
+      const stageCount = lvlConds.length === 1
+        ? primaryCond.reachedCount
+        : Math.min(prevCount, lvlConds.reduce((s, c) => s + c.reachedCount, 0));
+      if (stageCount <= 0 && lvl > 1) continue;
+      const topDrop = primaryCond.dropBranches[0];
+      const dropFromPrev = Math.max(0, prevCount - stageCount);
+      const stageName = lvlConds.length === 1 ? `条件分流：${primaryCond.nodeName}` : `第 ${lvl} 级条件分流 (${lvlConds.map(c => c.nodeName).join(' / ')})`;
+      const dropSummary = topDrop
+        ? `本级分流拦截：${topDrop.label} (${topDrop.hitCount} 轮 · ${topDrop.branchRate}%)`
+        : `本级继续流转 ${primaryCond.forwardCount} 轮 (${primaryCond.forwardRate}%)`;
+      funnelStages.push({
+        key: `level_${lvl}_${primaryCond.nodeId}`,
+        nodeId: primaryCond.nodeId,
+        stageName,
+        title: stageName,
+        subtitle: `第 ${lvl} 层条件节点过滤`,
+        stageType: 'condition',
+        level: lvl,
+        count: stageCount,
+        globalRate: Math.min(100, dbRate(stageCount, totalTriggers)),
+        stepRate: Math.min(100, dbRate(stageCount, prevCount)),
+        dropCount: dropFromPrev,
+        dropRate: dbRate(dropFromPrev, prevCount),
+        forwardCount: primaryCond.forwardCount,
+        forwardRate: primaryCond.forwardRate,
+        dropSummary,
+        dropReasons: dropSummary
+      });
+      prevCount = stageCount;
+    }
+    const finalDrop = Math.max(0, prevCount - repliedTriggers);
+    const finalDropSummary = finalDrop > 0 ? `分流静默或未触发回复 ${finalDrop} 轮` : '';
+    funnelStages.push({
+      key: 'replied',
+      stageName: '成功发出 AI 消息回复',
+      title: '成功发出 AI 消息回复',
+      subtitle: '触发灵犀发信节点 (actionType=6)',
+      stageType: 'reply',
+      level: maxLevel + 1,
+      count: repliedTriggers,
+      globalRate: Math.min(100, dbRate(repliedTriggers, totalTriggers)),
+      stepRate: Math.min(100, dbRate(repliedTriggers, prevCount)),
+      dropCount: finalDrop,
+      dropRate: dbRate(finalDrop, prevCount),
+      dropSummary: finalDrop > 0 ? `分流静默或未触发回复 ${finalDrop} 轮` : '全部成功发出回复',
+      dropReasons: finalDropSummary
+    });
+  } else {
+    const baseCount = entryCount;
+    funnelStages.push({
+      key: 'workflow_exec',
+      stageName: '工作流节点执行',
+      title: '工作流节点执行',
+      subtitle: '执行工作流节点逻辑',
+      stageType: 'exec',
+      level: 1,
+      count: executedTriggers,
+      globalRate: Math.min(100, dbRate(executedTriggers, baseCount)),
+      stepRate: Math.min(100, dbRate(executedTriggers, baseCount)),
+      dropCount: pendingTriggers,
+      dropRate: dbRate(pendingTriggers, baseCount),
+      dropSummary: pendingTriggers > 0 ? `未执行 ${pendingTriggers} 轮` : '100% 启动执行',
+      dropReasons: pendingTriggers > 0 ? `未执行 ${pendingTriggers} 轮` : ''
+    });
+    funnelStages.push({
+      key: 'replied',
+      stageName: '成功发出 AI 消息回复',
+      title: '成功发出 AI 消息回复',
+      subtitle: '触发灵犀发信节点 (actionType=6)',
+      stageType: 'reply',
+      level: 2,
+      count: repliedTriggers,
+      globalRate: Math.min(100, dbRate(repliedTriggers, totalTriggers)),
+      stepRate: Math.min(100, dbRate(repliedTriggers, executedTriggers)),
+      dropCount: noReplyTriggers,
+      dropRate: dbRate(noReplyTriggers, executedTriggers),
+      dropSummary: noReplyTriggers > 0 ? `未发出回复 ${noReplyTriggers} 轮` : '全部成功回复',
+      dropReasons: noReplyTriggers > 0 ? `未发出回复 ${noReplyTriggers} 轮` : ''
+    });
+  }
+
+  // No-Reply Attribution
+  let conditionSilentTriggers = 0;
+  let normalNoSendTriggers = 0;
+  let errorInterruptedTriggers = 0;
+  const silentBranchGroupMap = new Map();
+  const rawOccByReasonKey = {
+    condition_filtered: [],
+    normal_no_send: [],
+    error_interrupted: [],
+    pending: []
+  };
+
+  const resolveConditionBranchLabel = (condIdRaw, condOutputRaw) => {
+    const condId = String(condIdRaw || '').trim();
+    if (!condId) return { condId: '', condName: '', branchId: '', branchLabel: '' };
+    const condNode = condById.get(condId);
+    const condName = condNode?.nodeName || condId;
+    const branchList = condNode?.branches || [];
+    const defBranch = branchList.find(b => b.isDefault);
+    const matchedKeys = dbExtractMatchedBranches(condOutputRaw, branchList, defBranch?.label || '默认');
+    const branchKey = matchedKeys[0] || 'default';
+    const branchObj = branchList.find(b => b.id === branchKey || b.label === branchKey || (b.isDefault && (branchKey === 'default' || branchKey === 'else')));
+    const branchLabel = branchObj?.label || (branchKey === 'default' ? '默认分支' : branchKey);
+    return {
+      condId,
+      condName,
+      branchId: branchObj?.id || branchKey,
+      branchLabel
+    };
+  };
+
+  noReplyRows.forEach(row => {
+    const cnt = Number(row.trigger_count || 0);
+    const convCnt = Number(row.conversation_count || 0);
+    if (cnt <= 0) return;
+    const rType = String(row.reason_type || '');
+    const normalizedReasonKey = (rType === 'condition_silent' || rType === 'condition_filtered')
+      ? 'condition_filtered'
+      : (rType === 'error_interrupted' ? 'error_interrupted' : (rType === 'pending' ? 'pending' : 'normal_no_send'));
+
+    if (Array.isArray(row.occurrences) && row.occurrences.length > 0) {
+      rawOccByReasonKey[normalizedReasonKey].push(...row.occurrences);
+    } else if (row.sample_conversation_id) {
+      rawOccByReasonKey[normalizedReasonKey].push({
+        conversation_id: row.sample_conversation_id,
+        trigger_id: row.sample_trigger_id || '',
+        occurred_at: row.last_occurred_at || '',
+        duration_ms: 0,
+        last_node_id: row.last_node_id || row.cond_node_id || '',
+        last_node_name: row.last_node_name || row.cond_node_name || '',
+        last_node_type: row.last_node_type || (row.cond_node_id ? 'condition' : ''),
+        cond_node_id: row.cond_node_id || row.last_cond_node_id || '',
+        cond_node_name: row.cond_node_name || row.last_cond_node_name || '',
+        cond_output: row.cond_output ?? row.last_cond_output ?? null
+      });
+    }
+
+    if (rType === 'error_interrupted') {
+      errorInterruptedTriggers += cnt;
+    } else if (rType === 'condition_silent' || rType === 'condition_filtered') {
+      conditionSilentTriggers += cnt;
+      const condId = String(row.cond_node_id || row.last_cond_node_id || '').trim();
+      const condNode = condById.get(condId);
+      const condName = condNode?.nodeName || String(row.cond_node_name || row.last_cond_node_name || condId || '条件节点');
+      const branchList = condNode?.branches || [];
+      const defBranch = branchList.find(b => b.isDefault);
+      const matchedKeys = dbExtractMatchedBranches(row.cond_output ?? row.last_cond_output, branchList, defBranch?.label || '默认');
+      const branchKey = matchedKeys[0] || 'default';
+      const branchObj = branchList.find(b => b.id === branchKey || b.label === branchKey || (b.isDefault && (branchKey === 'default' || branchKey === 'else')));
+      const branchLabel = branchObj?.label || (branchKey === 'default' ? '默认分支' : branchKey);
+      const groupKey = `${condId}:${branchObj?.id || branchKey}`;
+      if (!silentBranchGroupMap.has(groupKey)) {
+        silentBranchGroupMap.set(groupKey, {
+          key: groupKey,
+          nodeId: condId,
+          nodeName: condName,
+          branchId: branchObj?.id || branchKey,
+          branchKey: branchObj?.id || branchKey,
+          branchLabel,
+          branchName: branchLabel,
+          isDefault: Boolean(branchObj?.isDefault || branchKey === 'default' || branchKey === 'else'),
+          triggerCount: 0,
+          conversationCount: 0,
+          sampleConversationId: String(row.sample_conversation_id || ''),
+          sampleTriggerMessageId: String(row.sample_trigger_id || '')
+        });
+      }
+      const g = silentBranchGroupMap.get(groupKey);
+      g.triggerCount += cnt;
+      g.conversationCount += convCnt || 1;
+      if (!g.sampleConversationId && row.sample_conversation_id) {
+        g.sampleConversationId = String(row.sample_conversation_id);
+        g.sampleTriggerMessageId = String(row.sample_trigger_id || '');
+      }
+    } else {
+      normalNoSendTriggers += cnt;
+    }
+  });
+
+  const formatNoReplyOccurrences = rawList => {
+    const seen = new Set();
+    return (rawList || [])
+      .filter(occ => {
+        const k = `${occ.conversation_id || ''}:${occ.trigger_id || ''}`;
+        if (!occ.conversation_id && !occ.trigger_id) return false;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => String(b.occurred_at || '').localeCompare(String(a.occurred_at || '')))
+      .slice(0, 500)
+      .map((occ, idx) => {
+        const lastMeta = occ.last_node_id ? resolveNodeMeta(occ.last_node_id, occ.last_node_name, occ.last_node_type) : null;
+        const condInfo = resolveConditionBranchLabel(occ.cond_node_id, occ.cond_output);
+        return {
+          key: `noreply:${occ.conversation_id || ''}:${occ.trigger_id || ''}:${idx}`,
+          seqNo: idx + 1,
+          conversationId: String(occ.conversation_id || ''),
+          triggerMessageId: String(occ.trigger_id || ''),
+          occurredAt: formatDbDisplayDateTimeLoose(occ.occurred_at),
+          durationMs: Math.max(0, Number(occ.duration_ms || 0) || 0),
+          lastNodeId: lastMeta?.nodeId || String(occ.last_node_id || ''),
+          lastNodeName: lastMeta?.nodeName || String(occ.last_node_name || ''),
+          lastNodeType: lastMeta?.nodeType || String(occ.last_node_type || ''),
+          condNodeId: condInfo.condId,
+          condNodeName: condInfo.condName || String(occ.cond_node_name || ''),
+          condBranchLabel: condInfo.branchLabel
+        };
+      });
+  };
+
+  // Fallback if noReplyRows wasn't populated (e.g. legacy callers passing only overview)
+  const totalCountedNoReply = conditionSilentTriggers + normalNoSendTriggers + errorInterruptedTriggers;
+  if (totalCountedNoReply === 0 && noReplyTriggers > 0) {
+    errorInterruptedTriggers = Math.min(noReplyTriggers, errorTriggers);
+    const rem = Math.max(0, noReplyTriggers - errorInterruptedTriggers);
+    if (activeCondNodes.length > 0) {
+      conditionSilentTriggers = rem;
+    } else {
+      normalNoSendTriggers = rem;
+    }
+  }
+
+  const totalNoReplyWithPending = noReplyTriggers + pendingTriggers;
+  const noReplyReasons = [
+    {
+      key: 'condition_filtered',
+      type: 'condition_filtered',
+      label: '符合不回复条件',
+      desc: '经过条件节点判断后走入不回复/静默分支（如无意向、非目标客群、无需打扰）',
+      color: 'blue',
+      count: conditionSilentTriggers,
+      triggerCount: conditionSilentTriggers,
+      rateOfNoReply: dbRate(conditionSilentTriggers, totalNoReplyWithPending),
+      shareOfNoReply: dbRate(conditionSilentTriggers, totalNoReplyWithPending),
+      rateOfTotal: dbRate(conditionSilentTriggers, totalUserMessages || totalTriggers),
+      shareOfTotalTriggers: dbRate(conditionSilentTriggers, totalUserMessages || totalTriggers),
+      occurrences: formatNoReplyOccurrences(rawOccByReasonKey.condition_filtered)
+    },
+    {
+      key: 'normal_no_send',
+      type: 'normal_no_send',
+      label: '常规动作完成（无发信指令）',
+      desc: '仅执行打标、变量更新或非回复类动作，流程设计本身不发送聊天消息',
+      color: 'cyan',
+      count: normalNoSendTriggers,
+      triggerCount: normalNoSendTriggers,
+      rateOfNoReply: dbRate(normalNoSendTriggers, totalNoReplyWithPending),
+      shareOfNoReply: dbRate(normalNoSendTriggers, totalNoReplyWithPending),
+      rateOfTotal: dbRate(normalNoSendTriggers, totalUserMessages || totalTriggers),
+      shareOfTotalTriggers: dbRate(normalNoSendTriggers, totalUserMessages || totalTriggers),
+      occurrences: formatNoReplyOccurrences(rawOccByReasonKey.normal_no_send)
+    },
+    {
+      key: 'error_interrupted',
+      type: 'error_interrupted',
+      label: '节点执行异常中断',
+      desc: '工作流执行过程中发生节点报错或超时，导致未能走到发送消息节点',
+      color: 'red',
+      count: errorInterruptedTriggers,
+      triggerCount: errorInterruptedTriggers,
+      rateOfNoReply: dbRate(errorInterruptedTriggers, totalNoReplyWithPending),
+      shareOfNoReply: dbRate(errorInterruptedTriggers, totalNoReplyWithPending),
+      rateOfTotal: dbRate(errorInterruptedTriggers, totalUserMessages || totalTriggers),
+      shareOfTotalTriggers: dbRate(errorInterruptedTriggers, totalUserMessages || totalTriggers),
+      occurrences: formatNoReplyOccurrences(rawOccByReasonKey.error_interrupted)
+    },
+    {
+      key: 'pending',
+      type: 'pending',
+      label: '队列待处理 / 未触发执行',
+      desc: '已记录学员消息，但尚未产生工作流节点执行记录',
+      color: 'orange',
+      count: pendingTriggers,
+      triggerCount: pendingTriggers,
+      rateOfNoReply: dbRate(pendingTriggers, totalNoReplyWithPending),
+      shareOfNoReply: dbRate(pendingTriggers, totalNoReplyWithPending),
+      rateOfTotal: dbRate(pendingTriggers, totalUserMessages || totalTriggers),
+      shareOfTotalTriggers: dbRate(pendingTriggers, totalUserMessages || totalTriggers),
+      occurrences: formatNoReplyOccurrences(rawOccByReasonKey.pending)
+    }
+  ].filter(item => item.count > 0 || item.key === 'condition_filtered' || item.key === 'error_interrupted');
+
+  const silentBranches = [...silentBranchGroupMap.values()]
+    .sort((a, b) => b.triggerCount - a.triggerCount)
+    .slice(0, 12)
+    .map(item => {
+      const shareRate = dbRate(item.triggerCount, Math.max(1, noReplyTriggers));
+      return {
+        ...item,
+        shareRate,
+        rateOfNoReply: shareRate,
+        rateOfTotal: dbRate(item.triggerCount, totalTriggers)
+      };
+    });
+
+  // Conversation Depth
+  const depthTotalConvs = Number(convDepthRow.total_convs || totalConversations || 0);
+  const turns1 = Number(convDepthRow.turns_1 || 0);
+  const turns2_3 = Number(convDepthRow.turns_2_3 || 0);
+  const turns4_6 = Number(convDepthRow.turns_4_6 || 0);
+  const turns7Plus = Number(convDepthRow.turns_7_plus || 0);
+  const multiTurnConvs = turns2_3 + turns4_6 + turns7Plus;
+  const avgTurns = Number(convDepthRow.avg_turns || (depthTotalConvs > 0 ? Number((totalTriggers / depthTotalConvs).toFixed(1)) : 0));
+  const maxTurns = Number(convDepthRow.max_turns || (depthTotalConvs > 0 ? Math.max(1, Math.ceil(avgTurns)) : 0));
+  const deepestSample = convDepthRow.top_conversation_id ? {
+    conversationId: String(convDepthRow.top_conversation_id),
+    triggerMessageId: String(convDepthRow.top_trigger_id || ''),
+    turns: maxTurns
+  } : null;
+
+  const conversationDepth = {
+    totalConversations: depthTotalConvs,
+    avgTurns,
+    maxTurns,
+    multiTurnConversations: multiTurnConvs,
+    multiTurnRate: dbRate(multiTurnConvs, depthTotalConvs),
+    singleTurnRate: dbRate(turns1, depthTotalConvs),
+    topSample: deepestSample,
+    deepestSample,
+    buckets: [
+      { key: '1', label: '1 轮问答', desc: '单次浅层触达即结束', shortLabel: '1 轮', count: turns1, rate: dbRate(turns1, depthTotalConvs), color: '#94a3b8' },
+      { key: '2-3', label: '2 ~ 3 轮互动', desc: '初步多轮问答互动', shortLabel: '2~3 轮', count: turns2_3, rate: dbRate(turns2_3, depthTotalConvs), color: '#3b82f6' },
+      { key: '4-6', label: '4 ~ 6 轮沟通', desc: '深度多轮咨询沟通', shortLabel: '4~6 轮', count: turns4_6, rate: dbRate(turns4_6, depthTotalConvs), color: '#6366f1' },
+      { key: '7+', label: '7 轮以上高频', desc: '高频高意向潜客深度互动', shortLabel: '7+ 轮', count: turns7Plus, rate: dbRate(turns7Plus, depthTotalConvs), color: '#10b981' }
+    ]
+  };
+
+  // Hourly Activity Distribution
+  const hourlyByHour = new Map(hourlyRows.map(r => [Number(r.hour_of_day), r]));
+  const hourlyDistribution = Array.from({ length: 24 }, (_, hr) => {
+    const r = hourlyByHour.get(hr);
+    const tCount = Number(r?.trigger_count || 0);
+    const cCount = Number(r?.conversation_count || tCount);
+    const repCount = Number(r?.replied_count || 0);
+    const errCount = Number(r?.error_count || 0);
+    return {
+      hour: hr,
+      label: `${String(hr).padStart(2, '0')}:00`,
+      triggerCount: tCount,
+      conversationCount: cCount,
+      repliedCount: repCount,
+      noReplyCount: Math.max(0, tCount - repCount),
+      errorCount: errCount,
+      replyRate: dbRate(repCount, tCount)
+    };
+  });
+  const peakHourItem = [...hourlyDistribution].sort((a, b) => b.triggerCount - a.triggerCount)[0] || null;
+  const timeActivity = {
+    peakHour: peakHourItem && peakHourItem.triggerCount > 0 ? peakHourItem : null,
+    hourly: hourlyDistribution,
+    hours: hourlyDistribution
+  };
+
+  // Daily Trend (Conversations & Triggers by Day)
+  const dailyByDate = new Map();
+  dailyTrendRows.forEach(r => {
+    const rawDate = String(r.day_date || r.date || '').trim().slice(0, 10);
+    if (!rawDate) return;
+    dailyByDate.set(rawDate, {
+      date: rawDate,
+      label: rawDate.replace(/^\d{4}-/, ''),
+      conversationCount: Number(r.conversation_count || r.conversationCount || 0),
+      triggerCount: Number(r.trigger_count || r.triggerCount || 0),
+      repliedCount: Number(r.replied_count || r.repliedCount || 0),
+      noReplyCount: Math.max(0, Number(r.trigger_count || r.triggerCount || 0) - Number(r.replied_count || r.repliedCount || 0)),
+      errorTriggerCount: Number(r.error_trigger_count || r.errorTriggerCount || 0),
+      errorConversationCount: Number(r.error_conversation_count || r.errorConversationCount || 0)
+    });
+  });
+
+  const startDatePart = String(startTime || '').trim().slice(0, 10);
+  const endDatePart = String(endTime || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(startDatePart) && /^\d{4}-\d{2}-\d{2}$/.test(endDatePart)) {
+    const startUtc = Date.parse(`${startDatePart}T00:00:00Z`);
+    const endUtc = Date.parse(`${endDatePart}T00:00:00Z`);
+    if (Number.isFinite(startUtc) && Number.isFinite(endUtc) && endUtc >= startUtc && (endUtc - startUtc) <= 31 * 86400000) {
+      for (let ts = startUtc; ts <= endUtc; ts += 86400000) {
+        const dStr = new Date(ts).toISOString().slice(0, 10);
+        if (!dailyByDate.has(dStr)) {
+          dailyByDate.set(dStr, {
+            date: dStr,
+            label: dStr.replace(/^\d{4}-/, ''),
+            conversationCount: 0,
+            triggerCount: 0,
+            repliedCount: 0,
+            noReplyCount: 0,
+            errorTriggerCount: 0,
+            errorConversationCount: 0
+          });
+        }
+      }
+    }
+  }
+
+  const dailySeries = [...dailyByDate.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(item => ({
+      ...item,
+      replyRate: dbRate(item.repliedCount, item.triggerCount)
+    }));
 
   // 4. Error Aggregation Top N
   const errorsList = errorRows.map((row, index) => {
@@ -4118,7 +4854,8 @@ function buildDbWorkflowAnalytics({
       triggerErrorRate: dbRate(errorTriggers, totalTriggers),
       totalNodeExecutions,
       errorNodeExecutions,
-      nodeErrorRate: dbRate(errorNodeExecutions, totalNodeExecutions)
+      nodeErrorRate: dbRate(errorNodeExecutions, totalNodeExecutions),
+      dailyTrend: dailySeries
     },
     latency: {
       endToEnd: {
@@ -4155,6 +4892,19 @@ function buildDbWorkflowAnalytics({
     errors: {
       totalErrorExecutions: errorNodeExecutions,
       items: errorsList
+    },
+    operations: {
+      funnel: {
+        stages: funnelStages,
+        conditionSteps: conditionFunnelSteps
+      },
+      noReplyAttribution: {
+        totalNoReply: totalNoReplyWithPending,
+        reasons: noReplyReasons,
+        silentBranches
+      },
+      conversationDepth,
+      timeActivity
     }
   };
 }
@@ -4290,7 +5040,15 @@ async function queryDbWorkflowAnalytics(url) {
             )
           ) FILTER (WHERE is_reply_send AND NOT is_error) AS reply_completed_at,
           SUM(duration_ms)::bigint AS sum_duration_ms,
-          BOOL_OR(is_reply_send AND NOT is_error) AS has_reply
+          BOOL_OR(is_reply_send AND NOT is_error) AS has_reply,
+          BOOL_OR(is_error) AS has_error,
+          BOOL_OR(node_type = 'condition') AS has_condition,
+          (ARRAY_AGG(node_id ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS last_node_id,
+          (ARRAY_AGG(node_name ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS last_node_name,
+          (ARRAY_AGG(node_type ORDER BY started_at DESC NULLS LAST, id DESC))[1] AS last_node_type,
+          (ARRAY_AGG(node_id ORDER BY started_at DESC NULLS LAST, id DESC) FILTER (WHERE node_type = 'condition'))[1] AS last_cond_node_id,
+          (ARRAY_AGG(node_name ORDER BY started_at DESC NULLS LAST, id DESC) FILTER (WHERE node_type = 'condition'))[1] AS last_cond_node_name,
+          (ARRAY_AGG(condition_output ORDER BY started_at DESC NULLS LAST, id DESC) FILTER (WHERE node_type = 'condition'))[1] AS last_cond_output
         FROM execs
         GROUP BY trigger_message_id, conversation_id
       ),
@@ -4359,6 +5117,103 @@ async function queryDbWorkflowAnalytics(url) {
         WHERE node_type = 'condition'
         GROUP BY node_id, condition_output
       ),
+      condition_time_stats AS (
+        SELECT
+          node_id,
+          CASE
+            WHEN ($3::timestamp - $2::timestamp) <= INTERVAL '36 hours'
+              THEN TO_CHAR(COALESCE(started_at, completed_at), 'MM-DD HH24:00')
+            ELSE TO_CHAR(COALESCE(started_at, completed_at), 'YYYY-MM-DD')
+          END AS time_bucket,
+          condition_output,
+          COUNT(*) AS execution_count,
+          COUNT(DISTINCT trigger_message_id) AS trigger_count
+        FROM execs
+        WHERE node_type = 'condition'
+          AND COALESCE(started_at, completed_at) IS NOT NULL
+        GROUP BY node_id, time_bucket, condition_output
+      ),
+      no_reply_stats AS (
+        SELECT
+          CASE
+            WHEN has_error THEN 'error_interrupted'
+            WHEN has_condition THEN 'condition_silent'
+            ELSE 'normal_no_send'
+          END AS reason_type,
+          last_cond_node_id AS cond_node_id,
+          last_cond_node_name AS cond_node_name,
+          last_cond_output AS cond_output,
+          COUNT(*) AS trigger_count,
+          COUNT(DISTINCT conversation_id) AS conversation_count,
+          (ARRAY_AGG(conversation_id ORDER BY trigger_started_at DESC NULLS LAST, trigger_message_id))[1] AS sample_conversation_id,
+          (ARRAY_AGG(trigger_message_id ORDER BY trigger_started_at DESC NULLS LAST, trigger_message_id))[1] AS sample_trigger_id,
+          jsonb_agg(
+            jsonb_build_object(
+              'conversation_id', conversation_id,
+              'trigger_id', trigger_message_id,
+              'occurred_at', COALESCE(trigger_started_at, last_completed_at),
+              'duration_ms', sum_duration_ms,
+              'last_node_id', last_node_id,
+              'last_node_name', last_node_name,
+              'last_node_type', last_node_type,
+              'cond_node_id', last_cond_node_id,
+              'cond_node_name', last_cond_node_name,
+              'cond_output', last_cond_output
+            )
+            ORDER BY trigger_started_at DESC NULLS LAST, trigger_message_id DESC
+          ) AS occurrences
+        FROM trigger_spans
+        WHERE NOT has_reply
+        GROUP BY reason_type, last_cond_node_id, last_cond_node_name, last_cond_output
+      ),
+      daily_trend_stats AS (
+        SELECT
+          TO_CHAR(t.message_timestamp, 'YYYY-MM-DD') AS day_date,
+          COUNT(DISTINCT t.conversation_id) AS conversation_count,
+          COUNT(*) AS trigger_count,
+          COUNT(*) FILTER (WHERE COALESCE(ts.has_reply, false)) AS replied_count,
+          COUNT(*) FILTER (WHERE COALESCE(ts.has_error, false)) AS error_trigger_count,
+          COUNT(DISTINCT t.conversation_id) FILTER (WHERE COALESCE(ts.has_error, false)) AS error_conversation_count
+        FROM active_triggers t
+        LEFT JOIN trigger_spans ts ON ts.trigger_message_id = t.trigger_message_id
+        WHERE t.message_timestamp IS NOT NULL
+        GROUP BY day_date
+        ORDER BY day_date ASC
+      ),
+      conv_turn_counts AS (
+        SELECT
+          conversation_id,
+          COUNT(*) AS turn_count,
+          (ARRAY_AGG(trigger_message_id ORDER BY message_timestamp DESC NULLS LAST))[1] AS last_trigger_id
+        FROM active_triggers
+        GROUP BY conversation_id
+      ),
+      conv_depth_stats AS (
+        SELECT
+          COUNT(*) AS total_convs,
+          COUNT(*) FILTER (WHERE turn_count = 1) AS turns_1,
+          COUNT(*) FILTER (WHERE turn_count BETWEEN 2 AND 3) AS turns_2_3,
+          COUNT(*) FILTER (WHERE turn_count BETWEEN 4 AND 6) AS turns_4_6,
+          COUNT(*) FILTER (WHERE turn_count >= 7) AS turns_7_plus,
+          COALESCE(ROUND(AVG(turn_count)::numeric, 1), 0) AS avg_turns,
+          COALESCE(MAX(turn_count), 0) AS max_turns,
+          (ARRAY_AGG(conversation_id ORDER BY turn_count DESC, conversation_id))[1] AS top_conversation_id,
+          (ARRAY_AGG(last_trigger_id ORDER BY turn_count DESC, conversation_id))[1] AS top_trigger_id
+        FROM conv_turn_counts
+      ),
+      hourly_activity_stats AS (
+        SELECT
+          EXTRACT(HOUR FROM t.message_timestamp)::int AS hour_of_day,
+          COUNT(*) AS trigger_count,
+          COUNT(DISTINCT t.conversation_id) AS conversation_count,
+          COUNT(*) FILTER (WHERE COALESCE(ts.has_reply, false)) AS replied_count,
+          COUNT(*) FILTER (WHERE COALESCE(ts.has_error, false)) AS error_count
+        FROM active_triggers t
+        LEFT JOIN trigger_spans ts ON ts.trigger_message_id = t.trigger_message_id
+        WHERE t.message_timestamp IS NOT NULL
+        GROUP BY hour_of_day
+        ORDER BY hour_of_day ASC
+      ),
       error_stats AS (
         SELECT
           node_id,
@@ -4396,6 +5251,11 @@ async function queryDbWorkflowAnalytics(url) {
         (SELECT row_to_json(latency_stats) FROM latency_stats) AS latency,
         COALESCE((SELECT json_agg(row_to_json(node_stats)) FROM node_stats), '[]'::json) AS nodes,
         COALESCE((SELECT json_agg(row_to_json(condition_stats)) FROM condition_stats), '[]'::json) AS conditions,
+        COALESCE((SELECT json_agg(row_to_json(condition_time_stats)) FROM condition_time_stats), '[]'::json) AS condition_time_stats,
+        COALESCE((SELECT json_agg(row_to_json(no_reply_stats)) FROM no_reply_stats), '[]'::json) AS no_reply_stats,
+        (SELECT row_to_json(conv_depth_stats) FROM conv_depth_stats) AS conv_depth,
+        COALESCE((SELECT json_agg(row_to_json(hourly_activity_stats)) FROM hourly_activity_stats), '[]'::json) AS hourly_activity,
+        COALESCE((SELECT json_agg(row_to_json(daily_trend_stats)) FROM daily_trend_stats), '[]'::json) AS daily_trend,
         COALESCE((SELECT json_agg(row_to_json(error_stats)) FROM error_stats), '[]'::json) AS errors
     `;
     const statsRow = (await client.query(analyticsSql, [workflowId, startTime, endExclusive])).rows[0] || {};
@@ -4407,6 +5267,11 @@ async function queryDbWorkflowAnalytics(url) {
       latency: statsRow.latency || {},
       nodes: statsRow.nodes || [],
       conditions: statsRow.conditions || [],
+      conditionTimeStats: statsRow.condition_time_stats || [],
+      noReplyStats: statsRow.no_reply_stats || [],
+      convDepth: statsRow.conv_depth || {},
+      hourlyActivity: statsRow.hourly_activity || [],
+      dailyTrend: statsRow.daily_trend || [],
       errors: statsRow.errors || []
     });
   });
@@ -5495,12 +6360,14 @@ module.exports = {
   buildSnapshots,
   casesFromCsvText,
   checkMqGatewayReady,
+  clearDbConversationCandidateCache,
   currentAppVersion,
   dbConfigRecord,
   ensureUpdateFilePermissions,
   getFallbackUpdateSource,
   isUpdateAllowedPath,
   publicDbConfig,
+  saveDbConfig,
   sendSnapshotToMq,
   sendSnapshotsInOrder,
   summarizeMqSend,

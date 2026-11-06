@@ -12,6 +12,7 @@ import {
   BranchesOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
+  CloseOutlined,
   CodeOutlined,
   CopyOutlined,
   DatabaseOutlined,
@@ -31,6 +32,7 @@ import {
   ReloadOutlined,
   RobotOutlined,
   SaveOutlined,
+  SearchOutlined,
   SendOutlined,
   SettingOutlined,
   SortAscendingOutlined,
@@ -281,19 +283,19 @@ function DbWorkflowEdge({ id, sourceX, sourceY, sourcePosition, targetX, targetY
 
 const dbWorkflowEdgeTypes = { dbWorkflowEdge: DbWorkflowEdge };
 
-function CaseListToolbar({ data }) {
+function CaseListToolbar({ data, onManageLabels }) {
   return (
-    <Flex className="list-page-toolbar" align="center" gap={12}>
-      <Space size={8}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => emitListToolbar('new-case')}>新增用例</Button>
-        <Dropdown trigger={['hover']} popupRender={() => <Flex className="case-import-menu" vertical gap={0}><Upload accept=".json,application/json" showUploadList={false} beforeUpload={file => { emitListToolbar('import-case', { file, format: 'json' }); return false; }}><Button type="text" block>导入 JSON</Button></Upload><Upload accept=".csv,text/csv" showUploadList={false} beforeUpload={file => { emitListToolbar('import-case', { file, format: 'csv' }); return false; }}><Button type="text" block>导入 CSV</Button></Upload></Flex>}><Button>导入测试用例</Button></Dropdown>
-        <Button onClick={() => emitListToolbar('export-cases')}>导出测试用例</Button>
-        <Text type="secondary">共 {data.allCount} 条</Text>
-      </Space>
+    <Flex className="list-page-toolbar case-list-toolbar" align="center" gap={12} wrap>
       <Space className="list-page-filters" size={8}>
         <Select aria-label="按业务场景筛选" value={data.scenario} onChange={value => emitListToolbarChange('case-scenario', value)} options={[{ value: '', label: '全部业务场景' }, ...data.scenarios.map(value => ({ value, label: value }))]} style={{ width: 180 }} />
         <Select aria-label="按标签筛选" mode="multiple" allowClear value={data.tagFilters} onChange={values => emitListToolbarChange('case-tags', values)} options={data.tags.map(value => ({ value, label: value }))} placeholder="筛选标签" style={{ width: 220 }} />
         <Input value={data.search} onChange={event => emitListToolbarChange('case-search', event.target.value)} placeholder="搜索测试场景名称 / 触发消息" style={{ width: 300 }} />
+      </Space>
+      <Space className="case-list-actions" size={8} wrap>
+        <Button onClick={onManageLabels}>标签场景管理</Button>
+        <Dropdown trigger={['hover']} popupRender={() => <Flex className="case-import-menu" vertical gap={0}><Upload accept=".json,application/json" showUploadList={false} beforeUpload={file => { emitListToolbar('import-case', { file, format: 'json' }); return false; }}><Button type="text" block>导入 JSON</Button></Upload><Upload accept=".csv,text/csv" showUploadList={false} beforeUpload={file => { emitListToolbar('import-case', { file, format: 'csv' }); return false; }}><Button type="text" block>导入 CSV</Button></Upload></Flex>}><Button>导入测试用例</Button></Dropdown>
+        <Button onClick={() => emitListToolbar('export-cases')}>导出测试用例</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => emitListToolbar('new-case')}>新增用例</Button>
       </Space>
     </Flex>
   );
@@ -323,7 +325,27 @@ function RecordListToolbar({ data }) {
   </Flex>;
 }
 
-function CaseListPage({ data }) {
+function CaseListWorkspace({ data, management }) {
+  const [managementOpen, setManagementOpen] = useState(false);
+  return <>
+    <CaseListPage data={data} onManageLabels={() => setManagementOpen(true)} />
+    <Modal
+      open={managementOpen}
+      title="标签场景管理"
+      centered
+      width={960}
+      footer={null}
+      destroyOnHidden
+      onCancel={() => setManagementOpen(false)}
+    >
+      <div className="case-label-management">
+        <LabelManagementPage data={management} />
+      </div>
+    </Modal>
+  </>;
+}
+
+function CaseListPage({ data, onManageLabels }) {
   if (data.loading) return <div className="ant-list-page list-page-loading"><Spin description="正在加载测试用例" /></div>;
   const bulkHeaderActive = data.selected > 0;
   const bulkHeader = <Flex className="list-bulk-header" justify="space-between" align="center">
@@ -360,7 +382,7 @@ function CaseListPage({ data }) {
     })
     : columns;
   return <div className="ant-list-page">
-    <CaseListToolbar data={data} />
+    <CaseListToolbar data={data} onManageLabels={onManageLabels} />
     <Table className="ant-list-table case-list-table" size="middle" rowKey="id" columns={tableColumns} dataSource={data.items} tableLayout="fixed" showSorterTooltip={{ target: 'sorter-icon' }} scroll={{ x: CASE_LIST_TABLE_SCROLL_X, y: 'calc(100vh - 224px)' }} onChange={(_, __, sorter, extra) => { if (extra.action === 'sort') emitListToolbar('set-case-sort', { field: sorter.field, order: sorter.order }); }} rowSelection={{ columnWidth: CASE_LIST_SELECTION_WIDTH, selectedRowKeys: data.selectedIds, onChange: keys => emitListToolbar('set-case-selection', { ids: keys, pageIds: data.items.map(item => item.id) }) }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [15, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-case-page', { pageNo, pageSize }) }} />
   </div>;
 }
@@ -443,7 +465,8 @@ function DbDateTimeRangePicker({
   endTime,
   maxDays = 7,
   onChange,
-  className = ''
+  className = '',
+  hidePresets = false
 }) {
   const presets = useMemo(() => {
     const list = [
@@ -458,6 +481,13 @@ function DbDateTimeRangePicker({
     }
     return list;
   }, [maxDays]);
+
+  const datePickerPresets = useMemo(() => {
+    return presets.map(item => ({
+      label: item.label,
+      value: item.getRange()
+    }));
+  }, [presets]);
 
   const dateValue = useMemo(() => {
     if (!startTime && !endTime) return null;
@@ -525,6 +555,15 @@ function DbDateTimeRangePicker({
         window.showGlobalMessage?.(`查询跨度最长为 ${maxDays} 天，已自动为您同步开始日期`, 'info');
       }
     }
+    const matchedPreset = presets.find(item => {
+      const [pStart, pEnd] = item.getRange();
+      return Math.abs(start.diff(pStart, 'second')) <= 120 && Math.abs(end.diff(pEnd, 'second')) <= 120;
+    });
+    if (matchedPreset) {
+      const [pStart, pEnd] = matchedPreset.getRange();
+      onChange?.([pStart.format('YYYY-MM-DD HH:mm:ss'), pEnd.format('YYYY-MM-DD HH:mm:ss')]);
+      return;
+    }
     const tStart = timeValue?.[0] ? timeValue[0].format('HH:mm:ss') : '00:00:00';
     const tEnd = timeValue?.[1] ? timeValue[1].format('HH:mm:ss') : '23:59:59';
     onChange?.([`${start.format('YYYY-MM-DD')} ${tStart}`, `${end.format('YYYY-MM-DD')} ${tEnd}`]);
@@ -537,8 +576,8 @@ function DbDateTimeRangePicker({
     onChange?.([`${dStart} ${times[0].format('HH:mm:ss')}`, `${dEnd} ${times[1].format('HH:mm:ss')}`]);
   };
 
-  return <div className={`db-datetime-range-selector ${className}`.trim()}>
-    <Radio.Group
+  return <div className={`db-datetime-range-selector ${hidePresets ? 'no-presets' : ''} ${className}`.trim()}>
+    {!hidePresets ? <Radio.Group
       className="db-datetime-presets"
       size="small"
       optionType="button"
@@ -546,13 +585,14 @@ function DbDateTimeRangePicker({
       value={activePresetKey}
       onChange={handlePresetChange}
       options={presets.map(item => ({ label: item.label, value: item.key }))}
-    />
+    /> : null}
     <div className="db-datetime-inputs">
       <DatePicker.RangePicker
         className="db-datetime-date-picker"
         value={dateValue}
         format="YYYY-MM-DD"
         allowClear={false}
+        presets={datePickerPresets}
         onChange={handleDateChange}
       />
       <TimePicker.RangePicker
@@ -619,13 +659,23 @@ function DbConversationListPage({ data }) {
     </span>;
   };
   const columns = [
-    { title: '工作流ID', dataIndex: 'workflowId', width: 120, fixed: 'left', render: value => <Text strong>{value}</Text> },
     { title: '学员昵称', dataIndex: 'friendNick', width: 140, ellipsis: true, render: value => <Text className="list-table-input" ellipsis={{ tooltip: value || '-' }}>{value || '-'}</Text> },
-    { title: 'Conversation ID', dataIndex: 'conversationId', width: 260, fixed: 'left', ellipsis: true, render: value => <Text className="list-table-input" ellipsis={{ tooltip: value }}>{value}</Text> },
+    { title: 'Conversation ID', dataIndex: 'conversationId', width: 240, ellipsis: true, render: value => <Text className="list-table-input" ellipsis={{ tooltip: value }}>{value}</Text> },
     { title: '消息摘要', dataIndex: 'messageSummary', render: renderMessageSummary },
-    { title: '状态', dataIndex: 'hasError', width: 120, render: (_, record) => record.hasError ? <Tooltip title={record.errorSummary}><Tag color="red">有错误</Tag></Tooltip> : <Tag color="green">正常</Tag> },
-    { title: '消息数', dataIndex: 'messageCount', width: 84, align: 'center' },
-    { title: '最近消息时间', dataIndex: 'lastMessageAt', width: 190, render: value => <Text>{value || '-'}</Text> },
+    {
+      title: '状态',
+      dataIndex: 'hasError',
+      width: 120,
+      filters: [
+        { text: '全部状态', value: '' },
+        { text: '有错误节点', value: 'true' },
+        { text: '无错误节点', value: 'false' },
+      ],
+      filterMultiple: false,
+      filteredValue: filters.hasError ? [filters.hasError] : null,
+      render: (_, record) => record.hasError ? <Tooltip title={record.errorSummary}><Tag color="red">有错误</Tag></Tooltip> : <Tag color="green">正常</Tag>
+    },
+    { title: '消息时间', dataIndex: 'lastMessageAt', width: 190, render: value => <Text>{value || '-'}</Text> },
     { title: '操作', key: 'actions', width: 184, render: (_, record) => <Space size={0}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => emitListToolbar('open-db-conversation', { workflowId: record.workflowId, conversationId: record.conversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })}>查看详情</Button><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看变量</Button></Space> }
   ];
   const saveCurrentFilter = () => {
@@ -664,34 +714,70 @@ function DbConversationListPage({ data }) {
   }));
   return <div className="db-record-page" ref={pageRef}>
     <div className="db-record-toolbar" ref={toolbarRef}>
+      <div className="db-filter-header">
+        <div className="db-filter-title">
+          <FilterOutlined className="db-filter-title-icon" />
+          <span>数据筛选</span>
+          {data.selectedSavedFilterName ? <span className="db-selected-filter-name" title={data.selectedSavedFilterName}>{data.selectedSavedFilterName}</span> : null}
+        </div>
+        <div className="db-filter-datasource">
+          <span className="db-filter-datasource-label">当前数据源</span>
+          <Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}>
+            <Tooltip title={connectionMeta.title}>
+              <Button className="db-connection-status-trigger db-datasource-trigger" loading={data.connectionChanging} aria-label="当前数据源">
+                <Badge status={connectionMeta.badge} />
+                <span>{displayDbConfigName(connection.name)}</span>
+                <DownOutlined />
+              </Button>
+            </Tooltip>
+          </Dropdown>
+        </div>
+      </div>
       <div className="db-filter-grid">
         <div className="db-filter-row db-filter-row-primary">
           <div className="db-filter-field db-filter-field-workflow"><span><b>*</b>工作流</span><Select className="db-filter-control" allowClear showSearch optionFilterProp="label" value={filters.workflowId || undefined} loading={data.workflowsLoading || data.connectionChanging} onOpenChange={open => open && emitListToolbar('ensure-db-workflows')} onChange={value => emitListToolbarChange('db-workflow-id', value || '')} options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))} placeholder="请选择工作流" /></div>
-          <div className="db-filter-field db-filter-field-time"><span><b>*</b>学员消息时间</span><DbDateTimeRangePicker className="db-filter-control" maxDays={7} startTime={filters.startTime} endTime={filters.endTime} onChange={values => emitListToolbarChange('db-time-range', values)} /></div>
+          <div className="db-filter-field db-filter-field-time"><span><b>*</b>消息时间</span><DbDateTimeRangePicker className="db-filter-control" maxDays={7} hidePresets={true} startTime={filters.startTime} endTime={filters.endTime} onChange={values => emitListToolbarChange('db-time-range', values)} /></div>
         </div>
         <div className="db-filter-row db-filter-row-secondary">
-          <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊匹配）" /></div>
-          <div className="db-filter-field"><span>Conversation ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入Conversation ID" /></div>
+          <div className="db-filter-field"><span>学员昵称</span><Input className="db-filter-control" allowClear value={filters.friendNick} onChange={event => emitListToolbarChange('db-friend-nick', event.target.value)} placeholder="请输入学员昵称（支持模糊搜索）" /></div>
+          <div className="db-filter-field"><span>会话ID</span><Input className="db-filter-control" allowClear value={filters.conversationId} onChange={event => emitListToolbarChange('db-conversation-id', event.target.value)} placeholder="请输入会话ID" /></div>
           <div className="db-filter-field"><span>消息摘要</span><Input className="db-filter-control" allowClear value={filters.keyword} onChange={event => emitListToolbarChange('db-keyword', event.target.value)} placeholder="请输入消息摘要关键词" /></div>
-          <div className="db-filter-field"><span>状态</span><Select className="db-filter-control" value={filters.hasError} onChange={value => emitListToolbarChange('db-has-error', value)} options={[{ value: '', label: '全部状态' }, { value: 'true', label: '有错误节点' }, { value: 'false', label: '无错误节点' }]} /></div>
         </div>
       </div>
       <div className="db-filter-actions">
         <div className="db-saved-filter-row">
           {data.savedFilters?.map(filter => <span key={filter.id} className="db-saved-filter">
-            <Button type="text" size="small" onClick={() => emitListToolbar('apply-db-filter', { filters: filter.filters })}>{filter.name}</Button>
-            <Popconfirm title={`删除筛选条件“${filter.name}”？`} okText="删除" cancelText="取消" onConfirm={() => emitListToolbar('delete-db-filter', { id: filter.id })}><Button type="text" size="small" danger shape="circle" icon={<DeleteOutlined />} aria-label={`删除筛选条件 ${filter.name}`} /></Popconfirm>
+            <Button type="text" size="small" onClick={() => emitListToolbar('apply-db-filter', { id: filter.id, filters: filter.filters })}>{filter.name}</Button>
+            <Popconfirm title={`删除筛选条件“${filter.name}”？`} okText="删除" cancelText="取消" onConfirm={() => emitListToolbar('delete-db-filter', { id: filter.id })}><Button type="text" size="small" danger shape="circle" icon={<CloseOutlined />} aria-label={`删除筛选条件 ${filter.name}`} /></Popconfirm>
           </span>)}
         </div>
         <Space size={8}>
           <Button icon={<SaveOutlined />} disabled={!String(filters.workflowId || '').trim()} onClick={() => setSaveFilterOpen(true)}>保存筛选</Button>
           <Button icon={<ReloadOutlined />} onClick={() => emitListToolbar('reset-db-conversations')}>重置</Button>
-          <Button type="primary" icon={<DatabaseOutlined />} disabled={!queryReady} onClick={() => emitListToolbar('query-db-conversations')}>查询</Button>
+          <Button type="primary" icon={<SearchOutlined />} disabled={!queryReady} onClick={() => emitListToolbar('query-db-conversations')}>查询</Button>
         </Space>
       </div>
     </div>
-    <div className="db-record-list-header" ref={listHeaderRef}><div className="db-record-list-heading"><span className="db-record-list-title">数据列表</span>{data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}</div><Space size={8}><Dropdown menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }} popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>} trigger={['click']} disabled={!connectionConfigItems.length || data.connectionChanging}><Tooltip title={connectionMeta.title}><Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态"><Badge status={connectionMeta.badge} /><span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span><DownOutlined /></Button></Tooltip></Dropdown><Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip></Space></div>
-    {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <div className="db-record-table-area" ref={tableAreaRef}><Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: tableScrollY, x: 1260 }} pagination={false} /><Pagination className="db-record-pagination" current={data.pageNo} pageSize={data.pageSize} total={data.total} showSizeChanger pageSizeOptions={[10, 20, 50, 100]} showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`} onChange={(pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize })} /></div>}
+    <div className="db-record-list-header" ref={listHeaderRef}>
+      <div className="db-record-list-heading">
+        <span className="db-record-list-bar"></span>
+        <span className="db-record-list-title">数据列表</span>
+        {data.queried ? <span className="db-record-total">共 {data.total || 0} 条</span> : null}
+      </div>
+      <Space size={8}>
+        <Tooltip title="按当前筛选条件刷新"><Button icon={<ReloadOutlined />} aria-label="刷新数据" onClick={() => emitListToolbar('refresh-db-conversations')}>刷新数据</Button></Tooltip>
+      </Space>
+    </div>
+    {!data.queried && !data.loading ? <div className="db-record-empty"><Text type="secondary">请设置筛选条件后点击查询</Text></div> : <div className="db-record-table-area" ref={tableAreaRef}><Table className="ant-list-table db-record-table" size="middle" rowKey="id" columns={columns} dataSource={data.items || []} loading={data.loading} tableLayout="fixed" scroll={{ y: tableScrollY, x: 1100 }} pagination={false} onChange={(_, tableFilters) => {
+      const rawVal = tableFilters?.hasError?.[0];
+      const nextHasError = (rawVal === 'true' || rawVal === 'false') ? rawVal : '';
+      if (nextHasError !== (filters.hasError || '')) {
+        emitListToolbarChange('db-has-error', nextHasError);
+        if (data.queried) {
+          emitListToolbar('query-db-conversations');
+        }
+      }
+    }} /><Pagination className="db-record-pagination" current={data.pageNo} pageSize={data.pageSize} total={data.total} showSizeChanger pageSizeOptions={[10, 20, 50, 100]} showTotal={(total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`} onChange={(pageNo, pageSize) => emitListToolbar('set-db-page', { pageNo, pageSize })} /></div>}
     <DbConversationPreviewDrawer detail={data.conversationPreview} loading={data.conversationPreviewLoading} workflowId={data.conversationPreviewWorkflowId} conversationId={data.conversationPreviewConversationId} onClose={() => emitListToolbar('close-db-conversation-preview')} onOpenDetail={() => emitListToolbar('open-db-conversation', { workflowId: data.conversationPreviewWorkflowId, conversationId: data.conversationPreviewConversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })} />
     <Modal open={saveFilterOpen} title="保存筛选条件" okText="保存" cancelText="取消" onCancel={() => { setSaveFilterOpen(false); setFilterName(''); }} onOk={saveCurrentFilter} destroyOnHidden>
       <Input autoFocus value={filterName} onChange={event => setFilterName(event.target.value)} onPressEnter={saveCurrentFilter} placeholder="请输入筛选条件名称" maxLength={40} />
@@ -2320,10 +2406,11 @@ function DbConversationDetailPage({ data }) {
           <Tooltip title="重置节点位置"><Button size="small" icon={<ReloadOutlined />} aria-label="重置节点位置" onClick={resetNodePositions} /></Tooltip>
           <span className="db-flow-zoom-value">{Math.round(flowZoom * 100)}%</span>
         </div>
-        {activeExecution ? <div className="db-flow-step-controls">
+        {activeExecution ? <Dropdown menu={{ items: executionMenuItems, selectedKeys: [String(executionStepIndex)], onClick: ({ key }) => focusExecutionStep(Number(key)) }} trigger={['hover']}>
+        <div className="db-flow-step-controls">
           <div className="db-flow-step-progress"><span style={{ width: `${executionProgress}%` }} /></div>
           <div className="db-flow-step-content">
-            <Dropdown menu={{ items: executionMenuItems, selectedKeys: [String(executionStepIndex)], onClick: ({ key }) => focusExecutionStep(Number(key)) }} trigger={['hover']}><Tooltip title="选择执行节点"><Button className="db-flow-step-menu-button" icon={<UnorderedListOutlined />} aria-label="选择执行节点" /></Tooltip></Dropdown>
+            <Button className="db-flow-step-menu-button" icon={<UnorderedListOutlined />} aria-label="选择执行节点" />
             <Tag className="db-flow-step-type" color={dbNodeMeta(activeExecution.nodeType).color}>{dbNodeMeta(activeExecution.nodeType).name}</Tag>
             <span className="db-flow-step-name" title={activeExecution.nodeName || activeExecution.nodeId}>{activeExecution.nodeName || activeExecution.nodeId || '未命名节点'}</span>
             <span className="db-flow-step-duration">{activeExecution.durationMs || 0}ms</span>
@@ -2333,7 +2420,7 @@ function DbConversationDetailPage({ data }) {
               <Tooltip title="下一节点"><Button icon={<StepForwardOutlined />} aria-label="下一节点" disabled={executionStepIndex === executions.length - 1} onClick={() => focusExecutionStep(executionStepIndex + 1)} /></Tooltip>
             </span>
           </div>
-        </div> : null}
+        </div></Dropdown> : null}
       </section>
     </div>
     <DbNodeDrawer node={drawerNode?.id && data.nodeExecutionDetails?.[drawerNode.id] ? { ...drawerNode, ...data.nodeExecutionDetails[drawerNode.id] } : drawerNode} loading={data.nodeExecutionLoadingId === drawerNode?.id} onClose={() => setDrawerNode(null)} nodeNameById={nodeNameById} scenarios={data.scenarios} userTags={data.userTags} />
@@ -3101,7 +3188,7 @@ function DbConditionSkeletonCanvas({ skeletonModel, workflowId, ignoredKey }) {
     <div className="db-analytics-skeleton-topbar">
       <div className="db-analytics-skeleton-hint">
         <BranchesOutlined />
-        <span>可视化分流骨架图：按工作流上下游层级展示条件分流，已自动折叠中间普通节点（悬停连线「途经 N 个节点」可查看明细，点击节点右上角「忽略」可收起无关分流并自动直连下游）</span>
+        <span>可视化分流骨架图</span>
       </div>
       <Space size={6}>
         <Button size="small" icon={<FullscreenOutlined />} onClick={() => fitCanvas(flowInstance, 180)}>适应全图</Button>
@@ -3143,11 +3230,360 @@ function DbConditionSkeletonCanvas({ skeletonModel, workflowId, ignoredKey }) {
   </div>;
 }
 
+const CONDITION_TREND_PALETTE = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#8b5cf6',
+  '#ec4899',
+  '#06b6d4',
+  '#f97316',
+  '#64748b'
+];
+
+function DbConditionTrendChart({ conditionNodes = [], selectedNodeId, onSelectNodeId, onIgnore }) {
+  const nodesWithBranches = Array.isArray(conditionNodes) ? conditionNodes : [];
+  const activeNode = nodesWithBranches.find(n => String(n.nodeId) === String(selectedNodeId)) || nodesWithBranches[0] || null;
+  if (!activeNode) {
+    return <div className="db-analytics-sub-empty"><Text type="secondary">当前工作流无可用条件分支节点（或已被全部忽略）</Text></div>;
+  }
+  const timeSeries = Array.isArray(activeNode.timeSeries) ? activeNode.timeSeries : [];
+  const branchDefs = Array.isArray(activeNode.branches) ? activeNode.branches : [];
+  const colorMap = new Map();
+  branchDefs.forEach((b, idx) => {
+    colorMap.set(b.branchKey, b.branchKey === '__UNMATCHED__' ? '#94a3b8' : CONDITION_TREND_PALETTE[idx % CONDITION_TREND_PALETTE.length]);
+  });
+
+  return (
+    <div className="db-analytics-trend-panel">
+      <div className="db-analytics-trend-toolbar">
+        <Space size={10} wrap>
+          <span className="db-analytics-trend-label">选择条件节点：</span>
+          <Select
+            size="small"
+            style={{ minWidth: 260 }}
+            value={activeNode.nodeId}
+            onChange={onSelectNodeId}
+            options={nodesWithBranches.map(node => ({
+              value: node.nodeId,
+              label: `L${node.level || 1} · ${node.nodeName}（命中 ${node.executionCount || 0} 次）`
+            }))}
+          />
+          <Tag color="blue" bordered={false}>
+            总执行 {activeNode.executionCount || 0} 次 · 轮次命中率 {activeNode.triggerHitRate || 0}%
+          </Tag>
+          {typeof onIgnore === 'function' ? (
+            <Tooltip title="忽略此支线条件节点（按当前工作流自动记忆）">
+              <Button
+                type="text"
+                size="small"
+                className="db-analytics-ignore-btn"
+                onClick={() => onIgnore(activeNode.nodeId)}
+              >
+                忽略当前节点
+              </Button>
+            </Tooltip>
+          ) : null}
+        </Space>
+        <div className="db-analytics-trend-legend">
+          {branchDefs.map((b, idx) => {
+            const color = colorMap.get(b.branchKey) || CONDITION_TREND_PALETTE[idx % CONDITION_TREND_PALETTE.length];
+            return (
+              <span key={b.branchKey} className="db-analytics-trend-legend-item">
+                <i style={{ background: color }} />
+                <span>{b.branchName}</span>
+                <small>({b.branchRate}%)</small>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {timeSeries.length ? (
+        <div className="db-analytics-trend-chart-wrap">
+          <div className="db-analytics-trend-columns">
+            {timeSeries.map(bucket => {
+              const bucketBranches = Array.isArray(bucket.branches) ? bucket.branches : [];
+              const tooltipTitle = (
+                <div className="db-analytics-trend-tooltip">
+                  <div className="db-analytics-trend-tooltip-title">{bucket.timeBucket}（共 {bucket.totalCount} 次）</div>
+                  {bucketBranches.map((b, idx) => (
+                    <div key={b.branchKey} className="db-analytics-trend-tooltip-row">
+                      <span>
+                        <i style={{ background: colorMap.get(b.branchKey) || CONDITION_TREND_PALETTE[idx % CONDITION_TREND_PALETTE.length] }} />
+                        {b.branchName}
+                      </span>
+                      <strong>{b.hitCount} 次 ({b.rate}%)</strong>
+                    </div>
+                  ))}
+                </div>
+              );
+              return (
+                <Tooltip key={bucket.timeBucket} title={tooltipTitle}>
+                  <div className="db-analytics-trend-col">
+                    <span className="db-analytics-trend-col-total">{bucket.totalCount}</span>
+                    <div className="db-analytics-trend-col-stack">
+                      {bucketBranches.map((b, idx) => {
+                        if (!b.hitCount) return null;
+                        const color = colorMap.get(b.branchKey) || CONDITION_TREND_PALETTE[idx % CONDITION_TREND_PALETTE.length];
+                        return (
+                          <div
+                            key={b.branchKey}
+                            className="db-analytics-trend-col-seg"
+                            style={{
+                              height: `${Math.max(4, Number(b.rate) || 0)}%`,
+                              background: color
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <span className="db-analytics-trend-col-label">{bucket.timeBucket}</span>
+                  </div>
+                </Tooltip>
+              );
+            })}
+          </div>
+
+          <div className="db-analytics-trend-table-wrap">
+            <table className="db-analytics-mini-table">
+              <thead>
+                <tr>
+                  <th>时间段</th>
+                  <th>节点总触发</th>
+                  {branchDefs.map((b, idx) => (
+                    <th key={b.branchKey}>
+                      <span className="db-analytics-trend-th-dot" style={{ background: colorMap.get(b.branchKey) || CONDITION_TREND_PALETTE[idx % CONDITION_TREND_PALETTE.length] }} />
+                      {b.branchName}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {timeSeries.map(bucket => {
+                  const byKey = new Map((bucket.branches || []).map(item => [item.branchKey, item]));
+                  return (
+                    <tr key={bucket.timeBucket}>
+                      <td className="mono">{bucket.timeBucket}</td>
+                      <td><strong>{bucket.totalCount}</strong> 次</td>
+                      {branchDefs.map(b => {
+                        const cell = byKey.get(b.branchKey) || { hitCount: 0, rate: 0 };
+                        return (
+                          <td key={b.branchKey}>
+                            <span className="db-analytics-trend-cell-rate">{cell.rate}%</span>
+                            <small className="db-analytics-trend-cell-count">({cell.hitCount})</small>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <div className="db-analytics-sub-empty">
+          <Text type="secondary">当前条件节点在所选时间范围内暂无按时段分布的执行记录</Text>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DbDailyVolumeLineChart({ dailyTrend = [] }) {
+  const points = Array.isArray(dailyTrend) ? dailyTrend : [];
+  if (!points.length) return null;
+
+  const width = 900;
+  const height = 210;
+  const padLeft = 46;
+  const padRight = 28;
+  const padTop = 26;
+  const padBottom = 34;
+  const plotW = width - padLeft - padRight;
+  const plotH = height - padTop - padBottom;
+
+  const maxVal = Math.max(
+    4,
+    ...points.map(p => Math.max(Number(p.triggerCount) || 0, Number(p.conversationCount) || 0))
+  );
+  // Nice upper bound divisible by 4
+  const yMax = Math.ceil(maxVal / 4) * 4;
+  const yTicks = [0, Math.round(yMax * 0.25), Math.round(yMax * 0.5), Math.round(yMax * 0.75), yMax];
+
+  const getX = idx => {
+    if (points.length === 1) return padLeft + plotW / 2;
+    return padLeft + (idx / (points.length - 1)) * plotW;
+  };
+  const getY = val => padTop + plotH - ((Number(val) || 0) / yMax) * plotH;
+
+  const triggerCoords = points.map((p, idx) => ({ x: getX(idx), y: getY(p.triggerCount), raw: p }));
+  const convCoords = points.map((p, idx) => ({ x: getX(idx), y: getY(p.conversationCount), raw: p }));
+
+  const buildPath = coords => coords.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ');
+  const buildArea = coords => {
+    if (!coords.length) return '';
+    const line = buildPath(coords);
+    const firstX = coords[0].x.toFixed(1);
+    const lastX = coords[coords.length - 1].x.toFixed(1);
+    const baseY = (padTop + plotH).toFixed(1);
+    return `${line} L ${lastX} ${baseY} L ${firstX} ${baseY} Z`;
+  };
+
+  const triggerLinePath = buildPath(triggerCoords);
+  const triggerAreaPath = buildArea(triggerCoords);
+  const convLinePath = buildPath(convCoords);
+  const convAreaPath = buildArea(convCoords);
+
+  return (
+    <div className="db-analytics-daily-chart-card">
+      <div className="db-analytics-daily-chart-head">
+        <div className="db-analytics-daily-chart-title">
+          <strong>按日会话数与触发轮次趋势</strong>
+          <Text type="secondary" style={{ fontSize: 12 }}>共 {points.length} 天</Text>
+        </div>
+        <div className="db-analytics-daily-chart-legend">
+          <span className="db-analytics-daily-legend-item trigger">
+            <i />
+            <span>总触发轮次 (Triggers)</span>
+          </span>
+          <span className="db-analytics-daily-legend-item conv">
+            <i />
+            <span>总会话数 (Conversations)</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="db-analytics-daily-svg-wrap">
+        <svg viewBox={`0 0 ${width} ${height}`} className="db-analytics-daily-svg">
+          <defs>
+            <linearGradient id="dbDailyTriggerGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10b981" stopOpacity="0.22" />
+              <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+            </linearGradient>
+            <linearGradient id="dbDailyConvGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.18" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+            </linearGradient>
+          </defs>
+
+          {yTicks.map(tick => {
+            const y = getY(tick);
+            return (
+              <g key={tick}>
+                <line
+                  x1={padLeft}
+                  y1={y}
+                  x2={width - padRight}
+                  y2={y}
+                  stroke="#e2e8f0"
+                  strokeDasharray={tick === 0 ? undefined : '4 4'}
+                  strokeWidth="1"
+                />
+                <text x={padLeft - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
+                  {tick}
+                </text>
+              </g>
+            );
+          })}
+
+          {points.length > 1 ? (
+            <>
+              <path d={triggerAreaPath} fill="url(#dbDailyTriggerGrad)" />
+              <path d={convAreaPath} fill="url(#dbDailyConvGrad)" />
+              <path d={triggerLinePath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d={convLinePath} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </>
+          ) : null}
+
+          {points.map((p, idx) => {
+            const x = getX(idx);
+            const yTrig = getY(p.triggerCount);
+            const yConv = getY(p.conversationCount);
+            const showDateLabel = points.length <= 15 || idx === 0 || idx === points.length - 1 || idx % 2 === 0;
+            const tooltipContent = (
+              <div className="db-analytics-trend-tooltip">
+                <div className="db-analytics-trend-tooltip-title">{p.date}</div>
+                <div className="db-analytics-trend-tooltip-row">
+                  <span><i style={{ background: '#10b981' }} />总触发轮次</span>
+                  <strong>{p.triggerCount} 轮</strong>
+                </div>
+                <div className="db-analytics-trend-tooltip-row">
+                  <span><i style={{ background: '#3b82f6' }} />总会话数</span>
+                  <strong>{p.conversationCount} 会话</strong>
+                </div>
+                <div className="db-analytics-trend-tooltip-row">
+                  <span><i style={{ background: '#6366f1' }} />AI 成功回复</span>
+                  <strong>{p.repliedCount} 轮 ({p.replyRate}%)</strong>
+                </div>
+                {p.errorTriggerCount > 0 ? (
+                  <div className="db-analytics-trend-tooltip-row">
+                    <span><i style={{ background: '#ef4444' }} />异常轮次</span>
+                    <strong>{p.errorTriggerCount} 轮</strong>
+                  </div>
+                ) : null}
+              </div>
+            );
+            return (
+              <Tooltip key={p.date} title={tooltipContent}>
+                <g className="db-analytics-daily-point-group">
+                  <line
+                    x1={x}
+                    y1={padTop}
+                    x2={x}
+                    y2={padTop + plotH}
+                    stroke="#cbd5e1"
+                    strokeWidth="1"
+                    strokeDasharray="2 2"
+                    className="db-analytics-daily-hover-guide"
+                  />
+                  <rect
+                    x={x - Math.max(12, plotW / Math.max(2, points.length * 2))}
+                    y={padTop}
+                    width={Math.max(24, plotW / Math.max(1, points.length))}
+                    height={plotH + padBottom}
+                    fill="transparent"
+                  />
+                  <circle cx={x} cy={yTrig} r="4.5" fill="#ffffff" stroke="#10b981" strokeWidth="2.5" />
+                  <circle cx={x} cy={yConv} r="4.5" fill="#ffffff" stroke="#3b82f6" strokeWidth="2.5" />
+                  {p.triggerCount > 0 ? (
+                    <text x={x} y={Math.max(12, yTrig - 8)} textAnchor="middle" fontSize="10" fontWeight="600" fill="#059669">
+                      {p.triggerCount}
+                    </text>
+                  ) : null}
+                  {p.conversationCount > 0 && Math.abs(yConv - yTrig) >= 14 ? (
+                    <text x={x} y={yConv > yTrig ? Math.min(padTop + plotH - 2, yConv + 13) : Math.max(12, yConv - 8)} textAnchor="middle" fontSize="10" fontWeight="600" fill="#2563eb">
+                      {p.conversationCount}
+                    </text>
+                  ) : null}
+                  {showDateLabel ? (
+                    <text x={x} y={height - 10} textAnchor="middle" fontSize="11" fill="#64748b">
+                      {p.label}
+                    </text>
+                  ) : null}
+                </g>
+              </Tooltip>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 function DbAnalyticsPage({ data }) {
   if (!data?.active) return null;
   const filters = data.filters || {};
   const [nodeTypeFilter, setNodeTypeFilter] = useState('ALL');
   const [branchViewTab, setBranchViewTab] = useState('skeleton');
+  const [selectedTrendNodeId, setSelectedTrendNodeId] = useState('');
+  const [trendModalOpen, setTrendModalOpen] = useState(false);
+
+  const openTrendModal = nodeId => {
+    if (nodeId) setSelectedTrendNodeId(String(nodeId));
+    setTrendModalOpen(true);
+  };
   const queryReady = Boolean(String(filters.workflowId || '').trim() && filters.startTime && filters.endTime);
   const connection = data.connection || {};
   const connectionStatus = connection.status || 'disconnected';
@@ -3179,6 +3615,10 @@ function DbAnalyticsPage({ data }) {
   const latency = analytics?.latency || {};
   const branches = analytics?.branches || {};
   const errors = analytics?.errors || {};
+  const operations = analytics?.operations || {};
+  const noReplyAttribution = operations.noReplyAttribution || {};
+  const conversationDepth = operations.conversationDepth || {};
+  const timeActivity = operations.timeActivity || {};
   const workflowId = analytics?.workflow?.id || filters.workflowId || '';
   const ignoredStorageKey = workflowId ? `db-analytics-ignored-conditions:${workflowId}` : '';
 
@@ -3264,16 +3704,66 @@ function DbAnalyticsPage({ data }) {
   const [errorOccurrenceKeyword, setErrorOccurrenceKeyword] = useState('');
   const [visitedErrorKeys, setVisitedErrorKeys] = useState([]);
 
+  const [activeNoReplyReason, setActiveNoReplyReason] = useState(null);
+  const [noReplyOccurrenceKeyword, setNoReplyOccurrenceKeyword] = useState('');
+  const [visitedNoReplyKeys, setVisitedNoReplyKeys] = useState([]);
+
   useEffect(() => {
     setActiveErrorGroup(null);
     setErrorOccurrenceKeyword('');
     setVisitedErrorKeys([]);
+    setActiveNoReplyReason(null);
+    setNoReplyOccurrenceKeyword('');
+    setVisitedNoReplyKeys([]);
   }, [analytics]);
 
   const openErrorGroupDrawer = record => {
     if (!record) return;
     setActiveErrorGroup(record);
     setErrorOccurrenceKeyword('');
+  };
+
+  const openNoReplyReasonDrawer = reason => {
+    if (!reason) return;
+    setActiveNoReplyReason(reason);
+    setNoReplyOccurrenceKeyword('');
+  };
+
+  const allNoReplyOccurrences = useMemo(() => {
+    if (!activeNoReplyReason) return [];
+    const list = Array.isArray(activeNoReplyReason.occurrences) ? activeNoReplyReason.occurrences : [];
+    return list.map((item, idx) => ({
+      ...item,
+      seqNo: idx + 1,
+      key: item.key || `noreply:${item.conversationId || ''}:${item.triggerMessageId || ''}:${idx}`
+    }));
+  }, [activeNoReplyReason]);
+
+  const filteredNoReplyOccurrences = useMemo(() => {
+    const kw = noReplyOccurrenceKeyword.trim().toLowerCase();
+    if (!kw) return allNoReplyOccurrences;
+    return allNoReplyOccurrences.filter(item =>
+      String(item.conversationId || '').toLowerCase().includes(kw)
+      || String(item.triggerMessageId || '').toLowerCase().includes(kw)
+      || String(item.occurredAt || '').toLowerCase().includes(kw)
+      || String(item.lastNodeName || '').toLowerCase().includes(kw)
+      || String(item.condNodeName || '').toLowerCase().includes(kw)
+      || String(item.condBranchLabel || '').toLowerCase().includes(kw)
+    );
+  }, [allNoReplyOccurrences, noReplyOccurrenceKeyword]);
+
+  const visitedNoReplyKeySet = useMemo(() => new Set(visitedNoReplyKeys), [visitedNoReplyKeys]);
+  const visitedCountInActiveNoReply = useMemo(
+    () => allNoReplyOccurrences.filter(item => visitedNoReplyKeySet.has(item.key)).length,
+    [allNoReplyOccurrences, visitedNoReplyKeySet]
+  );
+
+  const handleLocateNoReplyOccurrence = occ => {
+    if (!occ?.conversationId) return;
+    if (occ.key && !visitedNoReplyKeySet.has(occ.key)) {
+      setVisitedNoReplyKeys(prev => [...prev, occ.key]);
+    }
+    openSampleConversation(occ.conversationId, occ.triggerMessageId);
   };
 
   const allErrorOccurrences = useMemo(() => {
@@ -3504,10 +3994,14 @@ function DbAnalyticsPage({ data }) {
       title: '错误码 / 异常类型',
       dataIndex: 'errorCode',
       width: 180,
-      render: (value, record) => <Space size={4} wrap>
-        <Tag color="red">{value || record.errorClass || record.status || 'ERROR'}</Tag>
-        {record.errorClass && record.errorClass !== value ? <Tag>{record.errorClass}</Tag> : null}
-      </Space>
+      render: (value, record) => {
+        const primaryLabel = value || record.errorClass || record.status || 'ERROR';
+        const showSecondary = Boolean(record.errorClass && record.errorClass !== primaryLabel);
+        return <Space size={4} wrap>
+          <Tag color="red">{primaryLabel}</Tag>
+          {showSecondary ? <Tag>{record.errorClass}</Tag> : null}
+        </Space>;
+      }
     },
     {
       title: '错误信息 (error_message)',
@@ -3642,66 +4136,172 @@ function DbAnalyticsPage({ data }) {
     }
   ];
 
+  const noReplyOccurrenceColumns = [
+    {
+      title: '序号',
+      dataIndex: 'seqNo',
+      width: 64,
+      align: 'center',
+      render: value => <span className="db-analytics-rank-badge">#{value}</span>
+    },
+    {
+      title: '触发时间',
+      dataIndex: 'occurredAt',
+      width: 165,
+      render: value => <Text type="secondary">{value || '-'}</Text>
+    },
+    {
+      title: '会话 ID (conversation_id)',
+      dataIndex: 'conversationId',
+      width: 195,
+      ellipsis: true,
+      render: value => value
+        ? <Flex align="center" gap={4} style={{ minWidth: 0 }}>
+            <Tooltip title={value}><Text code ellipsis style={{ maxWidth: 150 }}>{value}</Text></Tooltip>
+            <Tooltip title="复制会话 ID">
+              <Button
+                type="text"
+                size="small"
+                shape="circle"
+                icon={<CopyOutlined />}
+                onClick={() => navigator.clipboard?.writeText(value).then(() => window.showGlobalMessage?.('已复制会话 ID'))}
+              />
+            </Tooltip>
+          </Flex>
+        : <Text type="secondary">-</Text>
+    },
+    {
+      title: '触发轮次 ID (trigger_message_id)',
+      dataIndex: 'triggerMessageId',
+      width: 200,
+      ellipsis: true,
+      render: value => value
+        ? <Flex align="center" gap={4} style={{ minWidth: 0 }}>
+            <Tooltip title={value}><Text code ellipsis style={{ maxWidth: 155 }}>{value}</Text></Tooltip>
+            <Tooltip title="复制触发轮次 ID">
+              <Button
+                type="text"
+                size="small"
+                shape="circle"
+                icon={<CopyOutlined />}
+                onClick={() => navigator.clipboard?.writeText(value).then(() => window.showGlobalMessage?.('已复制触发轮次 ID'))}
+              />
+            </Tooltip>
+          </Flex>
+        : <Text type="secondary">-</Text>
+    },
+    {
+      title: '最后执行节点 / 命中条件分支',
+      key: 'lastNodeAndCond',
+      width: 250,
+      render: (_, occ) => {
+        const meta = occ.lastNodeType ? dbNodeMeta(occ.lastNodeType) : null;
+        return (
+          <Flex vertical gap={2} style={{ minWidth: 0 }}>
+            {occ.lastNodeName ? (
+              <Flex align="center" gap={4} wrap={false}>
+                {meta ? <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>{meta.name}</Tag> : null}
+                <Text strong ellipsis={{ tooltip: occ.lastNodeName }} style={{ maxWidth: 160 }}>{occ.lastNodeName}</Text>
+              </Flex>
+            ) : <Text type="secondary">-</Text>}
+            {occ.condNodeName ? (
+              <Text type="secondary" style={{ fontSize: 12 }} ellipsis={{ tooltip: `${occ.condNodeName} → ${occ.condBranchLabel || '默认'}` }}>
+                条件：{occ.condNodeName}{occ.condBranchLabel ? ` [${occ.condBranchLabel}]` : ''}
+              </Text>
+            ) : null}
+          </Flex>
+        );
+      }
+    },
+    {
+      title: '整轮耗时',
+      dataIndex: 'durationMs',
+      width: 95,
+      align: 'right',
+      sorter: (a, b) => (a.durationMs || 0) - (b.durationMs || 0),
+      render: value => <Text type="secondary">{formatAnalyticsDuration(value)}</Text>
+    },
+    {
+      title: '操作',
+      key: 'locate',
+      width: 136,
+      align: 'center',
+      fixed: 'right',
+      render: (_, occ) => {
+        const visited = visitedNoReplyKeySet.has(occ.key);
+        return <Space size={4}>
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            disabled={!occ.conversationId}
+            onClick={() => handleLocateNoReplyOccurrence(occ)}
+          >
+            定位此轮
+          </Button>
+          {visited ? <Tag color="processing" bordered={false} style={{ marginInlineEnd: 0 }}>已看</Tag> : null}
+        </Space>;
+      }
+    }
+  ];
+
   return <div className="db-analytics-page">
     <div className="db-record-toolbar db-analytics-toolbar">
-      <div className="db-analytics-filter-rows">
-        {/* 第一行：数据库选择 + 工作流选择 */}
-        <div className="db-analytics-filter-row db-analytics-filter-row-top">
-          <div className="db-filter-field db-analytics-field-db">
-            <span>数据库</span>
-            <Dropdown
-              menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }}
-              popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>}
-              trigger={['click']}
-              disabled={!connectionConfigItems.length || data.connectionChanging}
-            >
-              <Tooltip title={connectionMeta.title}>
-                <Button className="db-connection-status-trigger" loading={data.connectionChanging} aria-label="数据库连接状态">
-                  <Badge status={connectionMeta.badge} />
-                  <span>{displayDbConfigName(connection.name)}（{connectionMeta.label}）</span>
-                  <DownOutlined />
-                </Button>
-              </Tooltip>
-            </Dropdown>
-          </div>
-          <div className="db-filter-field db-analytics-field-workflow">
-            <span><b>*</b>工作流</span>
-            <Select
-              className="db-filter-control"
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              value={filters.workflowId || undefined}
-              loading={data.workflowsLoading || data.connectionChanging}
-              onOpenChange={open => open && emitListToolbar('ensure-db-workflows')}
-              onChange={value => emitListToolbarChange('db-analytics-workflow-id', value || '')}
-              options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))}
-              placeholder="请选择要分析的工作流"
-            />
-          </div>
+      <div className="db-filter-header">
+        <div className="db-filter-title db-analytics-header-left">
+          <FilterOutlined className="db-filter-title-icon" />
+          <span>运行分析</span>
+          <Select
+            className="db-filter-control db-analytics-header-workflow"
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            value={filters.workflowId || undefined}
+            loading={data.workflowsLoading || data.connectionChanging}
+            onOpenChange={open => open && emitListToolbar('ensure-db-workflows')}
+            onChange={value => emitListToolbarChange('db-analytics-workflow-id', value || '')}
+            options={(data.workflows || []).map(workflow => ({ value: workflow.id, label: `${workflow.id}-${workflow.name}` }))}
+            placeholder="请选择要分析的工作流"
+            style={{ width: 300, marginLeft: 8 }}
+          />
         </div>
-
-        {/* 第二行：时间范围筛选 + 3个按钮 */}
-        <div className="db-analytics-filter-row db-analytics-filter-row-bottom">
-          <div className="db-filter-field db-filter-field-time">
-            <span><b>*</b>统计时间范围（最长 15 天）</span>
-            <DbDateTimeRangePicker
-              className="db-filter-control"
-              maxDays={15}
-              startTime={filters.startTime}
-              endTime={filters.endTime}
-              onChange={values => emitListToolbarChange('db-analytics-time-range', values)}
-            />
-          </div>
-          <div className="db-analytics-row-actions">
-            <Space size={8}>
-              <Button icon={<ReloadOutlined />} onClick={() => emitListToolbar('reset-db-analytics')}>重置</Button>
-              <Button type="primary" icon={<DatabaseOutlined />} loading={data.loading} disabled={!queryReady} onClick={() => emitListToolbar('query-db-analytics')}>开始分析</Button>
-              <Tooltip title="按当前筛选条件重新统计">
-                <Button icon={<ReloadOutlined />} disabled={!queryReady || data.loading} onClick={() => emitListToolbar('refresh-db-analytics')}>刷新数据</Button>
-              </Tooltip>
-            </Space>
-          </div>
+        <div className="db-filter-datasource">
+          <span className="db-filter-datasource-label">当前数据源</span>
+          <Dropdown
+            menu={{ items: connectionConfigItems, selectedKeys: connection.configId ? [connection.configId] : [], onClick: ({ key }) => emitListToolbar('switch-db-config', { configId: key }) }}
+            popupRender={menus => <div className="db-connection-dropdown"><div className="db-connection-dropdown-title">当前数据库配置</div>{menus}<div className="db-connection-dropdown-actions"><Button type="text" danger icon={<DisconnectOutlined />} disabled={connectionStatus !== 'connected' || data.connectionChanging} onClick={() => emitListToolbar('disconnect-db')}>断开当前连接</Button></div></div>}
+            trigger={['click']}
+            disabled={!connectionConfigItems.length || data.connectionChanging}
+          >
+            <Tooltip title={connectionMeta.title}>
+              <Button className="db-connection-status-trigger db-datasource-trigger" loading={data.connectionChanging} aria-label="当前数据源">
+                <Badge status={connectionMeta.badge} />
+                <span>{displayDbConfigName(connection.name)}</span>
+                <DownOutlined />
+              </Button>
+            </Tooltip>
+          </Dropdown>
+        </div>
+      </div>
+      <div className="db-analytics-bottom-bar">
+        <div className="db-filter-field db-filter-field-time db-analytics-time-field">
+          <span><b>*</b>统计时间</span>
+          <DbDateTimeRangePicker
+            className="db-filter-control"
+            maxDays={15}
+            startTime={filters.startTime}
+            endTime={filters.endTime}
+            onChange={values => emitListToolbarChange('db-analytics-time-range', values)}
+          />
+        </div>
+        <div className="db-analytics-actions">
+          <Space size={8}>
+            <Tooltip title="按当前筛选条件重新统计">
+              <Button icon={<ReloadOutlined />} disabled={!queryReady || data.loading} onClick={() => emitListToolbar('refresh-db-analytics')}>刷新数据</Button>
+            </Tooltip>
+            <Button icon={<ReloadOutlined />} onClick={() => emitListToolbar('reset-db-analytics')}>重置</Button>
+            <Button type="primary" icon={<DatabaseOutlined />} loading={data.loading} disabled={!queryReady} onClick={() => emitListToolbar('query-db-analytics')}>开始分析</Button>
+          </Space>
         </div>
       </div>
     </div>
@@ -3732,7 +4332,12 @@ function DbAnalyticsPage({ data }) {
                 <div className="db-analytics-kpi-card">
                   <span className="db-analytics-kpi-label">总触发轮次 (Triggers)</span>
                   <strong className="db-analytics-kpi-value">{overview.totalTriggers || 0}</strong>
-                  <span className="db-analytics-kpi-sub">AI回复 {overview.repliedTriggers || 0} ({overview.replyTriggerRate || 0}%) · 不回复 {overview.noReplyTriggers || 0}</span>
+                  <span className="db-analytics-kpi-sub">正常 {Math.max(0, (overview.totalTriggers || 0) - (overview.errorTriggers || 0))} · 含报错 {overview.errorTriggers || 0}</span>
+                </div>
+                <div className="db-analytics-kpi-card">
+                  <span className="db-analytics-kpi-label">AI 回复率</span>
+                  <strong className="db-analytics-kpi-value">{overview.replyTriggerRate || 0}%</strong>
+                  <span className="db-analytics-kpi-sub">AI回复 {overview.repliedTriggers || 0} · 不回复 {overview.noReplyTriggers || 0}</span>
                 </div>
                 <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.conversationErrorRate)}`}>
                   <span className="db-analytics-kpi-label">会话级报错率</span>
@@ -3742,19 +4347,17 @@ function DbAnalyticsPage({ data }) {
                 <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.triggerErrorRate)}`}>
                   <span className="db-analytics-kpi-label">轮次级报错率</span>
                   <strong className="db-analytics-kpi-value">{overview.triggerErrorRate || 0}%</strong>
-                  <span className="db-analytics-kpi-sub">{overview.errorTriggers || 0} / {overview.totalTriggers || 0} 轮触发异常{overview.pendingTriggers ? ` · 待处理 ${overview.pendingTriggers}` : ''}</span>
+                  <span className="db-analytics-kpi-sub">{overview.errorTriggers || 0} 轮触发异常{overview.pendingTriggers ? ` · 待处理 ${overview.pendingTriggers}` : ''}</span>
                 </div>
                 <div className={`db-analytics-kpi-card ${analyticsErrorRateLevel(overview.nodeErrorRate)}`}>
                   <span className="db-analytics-kpi-label">节点级报错率</span>
                   <strong className="db-analytics-kpi-value">{overview.nodeErrorRate || 0}%</strong>
                   <span className="db-analytics-kpi-sub">{overview.errorNodeExecutions || 0} / {overview.totalNodeExecutions || 0} 次节点执行失败</span>
                 </div>
-                <div className="db-analytics-kpi-card">
-                  <span className="db-analytics-kpi-label">单轮端到端 P95 耗时</span>
-                  <strong className="db-analytics-kpi-value">{formatAnalyticsDuration(latency.endToEnd?.p95Ms)}</strong>
-                  <span className="db-analytics-kpi-sub">平均 {formatAnalyticsDuration(latency.endToEnd?.avgMs)} · 最大 {formatAnalyticsDuration(latency.endToEnd?.maxMs)}</span>
-                </div>
               </div>
+              {Array.isArray(overview.dailyTrend) && overview.dailyTrend.length > 0 ? (
+                <DbDailyVolumeLineChart dailyTrend={overview.dailyTrend} />
+              ) : null}
             </section>
 
             {/* 2. 耗时与性能分析 */}
@@ -3768,7 +4371,7 @@ function DbAnalyticsPage({ data }) {
                   <Text type="secondary">节点类型筛选：</Text>
                   <Select
                     size="small"
-                     style={{ width: 160 }}
+                    style={{ width: 160 }}
                     value={nodeTypeFilter}
                     onChange={setNodeTypeFilter}
                     options={availableNodeTypes.map(type => ({
@@ -3783,8 +4386,8 @@ function DbAnalyticsPage({ data }) {
                 <div className="db-analytics-e2e-card">
                   <div className="db-analytics-e2e-head">
                     <div>
-                      <span className="db-analytics-e2e-title">全链路单轮端到端耗时</span>
-                      <span className="db-analytics-e2e-desc">触发器 started_at → 该轮末节点 completed_at（有效样本 {latency.endToEnd?.count || 0} 轮）</span>
+                      <span className="db-analytics-e2e-title">整轮流程总耗时</span>
+                      <span className="db-analytics-e2e-desc">触发器启动 → 该轮末节点结束（有效样本 {latency.endToEnd?.count || 0} 轮）</span>
                     </div>
                     {latency.endToEnd?.slowestSample?.conversationId ? (
                       <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openSampleConversation(latency.endToEnd.slowestSample.conversationId, latency.endToEnd.slowestSample.triggerMessageId)}>定位最慢轮次</Button>
@@ -3801,8 +4404,8 @@ function DbAnalyticsPage({ data }) {
                 <div className="db-analytics-e2e-card">
                   <div className="db-analytics-e2e-head">
                     <div>
-                      <span className="db-analytics-e2e-title">AI 回复端到端耗时</span>
-                      <span className="db-analytics-e2e-desc">触发器 started_at → 发送消息节点 completed_at（有回复样本 {latency.reply?.count || 0} 轮）</span>
+                      <span className="db-analytics-e2e-title">学员等待回复耗时</span>
+                      <span className="db-analytics-e2e-desc">触发器启动 → 发送消息节点结束（有回复样本 {latency.reply?.count || 0} 轮）</span>
                     </div>
                     {latency.reply?.slowestSample?.conversationId ? (
                       <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => openSampleConversation(latency.reply.slowestSample.conversationId, latency.reply.slowestSample.triggerMessageId)}>定位最慢回复</Button>
@@ -3823,7 +4426,12 @@ function DbAnalyticsPage({ data }) {
                 rowKey="nodeId"
                 columns={latencyColumns}
                 dataSource={filteredLatencyNodes}
-                pagination={filteredLatencyNodes.length > 15 ? { pageSize: 15, showSizeChanger: false } : false}
+                pagination={filteredLatencyNodes.length > 0 ? {
+                  defaultPageSize: 10,
+                  showSizeChanger: true,
+                  pageSizeOptions: ['10', '20', '50', '100'],
+                  showTotal: total => `共 ${total} 个节点`
+                } : false}
                 scroll={{ x: 1120 }}
                 locale={{ emptyText: '所选范围内暂无节点耗时数据' }}
               />
@@ -3834,7 +4442,6 @@ function DbAnalyticsPage({ data }) {
               <div className="db-analytics-section-header">
                 <div className="db-analytics-section-title-group">
                   <span className="db-analytics-section-title">三、分支走向与节点命中统计</span>
-                  <Text type="secondary" className="db-analytics-section-sub">条件节点 (condition) 上下游分流骨架图 + 全工作流节点触发命中率</Text>
                 </div>
                 <Radio.Group size="small" value={branchViewTab} onChange={e => setBranchViewTab(e.target.value)} optionType="button" buttonStyle="solid">
                   <Radio.Button value="skeleton">分流骨架流向图 ({visibleConditionNodes.length}/{allConditionNodes.length})</Radio.Button>
@@ -3843,28 +4450,29 @@ function DbAnalyticsPage({ data }) {
                 </Radio.Group>
               </div>
 
+              {branchViewTab !== 'all' && ignoredConditionNodes.length > 0 ? (
+                <div className="db-analytics-ignored-bar">
+                  <span className="db-analytics-ignored-label">当前工作流已忽略 {ignoredConditionNodes.length} 个条件节点（已自动折叠并直连上下游分流）：</span>
+                  <div className="db-analytics-ignored-tags">
+                    {ignoredConditionNodes.map(node => (
+                      <Tag
+                        key={node.nodeId}
+                        closable
+                        onClose={e => {
+                          e.preventDefault();
+                          restoreConditionNode(node.nodeId);
+                        }}
+                      >
+                        {node.nodeName}
+                      </Tag>
+                    ))}
+                  </div>
+                  <Button type="link" size="small" onClick={restoreAllConditionNodes}>全部恢复</Button>
+                </div>
+              ) : null}
+
               {branchViewTab === 'skeleton' || branchViewTab === 'condition' ? (
                 <>
-                  {ignoredConditionNodes.length > 0 ? (
-                    <div className="db-analytics-ignored-bar">
-                      <span className="db-analytics-ignored-label">已忽略 {ignoredConditionNodes.length} 个条件节点（已自动折叠并直连上下游分流）：</span>
-                      <div className="db-analytics-ignored-tags">
-                        {ignoredConditionNodes.map(node => (
-                          <Tag
-                            key={node.nodeId}
-                            closable
-                            onClose={e => {
-                              e.preventDefault();
-                              restoreConditionNode(node.nodeId);
-                            }}
-                          >
-                            {node.nodeName}
-                          </Tag>
-                        ))}
-                      </div>
-                      <Button type="link" size="small" onClick={restoreAllConditionNodes}>全部恢复</Button>
-                    </div>
-                  ) : null}
                   {visibleConditionNodes.length ? (
                     branchViewTab === 'skeleton' ? (
                       <DbConditionSkeletonCanvas
@@ -3883,8 +4491,18 @@ function DbAnalyticsPage({ data }) {
                                   <Text strong ellipsis={{ tooltip: condNode.nodeName }}>{condNode.nodeName}</Text>
                                   {condNode.isHistorical ? <Tag color="gold" bordered={false}>历史节点</Tag> : null}
                                 </Flex>
-                                <Space size={8} align="center" className="db-analytics-condition-card-meta">
+                                <Space size={6} align="center" className="db-analytics-condition-card-meta">
                                   <Text type="secondary">共执行 {condNode.executionCount} 次 · 轮次命中率 {condNode.triggerHitRate}%</Text>
+                                  <Tooltip title="查看该条件节点的分支走向时序变化趋势">
+                                    <Button
+                                      type="link"
+                                      size="small"
+                                      onClick={() => openTrendModal(condNode.nodeId)}
+                                      style={{ paddingInline: 4 }}
+                                    >
+                                      时序趋势
+                                    </Button>
+                                  </Tooltip>
                                   <Tooltip title="忽略此条件节点的分支走向分析">
                                     <Button
                                       type="text"
@@ -3962,7 +4580,6 @@ function DbAnalyticsPage({ data }) {
               <div className="db-analytics-section-header">
                 <div className="db-analytics-section-title-group">
                   <span className="db-analytics-section-title">四、异常与报错聚合 (Top N)</span>
-                  <Text type="secondary" className="db-analytics-section-sub">按 node_name、error_code、error_message 聚合高频故障节点</Text>
                 </div>
                 <Tag color={(errors.totalErrorExecutions || 0) > 0 ? 'red' : 'green'}>
                   {(errors.totalErrorExecutions || 0) > 0
@@ -3989,6 +4606,192 @@ function DbAnalyticsPage({ data }) {
               )}
             </section>
 
+            {/* 5. 未回复情况分类 */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">五、未回复情况分类</span>
+                </div>
+                <Tag color={(noReplyAttribution.totalNoReply || 0) > 0 ? 'orange' : 'green'} bordered={false}>
+                  未回复总轮次：{noReplyAttribution.totalNoReply || 0} 轮
+                </Tag>
+              </div>
+
+              {(noReplyAttribution.totalNoReply || 0) > 0 ? (
+                <div className="db-analytics-noreply-reasons-full">
+                  <div className="db-analytics-noreply-reason-cards">
+                    {(noReplyAttribution.reasons || []).map(r => {
+                      const hasOccurrences = Array.isArray(r.occurrences) && r.occurrences.length > 0;
+                      return (
+                        <div key={r.type} className={`db-analytics-noreply-reason-card ${r.type}`}>
+                          <div className="db-analytics-noreply-reason-top">
+                            <span className="db-analytics-noreply-reason-label">{r.label}</span>
+                            {hasOccurrences ? (
+                              <Button
+                                type="link"
+                                size="small"
+                                icon={<EyeOutlined />}
+                                style={{ paddingInline: 4 }}
+                                onClick={() => openNoReplyReasonDrawer(r)}
+                              >
+                                查看明细
+                              </Button>
+                            ) : null}
+                          </div>
+                          <div className="db-analytics-noreply-reason-val">
+                            <strong>{r.triggerCount}</strong>
+                            <span>轮</span>
+                          </div>
+                          <div className="db-analytics-noreply-reason-rates">
+                            <Tag bordered={false} color={r.type === 'error_interrupted' ? 'red' : r.type === 'condition_filtered' ? 'blue' : 'default'} style={{ marginInlineEnd: 0 }}>
+                              占未回复 {r.shareOfNoReply}%
+                            </Tag>
+                            <span className="db-analytics-noreply-reason-global-rate">
+                              占全局触发 {r.shareOfTotalTriggers}%
+                            </span>
+                          </div>
+                          <div className="db-analytics-progress-track">
+                            <div
+                              className={`db-analytics-progress-fill ${r.type === 'error_interrupted' ? 'danger' : 'primary'}`}
+                              style={{ width: `${Math.min(100, Number(r.shareOfNoReply) || 0)}%` }}
+                            />
+                          </div>
+                          <div className="db-analytics-noreply-reason-desc">{r.desc}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="db-analytics-sub-empty healthy">
+                  <CheckCircleFilled style={{ color: '#10b981', fontSize: 18 }} />
+                  <Text type="secondary">所选范围内所有触发轮次均已成功回复，无静默/未回复轮次</Text>
+                </div>
+              )}
+            </section>
+
+            {/* 6. 对话互动深度与咨询时段分布 */}
+            <section className="db-analytics-section">
+              <div className="db-analytics-section-header">
+                <div className="db-analytics-section-title-group">
+                  <span className="db-analytics-section-title">六、对话互动深度与咨询时段分布</span>
+                  <Text type="secondary" className="db-analytics-section-sub">分析学员单会话多轮互动粘性，以及 24 小时咨询高峰与各时段 AI 回复率表现</Text>
+                </div>
+              </div>
+
+              <div className="db-analytics-ops-bottom-grid">
+                {/* 左卡：对话互动轮次深度 */}
+                <div className="db-analytics-ops-subcard">
+                  <div className="db-analytics-ops-subcard-head">
+                    <div>
+                      <div className="db-analytics-subcard-title">单会话互动轮次深度分布</div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        平均每会话互动 <strong>{conversationDepth.avgTurns || 0}</strong> 轮 · 最高互动 <strong>{conversationDepth.maxTurns || 0}</strong> 轮
+                      </Text>
+                    </div>
+                    {conversationDepth.deepestSample?.conversationId ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => openSampleConversation(conversationDepth.deepestSample.conversationId, conversationDepth.deepestSample.triggerMessageId)}
+                      >
+                        查看最深会话 ({conversationDepth.maxTurns}轮)
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <div className="db-analytics-depth-list">
+                    {(conversationDepth.buckets || []).map(b => (
+                      <div key={b.key} className="db-analytics-depth-row">
+                        <div className="db-analytics-depth-label">
+                          <strong>{b.label}</strong>
+                          <small>{b.desc}</small>
+                        </div>
+                        <div className="db-analytics-depth-bar">
+                          <div className="db-analytics-progress-track">
+                            <div className="db-analytics-progress-fill primary" style={{ width: `${Math.min(100, Number(b.rate) || 0)}%` }} />
+                          </div>
+                        </div>
+                        <div className="db-analytics-depth-stats">
+                          <strong>{b.count} 会话</strong>
+                          <span>{b.rate}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 右卡：24 小时咨询活跃与回复分布 */}
+                <div className="db-analytics-ops-subcard">
+                  <div className="db-analytics-ops-subcard-head">
+                    <div>
+                      <div className="db-analytics-subcard-title">咨询时段热力分布 (00:00 ~ 23:00)</div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        柱高代表该时段触发轮次，深色部分为 AI 成功回复轮次
+                      </Text>
+                    </div>
+                    {timeActivity.peakHour ? (
+                      <Tag color="blue" bordered={false}>
+                        高峰时段：{timeActivity.peakHour.label}（{timeActivity.peakHour.triggerCount} 轮 · 回复率 {timeActivity.peakHour.replyRate}%）
+                      </Tag>
+                    ) : null}
+                  </div>
+
+                  {(() => {
+                    const hours = Array.isArray(timeActivity.hours) ? timeActivity.hours : [];
+                    const maxHourCount = Math.max(1, ...hours.map(h => Number(h.triggerCount) || 0));
+                    return (
+                      <div className="db-analytics-hourly-chart">
+                        {hours.map(h => {
+                          const totalPct = Math.round(((Number(h.triggerCount) || 0) / maxHourCount) * 100);
+                          return (
+                            <Tooltip
+                              key={h.hour}
+                              title={`${h.label} · 触发 ${h.triggerCount} 轮（${h.conversationCount} 会话）· AI 回复 ${h.repliedCount} 轮 (${h.replyRate}%)`}
+                            >
+                              <div className="db-analytics-hourly-col">
+                                <div className="db-analytics-hourly-bar-wrap">
+                                  {h.triggerCount > 0 ? (
+                                    <span className="db-analytics-hourly-val">{h.triggerCount}</span>
+                                  ) : null}
+                                  <div
+                                    className="db-analytics-hourly-bar-total"
+                                    style={{ height: `${h.triggerCount > 0 ? Math.max(6, totalPct) : 0}%` }}
+                                  >
+                                    <div
+                                      className="db-analytics-hourly-bar-reply"
+                                      style={{ height: `${h.repliedCount > 0 ? Math.max(15, Math.round((h.repliedCount / h.triggerCount) * 100)) : 0}%` }}
+                                    />
+                                  </div>
+                                </div>
+                                <span className="db-analytics-hourly-label">{String(h.hour).padStart(2, '0')}</span>
+                              </div>
+                            </Tooltip>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </section>
+
+            <Modal
+              title="条件分支走向时序变化趋势"
+              open={Boolean(data?.active !== false && trendModalOpen)}
+              onCancel={() => setTrendModalOpen(false)}
+              footer={null}
+              width={920}
+              destroyOnClose
+            >
+              <DbConditionTrendChart
+                conditionNodes={allConditionNodes}
+                selectedNodeId={selectedTrendNodeId}
+                onSelectNodeId={setSelectedTrendNodeId}
+              />
+            </Modal>
+
             <Drawer
               title={activeErrorGroup ? (
                 <Flex align="center" gap={8} wrap="wrap">
@@ -4011,10 +4814,16 @@ function DbAnalyticsPage({ data }) {
                     <div className="db-analytics-error-drawer-meta-row">
                       <Space size={6} wrap>
                         <Text type="secondary">异常类型：</Text>
-                        <Tag color="red">{activeErrorGroup.errorCode || activeErrorGroup.errorClass || activeErrorGroup.status || 'ERROR'}</Tag>
-                        {activeErrorGroup.errorClass && activeErrorGroup.errorClass !== activeErrorGroup.errorCode ? (
-                          <Tag>{activeErrorGroup.errorClass}</Tag>
-                        ) : null}
+                        {(() => {
+                          const primaryLabel = activeErrorGroup.errorCode || activeErrorGroup.errorClass || activeErrorGroup.status || 'ERROR';
+                          const showSecondary = Boolean(activeErrorGroup.errorClass && activeErrorGroup.errorClass !== primaryLabel);
+                          return (
+                            <>
+                              <Tag color="red">{primaryLabel}</Tag>
+                              {showSecondary ? <Tag>{activeErrorGroup.errorClass}</Tag> : null}
+                            </>
+                          );
+                        })()}
                         <Tag color="volcano" bordered={false}>占总报错 {activeErrorGroup.errorShareRate || 0}%</Tag>
                         <Tag color="default" bordered={false}>
                           波及 {activeErrorGroup.affectedConversations || 0} 会话 / {activeErrorGroup.affectedTriggers || 0} 轮触发
@@ -4081,6 +4890,77 @@ function DbAnalyticsPage({ data }) {
                 </div>
               ) : null}
             </Drawer>
+
+            <Drawer
+              title={activeNoReplyReason ? (
+                <Flex align="center" gap={8} wrap="wrap">
+                  <Tag color={activeNoReplyReason.color || 'blue'} style={{ marginInlineEnd: 0 }}>
+                    {activeNoReplyReason.label}
+                  </Tag>
+                  <Text strong>未回复轮次明细与定位</Text>
+                  <Tag bordered={false} style={{ marginInlineEnd: 0 }}>
+                    共 {activeNoReplyReason.triggerCount || allNoReplyOccurrences.length} 轮
+                  </Tag>
+                </Flex>
+              ) : '未回复轮次明细'}
+              placement="right"
+              width={900}
+              open={Boolean(data?.active !== false && activeNoReplyReason)}
+              onClose={() => setActiveNoReplyReason(null)}
+            >
+              {activeNoReplyReason ? (
+                <div className="db-analytics-error-drawer-body">
+                  <div className="db-analytics-error-drawer-summary">
+                    <div className="db-analytics-error-drawer-meta-row">
+                      <Space size={6} wrap>
+                        <Text type="secondary">归因分类：</Text>
+                        <Tag color={activeNoReplyReason.color || 'blue'}>{activeNoReplyReason.label}</Tag>
+                        <Tag bordered={false}>占未回复 {activeNoReplyReason.shareOfNoReply || 0}%</Tag>
+                        <Tag bordered={false}>占全局触发 {activeNoReplyReason.shareOfTotalTriggers || 0}%</Tag>
+                      </Space>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {activeNoReplyReason.desc}
+                      </Text>
+                    </div>
+                  </div>
+
+                  <div className="db-analytics-error-drawer-toolbar">
+                    <Space size={8} wrap>
+                      <Text strong>触发轮次明细列表</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        共 {filteredNoReplyOccurrences.length} 条{noReplyOccurrenceKeyword.trim() ? `（总计 ${allNoReplyOccurrences.length} 条）` : ''} · 点击右侧「定位此轮」可跳转至对应会话画布查看执行链路
+                      </Text>
+                      {visitedCountInActiveNoReply > 0 ? (
+                        <Tag color="processing" bordered={false}>已定位 {visitedCountInActiveNoReply} / {allNoReplyOccurrences.length} 条</Tag>
+                      ) : null}
+                    </Space>
+                    <Input.Search
+                      allowClear
+                      size="small"
+                      placeholder="搜索会话 ID / 轮次 ID / 节点或分支名称..."
+                      value={noReplyOccurrenceKeyword}
+                      onChange={e => setNoReplyOccurrenceKeyword(e.target.value)}
+                      style={{ width: 280 }}
+                    />
+                  </div>
+
+                  <Table
+                    className="ant-list-table db-analytics-table db-analytics-error-occurrences-table"
+                    size="small"
+                    rowKey="key"
+                    columns={noReplyOccurrenceColumns}
+                    dataSource={filteredNoReplyOccurrences}
+                    scroll={{ x: 860 }}
+                    pagination={{
+                      defaultPageSize: 20,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      showTotal: total => `共 ${total} 条未回复记录`
+                    }}
+                  />
+                </div>
+              ) : null}
+            </Drawer>
           </div>
         ) : null}
       </Spin>
@@ -4089,7 +4969,28 @@ function DbAnalyticsPage({ data }) {
 }
 
 function AppTabs({ activeView }) {
-  return <Tabs activeKey={activeView} onChange={value => emitListToolbar('switch-view', { value })} items={[{ key: 'cases', label: '测试用例' }, { key: 'records', label: '测试记录' }, { key: 'dbRecords', label: '会话记录查询（DB）' }, { key: 'dbAnalytics', label: '工作流运行分析（DB）' }, { key: 'labels', label: '标签与场景' }]} />;
+  const testView = activeView === 'cases' || activeView === 'records';
+  return <Tabs activeKey={testView ? 'testCenter' : activeView} onChange={value => emitListToolbar('switch-view', { value: value === 'testCenter' ? 'cases' : value })} items={[{ key: 'testCenter', label: '测试中心' }, { key: 'dbRecords', label: '会话记录查询' }, { key: 'dbAnalytics', label: '工作流运行分析' }]} />;
+}
+
+function TestCenterTabs({ activeView }) {
+  return (
+    <nav className="test-center-links" aria-label="测试中心">
+      {[
+        { value: 'cases', label: '测试用例' },
+        { value: 'records', label: '测试记录' }
+      ].map(({ value, label }) => (
+        <button
+          key={value}
+          type="button"
+          aria-current={activeView === value ? 'page' : undefined}
+          onClick={() => activeView !== value && emitListToolbar('switch-view', { value })}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
 }
 
 function LabelManagementPage({ data }) {
@@ -4160,7 +5061,7 @@ function LabelManagementPage({ data }) {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新增{label}</Button>
       </Space>
     </Flex>
-    <Table className="ant-list-table" size="middle" rowKey="name" columns={tableColumns} dataSource={items} tableLayout="auto" rowSelection={{ selectedRowKeys: selectedNames, onChange: setSelectedNames }} pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} />
+    <Table className="ant-list-table" size="middle" rowKey="name" columns={tableColumns} dataSource={items} tableLayout="auto" scroll={{ y: 'min(420px, calc(100dvh - 380px))' }} rowSelection={{ selectedRowKeys: selectedNames, onChange: setSelectedNames }} pagination={{ pageSize: 20, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} />
     <Modal open={createOpen} centered title={`新增${label}`} onCancel={() => setCreateOpen(false)} footer={<Space><Button onClick={() => setCreateOpen(false)}>取消</Button><Button type="primary" disabled={!newName.trim()} onClick={create}>新增</Button></Space>}>
       <Input value={newName} onChange={event => setNewName(event.target.value)} placeholder={`输入${label}名称`} />
     </Modal>
@@ -4496,6 +5397,7 @@ let headerRoot;
 let actionsRoot;
 let unsavedChangesRoot;
 let appTabsRoot;
+let testCenterTabsRoot;
 let caseListRoot;
 let recordListRoot;
 let dbRecordsRoot;
@@ -4622,6 +5524,7 @@ window.showImportCaseDialog = data => {
 
 window.renderAntListPages = data => {
   const tabsHost = document.getElementById('appTabs');
+  const testCenterTabsHost = document.getElementById('testCenterTabs');
   const caseHost = document.getElementById('caseListApp');
   const recordHost = document.getElementById('recordListApp');
   const dbRecordsHost = document.getElementById('dbRecordsApp');
@@ -4629,13 +5532,15 @@ window.renderAntListPages = data => {
   const labelManagementHost = document.getElementById('labelManagementApp');
   if (!tabsHost || !caseHost || !recordHost || !dbRecordsHost || !labelManagementHost) return;
   appTabsRoot ||= createRoot(tabsHost);
+  if (testCenterTabsHost) testCenterTabsRoot ||= createRoot(testCenterTabsHost);
   caseListRoot ||= createRoot(caseHost);
   recordListRoot ||= createRoot(recordHost);
   dbRecordsRoot ||= createRoot(dbRecordsHost);
   if (dbAnalyticsHost) dbAnalyticsRoot ||= createRoot(dbAnalyticsHost);
   labelManagementRoot ||= createRoot(labelManagementHost);
   appTabsRoot.render(<ConfigProvider componentSize="middle"><AppTabs activeView={data.activeView} /></ConfigProvider>);
-  caseListRoot.render(<ConfigProvider componentSize="middle"><CaseListPage data={data.cases} /></ConfigProvider>);
+  if (testCenterTabsRoot) testCenterTabsRoot.render(<ConfigProvider componentSize="middle"><TestCenterTabs activeView={data.activeView} /></ConfigProvider>);
+  caseListRoot.render(<ConfigProvider componentSize="middle"><CaseListWorkspace data={data.cases} management={data.management} /></ConfigProvider>);
   recordListRoot.render(<ConfigProvider componentSize="middle"><RecordListPage data={data.records} /></ConfigProvider>);
   dbRecordsRoot.render(<ConfigProvider componentSize="middle"><DbRecordsPage data={data.dbRecords} /></ConfigProvider>);
   if (dbAnalyticsRoot) dbAnalyticsRoot.render(<ConfigProvider componentSize="middle"><DbAnalyticsPage data={data.dbAnalytics} /></ConfigProvider>);
