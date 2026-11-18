@@ -1,6 +1,8 @@
 import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import dayjs from 'dayjs';
+import 'dayjs/locale/zh-cn';
+import datePickerZhCN from 'antd/es/date-picker/locale/zh_CN';
 import './editor-ui.jsx';
 import { Alert, Badge, Button, Checkbox, Collapse, ConfigProvider, DatePicker, Drawer, Dropdown, Flex, Input, Menu, message, Modal, Pagination, Popconfirm, Popover, Radio, Select, Space, Spin, Switch, Table, Tabs, Tag, TimePicker, Tooltip, Typography, Upload } from 'antd';
 import { Background, BaseEdge, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, applyNodeChanges, getBezierPath } from '@xyflow/react';
@@ -46,7 +48,6 @@ import {
 const { Title, Text } = Typography;
 const listActionButtonTheme = { components: { Button: { iconGap: 4 } } };
 const CASE_LIST_SELECTION_WIDTH = 32;
-const CASE_LIST_TABLE_SCROLL_X = 1334;
 
 message.config({ top: 72, maxCount: 3 });
 window.showGlobalMessage = (content, type = 'success') => {
@@ -371,7 +372,7 @@ function CaseListPage({ data, onManageLabels }) {
     { title: '请求次数', dataIndex: 'batchCount', width: 76, align: 'center', render: value => value },
     { title: '创建日期', dataIndex: 'createdAt', width: 112, sorter: true, sortOrder: data.sort?.field === 'createdAt' ? data.sort.order : null },
     { title: '更新时间', dataIndex: 'updatedAt', width: 112, sorter: true, sortOrder: data.sort?.field === 'updatedAt' ? data.sort.order : null },
-    { title: '操作', key: 'actions', width: 172, onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }), onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, record) => <ConfigProvider theme={listActionButtonTheme}><Space size={4}><Button type="link" size="small" icon={<EditOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('open-case', { id: record.id }); }}>编辑</Button><Button type="link" size="small" icon={<CopyOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('duplicate-case', { id: record.id }); }}>复制</Button><Button type="link" size="small" icon={<SendOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('send-case', { id: record.id }); }}>发送</Button><Popconfirm title="确定删除该测试用例吗？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => emitListToolbar('delete-case', { id: record.id, confirmed: true })}><Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={event => event.stopPropagation()}>删除</Button></Popconfirm></Space></ConfigProvider> }
+    { title: '操作', key: 'actions', width: 172, onHeaderCell: () => ({ style: { whiteSpace: 'nowrap' } }), onCell: () => ({ style: { whiteSpace: 'nowrap' } }), render: (_, record) => <ConfigProvider theme={listActionButtonTheme}><Space className="case-row-actions" size={[4, 4]} wrap><Button type="link" size="small" icon={<EditOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('open-case', { id: record.id }); }}>编辑</Button><Button type="link" size="small" icon={<CopyOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('duplicate-case', { id: record.id }); }}>复制</Button><Button type="link" size="small" icon={<SendOutlined />} onClick={event => { event.stopPropagation(); emitListToolbar('send-case', { id: record.id }); }}>发送</Button><Popconfirm title="确定删除该测试用例吗？" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => emitListToolbar('delete-case', { id: record.id, confirmed: true })}><Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={event => event.stopPropagation()}>删除</Button></Popconfirm></Space></ConfigProvider> }
   ];
   const tableColumns = bulkHeaderActive
     ? columns.map((column, index) => {
@@ -381,9 +382,20 @@ function CaseListPage({ data, onManageLabels }) {
         : { ...plainColumn, title: null, onHeaderCell: () => ({ colSpan: 0 }) };
     })
     : columns;
+  const actionColumnWidth = 172;
+  const reservedWidth = CASE_LIST_SELECTION_WIDTH + actionColumnWidth;
+  const flexibleWidth = columns.reduce((total, column) => column.key === 'actions' ? total : total + (column.width || 0), 0);
+  const fittedColumns = tableColumns.map(column => {
+    if (column.key === 'actions') return { ...column, width: actionColumnWidth };
+    const proportion = (column.width || 0) / flexibleWidth;
+    return {
+      ...column,
+      width: column.width ? `calc(${proportion * 100}% - ${proportion * reservedWidth}px)` : undefined
+    };
+  });
   return <div className="ant-list-page">
     <CaseListToolbar data={data} onManageLabels={onManageLabels} />
-    <Table className="ant-list-table case-list-table" size="middle" rowKey="id" columns={tableColumns} dataSource={data.items} tableLayout="fixed" showSorterTooltip={{ target: 'sorter-icon' }} scroll={{ x: CASE_LIST_TABLE_SCROLL_X, y: 'calc(100vh - 224px)' }} onChange={(_, __, sorter, extra) => { if (extra.action === 'sort') emitListToolbar('set-case-sort', { field: sorter.field, order: sorter.order }); }} rowSelection={{ columnWidth: CASE_LIST_SELECTION_WIDTH, selectedRowKeys: data.selectedIds, onChange: keys => emitListToolbar('set-case-selection', { ids: keys, pageIds: data.items.map(item => item.id) }) }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [15, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-case-page', { pageNo, pageSize }) }} />
+    <Table className="ant-list-table case-list-table" size="middle" rowKey="id" columns={fittedColumns} dataSource={data.items} tableLayout="fixed" showSorterTooltip={{ target: 'sorter-icon' }} scroll={{ y: 'calc(100vh - 224px)' }} onChange={(_, __, sorter, extra) => { if (extra.action === 'sort') emitListToolbar('set-case-sort', { field: sorter.field, order: sorter.order }); }} rowSelection={{ columnWidth: CASE_LIST_SELECTION_WIDTH, selectedRowKeys: data.selectedIds, onChange: keys => emitListToolbar('set-case-selection', { ids: keys, pageIds: data.items.map(item => item.id) }) }} pagination={{ current: data.pageNo, pageSize: data.pageSize, total: data.total, showSizeChanger: true, pageSizeOptions: [15, 20, 50, 100], showTotal: total => `共 ${total} 条`, onChange: (pageNo, pageSize) => emitListToolbar('set-case-page', { pageNo, pageSize }) }} />
   </div>;
 }
 
@@ -588,6 +600,7 @@ function DbDateTimeRangePicker({
     /> : null}
     <div className="db-datetime-inputs">
       <DatePicker.RangePicker
+        locale={datePickerZhCN}
         className="db-datetime-date-picker"
         value={dateValue}
         format="YYYY-MM-DD"
@@ -596,6 +609,7 @@ function DbDateTimeRangePicker({
         onChange={handleDateChange}
       />
       <TimePicker.RangePicker
+        locale={datePickerZhCN}
         className="db-datetime-time-picker"
         value={timeValue}
         format="HH:mm:ss"
@@ -676,7 +690,7 @@ function DbConversationListPage({ data }) {
       render: (_, record) => record.hasError ? <Tooltip title={record.errorSummary}><Tag color="red">有错误</Tag></Tooltip> : <Tag color="green">正常</Tag>
     },
     { title: '消息时间', dataIndex: 'lastMessageAt', width: 190, render: value => <Text>{value || '-'}</Text> },
-    { title: '操作', key: 'actions', width: 184, render: (_, record) => <Space size={0}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => emitListToolbar('open-db-conversation', { workflowId: record.workflowId, conversationId: record.conversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })}>查看详情</Button><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看变量</Button></Space> }
+    { title: '操作', key: 'actions', width: 184, fixed: 'right', render: (_, record) => <Space size={0}><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => emitListToolbar('open-db-conversation', { workflowId: record.workflowId, conversationId: record.conversationId, listScrollTop: tableAreaRef.current?.querySelector('.ant-table-body')?.scrollTop || 0 })}>查看详情</Button><Button type="link" size="small" onClick={() => emitListToolbar('open-db-conversation-variables', { workflowId: record.workflowId, conversationId: record.conversationId })}>查看变量</Button></Space> }
   ];
   const saveCurrentFilter = () => {
     const name = filterName.trim();
@@ -1719,14 +1733,14 @@ function DbMessageTriggerIdBar({ triggerMessageId }) {
   return <span className="db-message-trigger-id-row">
     <span className="db-message-trigger-id" title={value}>{value}</span>
     <span className="db-message-trigger-copy-zone" onClick={stopCardAction} onMouseDown={stopCardAction} onKeyDown={stopCardAction}>
-      <Tooltip title="复制 triggerMessageId">
+      <Tooltip title="复制 event_id">
         <Button
           type="text"
           size="small"
           shape="circle"
           className="db-message-trigger-copy"
           icon={<CopyOutlined />}
-          aria-label="复制 triggerMessageId"
+          aria-label="复制 event_id"
           onClick={event => {
             stopCardAction(event);
             emitListToolbar('copy-trigger-message-id', { value });
@@ -4085,7 +4099,7 @@ function DbAnalyticsPage({ data }) {
         : <Text type="secondary">-</Text>
     },
     {
-      title: '触发轮次 ID (trigger_message_id)',
+      title: '触发轮次 ID (event_id)',
       dataIndex: 'triggerMessageId',
       width: 210,
       ellipsis: true,
@@ -4171,7 +4185,7 @@ function DbAnalyticsPage({ data }) {
         : <Text type="secondary">-</Text>
     },
     {
-      title: '触发轮次 ID (trigger_message_id)',
+      title: '触发轮次 ID (event_id)',
       dataIndex: 'triggerMessageId',
       width: 200,
       ellipsis: true,
@@ -4968,9 +4982,14 @@ function DbAnalyticsPage({ data }) {
   </div>;
 }
 
-function AppTabs({ activeView }) {
+function AppTabs({ activeView, showDbAnalyticsTab = false }) {
   const testView = activeView === 'cases' || activeView === 'records';
-  return <Tabs activeKey={testView ? 'testCenter' : activeView} onChange={value => emitListToolbar('switch-view', { value: value === 'testCenter' ? 'cases' : value })} items={[{ key: 'testCenter', label: '测试中心' }, { key: 'dbRecords', label: '会话记录查询' }, { key: 'dbAnalytics', label: '工作流运行分析' }]} />;
+  const items = [
+    { key: 'testCenter', label: '测试中心' },
+    { key: 'dbRecords', label: '会话记录查询' }
+  ];
+  if (showDbAnalyticsTab) items.push({ key: 'dbAnalytics', label: '工作流运行分析' });
+  return <Tabs activeKey={testView ? 'testCenter' : activeView} onChange={value => emitListToolbar('switch-view', { value: value === 'testCenter' ? 'cases' : value })} items={items} />;
 }
 
 function TestCenterTabs({ activeView }) {
@@ -5190,11 +5209,26 @@ function MqSettingsPanel({ data }) {
   </Flex>;
 }
 
+function GeneralSettingsPanel({ data }) {
+  const showDbAnalyticsTab = data.showDbAnalyticsTab === true;
+  return <Flex vertical gap={16} style={{ padding: '8px 4px' }}>
+    <Flex justify="space-between" align="center" gap={24} style={{ padding: '14px 16px', border: '1px solid #f0f0f0', borderRadius: 8 }}>
+      <Text strong>工作流运行分析</Text>
+      <Switch
+        checked={showDbAnalyticsTab}
+        aria-label="工作流运行分析"
+        onChange={checked => emitListToolbar('set-show-db-analytics-tab', { enabled: checked })}
+      />
+    </Flex>
+  </Flex>;
+}
+
 function SystemSettingsDialog({ data }) {
   return <Modal open={data.open} centered title="系统设置" width={920} onCancel={() => emitListToolbar('close-system-settings')} footer={null} destroyOnHidden>
     <Tabs className="system-settings-tabs" activeKey={data.activeTab || 'mq'} onChange={value => emitListToolbar('set-system-settings-tab', { value })} items={[
       { key: 'mq', label: 'MQ 发送配置', children: <MqSettingsPanel data={data} /> },
-      { key: 'database', label: '数据库配置', children: <DbSettingsPanel data={data} /> }
+      { key: 'database', label: '数据库配置', children: <DbSettingsPanel data={data} /> },
+      { key: 'general', label: '其他', children: <GeneralSettingsPanel data={data} /> }
     ]} />
   </Modal>;
 }
@@ -5538,7 +5572,7 @@ window.renderAntListPages = data => {
   dbRecordsRoot ||= createRoot(dbRecordsHost);
   if (dbAnalyticsHost) dbAnalyticsRoot ||= createRoot(dbAnalyticsHost);
   labelManagementRoot ||= createRoot(labelManagementHost);
-  appTabsRoot.render(<ConfigProvider componentSize="middle"><AppTabs activeView={data.activeView} /></ConfigProvider>);
+  appTabsRoot.render(<ConfigProvider componentSize="middle"><AppTabs activeView={data.activeView} showDbAnalyticsTab={data.showDbAnalyticsTab === true} /></ConfigProvider>);
   if (testCenterTabsRoot) testCenterTabsRoot.render(<ConfigProvider componentSize="middle"><TestCenterTabs activeView={data.activeView} /></ConfigProvider>);
   caseListRoot.render(<ConfigProvider componentSize="middle"><CaseListWorkspace data={data.cases} management={data.management} /></ConfigProvider>);
   recordListRoot.render(<ConfigProvider componentSize="middle"><RecordListPage data={data.records} /></ConfigProvider>);

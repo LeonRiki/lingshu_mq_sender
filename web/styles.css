@@ -740,7 +740,7 @@ main {
 }
 
 #caseListApp .case-list-table .ant-table-body {
-  overflow-x: auto !important;
+  overflow-x: hidden !important;
 }
 
 .ant-list-page .ant-table-footer {
@@ -927,6 +927,12 @@ main {
   font-weight: 600;
   color: #0f172a;
   letter-spacing: -0.01em;
+}
+
+#dbRecordsView .db-filter-header {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 12px 24px;
 }
 
 .db-filter-title-icon {

@@ -11,7 +11,7 @@
     },
     {
       "path": "server.js",
-      "sha256": "62ece71f3f254b8d510902fc58bbd0d73e6758cee41537828f759d2cb265b198"
+      "sha256": "6b2172d3f152257e14c3f03cf0d854f2987b725fc2c18411e424f3df6b1c7a5e"
     },
     {
       "path": "version.json",
@@ -19,7 +19,7 @@
     },
     {
       "path": "web/app.js",
-      "sha256": "a3f2cea1d28524ed12b273f971bbbadb2c18980d8042a84b66f6bdb4a3dd6170"
+      "sha256": "6e4f01ce92d5e25dc8e41f1abf2c61bb1be4768f8d515ca8f9038bd4c60030c4"
     },
     {
       "path": "web/assets/github.png",
@@ -35,7 +35,7 @@
     },
     {
       "path": "web/detail-ui.js",
-      "sha256": "8304740eac566f23f19dca4085138cdf0c63087fe95cc3c246fbbb883af17420"
+      "sha256": "8f8a716bc284bf3df756f638cad0877433703f4be8cf253256cb1fc4125707b0"
     },
     {
       "path": "web/favicon.ico",
@@ -47,11 +47,11 @@
     },
     {
       "path": "web/index.html",
-      "sha256": "35709dcabcfcc18974f31147038a2a071041b86fa51e1bcaf02eeec3a03130fa"
+      "sha256": "8f0f8ec8d567736f1714d84251cbcb6f8fe77fe2e36358a5f38b0a48ba4f35a3"
     },
     {
       "path": "web/styles.css",
-      "sha256": "4ef9ed740ccc21418d45e6db16d51de08d6e14598f0aa832eed2820451ab6cb3"
+      "sha256": "54de98550f9f6420044d4d9c635de63d7ee63dba0da3995c5225cb4aba455a75"
     },
     {
       "path": "win-启动服务.bat",

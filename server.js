@@ -76,6 +76,7 @@ const DEFAULT_CONFIG = {
   preferredPort: 32880,
   defaultAgentId: 'testId',
   defaultAlias: '汪洋老师',
+  showDbAnalyticsTab: false,
   businessScenarios: [],
   userTags: [],
   sessionAttributeFields: [
@@ -689,6 +690,7 @@ function normalizeLabelItems(values) {
 
 function normalizeConfig(data) {
   const cfg = { ...DEFAULT_CONFIG, ...(data || {}) };
+  cfg.showDbAnalyticsTab = cfg.showDbAnalyticsTab === true;
   cfg.businessScenarios = normalizeLabelItems(cfg.businessScenarios);
   cfg.userTags = normalizeLabelItems(cfg.userTags);
   cfg.sessionAttributeFields = (cfg.sessionAttributeFields || DEFAULT_CONFIG.sessionAttributeFields)
@@ -1585,44 +1587,6 @@ async function withDbClientQueue(callback) {
   }
 }
 
-// 测试库升级为 event_id 后，在读取边界提供旧字段别名；线上旧结构直接使用原查询。
-async function dbSchemaReadClient(client) {
-  const columns = (await client.query(`
-    SELECT table_name, column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name IN ('conversation_messages', 'workflow_node_executions')
-      AND column_name IN ('trigger_message_id', 'event_id', 'run_id', 'temporal_workflow_id')
-  `)).rows;
-  const aliases = ['conversation_messages', 'workflow_node_executions'].map(table => {
-    const available = new Set(columns.filter(column => column.table_name === table).map(column => column.column_name));
-    const fields = [['trigger_message_id', 'event_id'], ['run_id', 'temporal_workflow_id']]
-      .filter(([legacy, current]) => !available.has(legacy) && available.has(current))
-      .map(([legacy, current]) => `source.${current} AS ${legacy}`);
-    return { table, fields };
-  }).filter(item => item.fields.length);
-  if (!aliases.length) return client;
-  return {
-    query(sql, params) {
-      const definitions = [];
-      let text = sql;
-      for (const { table, fields } of aliases) {
-        const original = `public.${table}`;
-        if (!text.includes(original)) continue;
-        const alias = `mq_compatible_${table}`;
-        text = text.replaceAll(original, alias);
-        definitions.push(`${alias} AS NOT MATERIALIZED (SELECT source.*, ${fields.join(', ')} FROM ${original} source)`);
-      }
-      if (definitions.length) {
-        text = /^\s*WITH\s+/i.test(text)
-          ? text.replace(/^(\s*WITH\s+)/i, `$1${definitions.join(', ')}, `)
-          : `WITH ${definitions.join(', ')} ${text}`;
-      }
-      return client.query(text, params);
-    }
-  };
-}
-
 async function withDbClientOnce(configId, callback, { allowConnect = false } = {}) {
   const config = dbConfig(configId);
   const fingerprint = dbConnectionFingerprint(config);
@@ -1651,7 +1615,7 @@ async function withDbClientOnce(configId, callback, { allowConnect = false } = {
   setDbConnectionState(config, 'connected');
   try {
     await client.query('BEGIN READ ONLY');
-    const result = await callback(await dbSchemaReadClient(client));
+    const result = await callback(client);
     await client.query('COMMIT');
     return result;
   } catch (err) {
@@ -1720,8 +1684,20 @@ function executionHasError(execution) {
   );
 }
 
+const DB_TRIGGER_CHANNEL_FALLBACK_JOIN = `LEFT JOIN LATERAL (
+  SELECT c.raw_data
+  FROM public.channel_messages c
+  WHERE (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+    AND (e.outputs IS NULL OR e.outputs::jsonb = '{}'::jsonb)
+    AND c.event_id = e.event_id
+    AND c.deleted_at IS NULL
+  ORDER BY c.id DESC
+  LIMIT 1
+) cm ON TRUE`;
+const DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL = `COALESCE(NULLIF(e.outputs::jsonb, '{}'::jsonb), cm.raw_data)`;
+
 function dbTriggerIdOf(item) {
-  return String(item?.trigger_message_id ?? item?.triggerMessageId ?? item?.requestid ?? item?.requestId ?? '');
+  return String(item?.event_id ?? item?.eventId ?? item?.trigger_message_id ?? item?.triggerMessageId ?? item?.requestid ?? item?.requestId ?? '');
 }
 
 function dbWorkflowIdOf(item) {
@@ -2241,6 +2217,14 @@ function dbConversationDisplayMessages(sortedMessages, executions, triggerInputs
     });
 }
 
+function dbMessageFriendNick(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const nick = String(messages[index]?.channel_friend_nick ?? messages[index]?.friend_nick ?? '').trim();
+    if (nick) return nick;
+  }
+  return '';
+}
+
 function buildDbConversationRows({ conversations = [], messages = [], executions = [] }) {
   const groups = new Map();
   conversations.forEach(item => {
@@ -2303,7 +2287,7 @@ function buildDbConversationRows({ conversations = [], messages = [], executions
       messageCount: group.messages.length,
       userMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'USER').length,
       assistantMessageCount: group.messages.filter(message => String(message.role || '').toUpperCase() === 'ASSISTANT').length,
-      friendNick: group.friendNick ?? dbConversationFriendNick(group.executions),
+      friendNick: group.friendNick ?? (dbConversationFriendNick(group.executions) || dbMessageFriendNick(sortedMessages)),
       messageSummary: sortedMessages
         .filter(message => String(message.role || '').toUpperCase() === 'USER')
         .map(message => {
@@ -2323,7 +2307,7 @@ function normalizeDbExecution(execution, preview = {}, { includeDetails = false 
     id: execution.id,
     triggerMessageId: dbTriggerIdOf(execution),
     workflowId: dbWorkflowIdOf(execution),
-    runId: execution.run_id ?? execution.runId ?? '',
+    runId: execution.temporal_workflow_id ?? execution.temporalWorkflowId ?? execution.run_id ?? execution.runId ?? '',
     nodeId: execution.node_id ?? execution.nodeId ?? '',
     nodeType: execution.node_type ?? execution.nodeType ?? '',
     nodeName: execution.node_name ?? execution.nodeName ?? '',
@@ -2560,7 +2544,7 @@ function buildDbConversationDetail({ workflow = null, workflowVersions = [], mes
     } : null,
     workflowGraph,
     historicalNodesByTrigger: dbHistoricalNodesByTrigger({ currentGraph: workflowGraph, workflowVersions, executions }),
-    friendNick: dbConversationFriendNick(executions),
+    friendNick: dbConversationFriendNick(executions) || dbMessageFriendNick(sortedMessages),
     messages: dbConversationDisplayMessages(sortedMessages, executions, triggerInputs, assistantReplies, terminalNodeIds, dbTriggerLatestMsgTimeMap(executions), dbAssistantReplyTimeMap(executions), triggerMeta),
     variables: normalizeDbConversationVariables(variables),
     selectedTriggerMessageId,
@@ -2580,8 +2564,11 @@ function extractDbConversationIdentity(triggerExecution) {
   const existingRequestId = String(
     payload.requestId
       || payload.eventId
+      || payload.event_id
       || payload.trigger_message_id
+      || payload._metadata?.event_id
       || payload._metadata?.trigger_message_id
+      || triggerExecution.event_id
       || triggerExecution.trigger_message_id
       || ''
   ).trim();
@@ -2921,11 +2908,11 @@ async function listDbConversations(url) {
         activeConversationIdClause = `AND m.conversation_id ILIKE $${params.length}`;
         where.push(`candidate.conversation_id ILIKE $${params.length}`);
       }
-      // 昵称只读取触发器的身份字段，并与列表显示使用同一个值。
+      // 昵称优先读取触发器身份字段，新架构下触发器节点快照为空时回退读取 channel_messages.raw_data。
       const nicknameJoin = friendNick ? `JOIN LATERAL (
-        SELECT identity.friend_nick
+        SELECT nick.friend_nick
         FROM (
-          SELECT m.trigger_message_id
+          SELECT m.event_id
           FROM public.conversation_messages m
           WHERE m.workflow_id = candidate.workflow_id
             AND m.conversation_id = candidate.conversation_id
@@ -2934,18 +2921,31 @@ async function listDbConversations(url) {
           OFFSET 0
         ) recent
         JOIN LATERAL (
-          SELECT COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
-                          NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) AS friend_nick
-          FROM public.workflow_node_executions e
-          WHERE e.workflow_id = candidate.workflow_id
-            AND e.trigger_message_id = recent.trigger_message_id
-            AND e.deleted_at IS NULL
-            AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
-            AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
-                         NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) IS NOT NULL
-          ORDER BY e.id DESC
-          LIMIT 1
-        ) identity ON TRUE
+          SELECT COALESCE(
+            (
+              SELECT COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                              NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), ''))
+              FROM public.workflow_node_executions e
+              WHERE e.workflow_id = candidate.workflow_id
+                AND e.event_id = recent.event_id
+                AND e.deleted_at IS NULL
+                AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+                AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
+                             NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), '')) IS NOT NULL
+              ORDER BY e.id DESC
+              LIMIT 1
+            ),
+            (
+              SELECT NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '')
+              FROM public.channel_messages cm
+              WHERE cm.event_id = recent.event_id
+                AND cm.deleted_at IS NULL
+                AND NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '') IS NOT NULL
+              ORDER BY cm.id DESC
+              LIMIT 1
+            )
+          ) AS friend_nick
+        ) nick ON nick.friend_nick IS NOT NULL
         LIMIT 1
       ) nickname ON TRUE` : '';
       if (friendNick) {
@@ -2961,26 +2961,21 @@ async function listDbConversations(url) {
             AND m.conversation_id = candidate.conversation_id
             AND m.deleted_at IS NULL
             AND (
-              EXISTS (
-                SELECT 1
-                FROM public.workflow_node_executions e
-                WHERE e.workflow_id = m.workflow_id
-                  AND e.trigger_message_id = m.trigger_message_id
-                  AND e.deleted_at IS NULL
-                  AND e.node_name = '灵犀触发器'
-                  AND e.outputs::text ILIKE $${params.length}
-              )
-              OR (
+              (
                 UPPER(COALESCE(m.role, '')) = 'USER'
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM public.workflow_node_executions e
-                  WHERE e.workflow_id = m.workflow_id
-                    AND e.trigger_message_id = m.trigger_message_id
-                    AND e.deleted_at IS NULL
-                    AND e.node_name = '灵犀触发器'
+                AND (
+                  m.content ILIKE $${params.length}
+                  OR EXISTS (
+                    SELECT 1
+                    FROM public.channel_messages cm
+                    WHERE cm.event_id = m.event_id
+                      AND cm.deleted_at IS NULL
+                      AND (
+                        (cm.raw_data -> 'input')::text ILIKE $${params.length}
+                        OR COALESCE(cm.raw_data ->> 'eventContent', '') ILIKE $${params.length}
+                      )
+                  )
                 )
-                AND m.content ILIKE $${params.length}
               )
               OR (
                 UPPER(COALESCE(m.role, '')) = 'ASSISTANT'
@@ -2988,7 +2983,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions send
                   WHERE send.workflow_id = m.workflow_id
-                    AND send.trigger_message_id = m.trigger_message_id
+                    AND send.event_id = m.event_id
                     AND send.deleted_at IS NULL
                     AND send.node_type = 'lingxi_send'
                     AND send.inputs::text ILIKE '%actionType%'
@@ -2999,7 +2994,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions e
                   WHERE e.workflow_id = m.workflow_id
-                    AND e.trigger_message_id = m.trigger_message_id
+                    AND e.event_id = m.event_id
                     AND e.deleted_at IS NULL
                     AND (
                       e.inputs::text ILIKE $${params.length}
@@ -3013,7 +3008,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions send
                   WHERE send.workflow_id = m.workflow_id
-                    AND send.trigger_message_id = m.trigger_message_id
+                    AND send.event_id = m.event_id
                     AND send.deleted_at IS NULL
                     AND send.node_type = 'lingxi_send'
                     AND send.inputs::text ILIKE '%actionType%'
@@ -3035,7 +3030,7 @@ async function listDbConversations(url) {
           FROM public.conversation_messages m
           JOIN public.workflow_node_executions e
            ON e.workflow_id = m.workflow_id
-           AND e.trigger_message_id = m.trigger_message_id
+           AND e.event_id = m.event_id
            AND e.deleted_at IS NULL
           WHERE m.workflow_id = candidate.workflow_id
             AND m.conversation_id = candidate.conversation_id
@@ -3053,7 +3048,7 @@ async function listDbConversations(url) {
           FROM public.conversation_messages m
           JOIN public.workflow_node_executions e
            ON e.workflow_id = m.workflow_id
-           AND e.trigger_message_id = m.trigger_message_id
+           AND e.event_id = m.event_id
            AND e.deleted_at IS NULL
           WHERE m.workflow_id = candidate.workflow_id
             AND m.conversation_id = candidate.conversation_id
@@ -3066,7 +3061,7 @@ async function listDbConversations(url) {
             )
         )`);
       }
-      // 以学员消息确定候选会话；允许缺少会话主记录，但排除明确软删除的会话。
+      // 以学员消息确定候选会话；关联 workflow_instance 主运行实例读取状态与最新信号时间，排除明确软删除的会话。
       // 最近消息时间仅用于排序，不再决定会话是否入选。
       const conversationSql = `WITH active_conversations AS MATERIALIZED (
           SELECT m.workflow_id,
@@ -3082,17 +3077,25 @@ async function listDbConversations(url) {
         ), candidates AS MATERIALIZED (
           SELECT active.workflow_id,
                  active.conversation_id,
-                 c.status,
+                 wi.status,
                  COALESCE(
-                   GREATEST(active.window_last_user_at, c.last_message_at),
+                   GREATEST(active.window_last_user_at, wi.last_signal_at),
                    active.window_last_user_at,
-                   c.last_message_at
+                   wi.last_signal_at
                  ) AS last_message_at
           FROM active_conversations active
-          LEFT JOIN public.conversations c
-            ON c.workflow_id = active.workflow_id
-           AND c.conversation_id = active.conversation_id
-          WHERE c.deleted_at IS NULL
+          LEFT JOIN LATERAL (
+            SELECT i.status,
+                   i.last_signal_at,
+                   i.deleted_at
+            FROM public.workflow_instance i
+            WHERE i.workflow_id = active.workflow_id
+              AND i.conversation_id = active.conversation_id
+              AND i.entry_type = 'MAIN'
+            ORDER BY i.id DESC
+            LIMIT 1
+          ) wi ON TRUE
+          WHERE wi.deleted_at IS NULL
         ), filtered AS (
           SELECT candidate.*${friendNick ? ', nickname.friend_nick' : ''}
           FROM candidates candidate
@@ -3116,8 +3119,25 @@ async function listDbConversations(url) {
     if (!keys.length) return { items: [], total, pageNo, pageSize };
     const conversationIds = keys.map(([, id]) => id);
     const messages = (await client.query(`
-      SELECT m.id, m.workflow_id, m.conversation_id, m.role, m.content, m.content_type, m.message_timestamp, m.trigger_message_id
+      SELECT m.id,
+             m.workflow_id,
+             m.conversation_id,
+             m.role,
+             m.content,
+             m.content_type,
+             m.message_timestamp,
+             m.event_id,
+             m.event_id AS trigger_message_id,
+             NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '') AS channel_friend_nick
       FROM public.conversation_messages m
+      LEFT JOIN LATERAL (
+        SELECT c.raw_data
+        FROM public.channel_messages c
+        WHERE c.event_id = m.event_id
+          AND c.deleted_at IS NULL
+        ORDER BY c.id DESC
+        LIMIT 1
+      ) cm ON TRUE
       WHERE m.workflow_id = $1
         AND m.conversation_id = ANY($2::text[])
         AND m.deleted_at IS NULL
@@ -3126,7 +3146,8 @@ async function listDbConversations(url) {
     const triggerIds = [...new Set(messages.map(dbTriggerIdOf).filter(Boolean))];
     const executions = triggerIds.length ? (await client.query(`
       SELECT e.workflow_id,
-             e.trigger_message_id,
+             e.event_id,
+             e.event_id AS trigger_message_id,
              e.node_id,
              e.node_type,
              e.node_name,
@@ -3142,14 +3163,14 @@ async function listDbConversations(url) {
              END AS inputs,
              CASE WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
                THEN jsonb_build_object(
-                 'input', e.outputs::jsonb -> 'input',
-                 'friendNick', e.outputs::jsonb -> 'friendNick',
-                 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime',
-                 'inputList', e.outputs::jsonb -> 'inputList',
-                 'inputMessageList', e.outputs::jsonb -> 'inputMessageList',
-                 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList',
-                 'conversationType', e.outputs::jsonb -> 'conversationType',
-                 'eventContent', e.outputs::jsonb -> 'eventContent'
+                 'input', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'input',
+                 'friendNick', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'friendNick',
+                 'latestMsgTime', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'latestMsgTime',
+                 'inputList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputList',
+                 'inputMessageList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputMessageList',
+                 'inputListMessageList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputListMessageList',
+                 'conversationType', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'conversationType',
+                 'eventContent', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'eventContent'
                )
                ELSE NULL
              END AS outputs,
@@ -3158,8 +3179,9 @@ async function listDbConversations(url) {
              e.error_class,
              e.error_code
       FROM public.workflow_node_executions e
+      ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
       WHERE e.workflow_id = $1
-        AND e.trigger_message_id = ANY($2::text[])
+        AND e.event_id = ANY($2::text[])
         AND e.deleted_at IS NULL
         AND (
           e.node_type = 'lingxi_trigger'
@@ -4945,7 +4967,7 @@ async function queryDbWorkflowAnalytics(url) {
     const analyticsSql = `
       WITH active_messages AS MATERIALIZED (
         SELECT m.conversation_id,
-               NULLIF(BTRIM(m.trigger_message_id), '') AS trigger_message_id,
+               NULLIF(BTRIM(m.event_id), '') AS trigger_message_id,
                m.message_timestamp
         FROM public.conversation_messages m
         WHERE m.workflow_id = $1
@@ -4965,7 +4987,7 @@ async function queryDbWorkflowAnalytics(url) {
       ),
       execs AS MATERIALIZED (
         SELECT e.id,
-               e.trigger_message_id,
+               e.event_id AS trigger_message_id,
                t.conversation_id,
                COALESCE(NULLIF(BTRIM(e.node_id), ''), COALESCE(NULLIF(BTRIM(e.node_name), ''), 'unknown')) AS node_id,
                COALESCE(NULLIF(BTRIM(e.node_name), ''), COALESCE(NULLIF(BTRIM(e.node_id), ''), '未命名节点')) AS node_name,
@@ -5004,7 +5026,7 @@ async function queryDbWorkflowAnalytics(url) {
         FROM active_triggers t
         JOIN public.workflow_node_executions e
           ON e.workflow_id = $1
-         AND e.trigger_message_id = t.trigger_message_id
+         AND e.event_id = t.trigger_message_id
          AND e.deleted_at IS NULL
       ),
       overview_stats AS (
@@ -5330,35 +5352,53 @@ async function dbConversationDetail(url) {
     const [workflow, messages, variables] = await Promise.all([
       client.query('SELECT * FROM public.workflow WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
       client.query(`
-        SELECT *
-        FROM public.conversation_messages
-        WHERE workflow_id = $1
-          AND conversation_id = $2
-          AND deleted_at IS NULL
-        ORDER BY message_timestamp ASC NULLS LAST, id ASC
+        SELECT m.*,
+               m.event_id AS trigger_message_id,
+               NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '') AS channel_friend_nick
+        FROM public.conversation_messages m
+        LEFT JOIN LATERAL (
+          SELECT c.raw_data
+          FROM public.channel_messages c
+          WHERE c.event_id = m.event_id
+            AND c.deleted_at IS NULL
+          ORDER BY c.id DESC
+          LIMIT 1
+        ) cm ON TRUE
+        WHERE m.workflow_id = $1
+          AND m.conversation_id = $2
+          AND m.deleted_at IS NULL
+        ORDER BY m.message_timestamp ASC NULLS LAST, m.id ASC
       `, [workflowId, conversationId]),
       client.query(`
-        SELECT DISTINCT ON (variable_key) *
-        FROM public.conversation_variables
-        WHERE workflow_id = $1
-          AND conversation_id = $2
-          AND deleted_at IS NULL
-        ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
+        SELECT DISTINCT ON (cv.variable_key)
+               cv.*,
+               wvd.description AS variable_description
+        FROM public.conversation_variables cv
+        LEFT JOIN public.workflow_variable_definition wvd
+          ON wvd.workflow_id = cv.workflow_id
+         AND wvd.variable_key = cv.variable_key
+         AND wvd.deleted_at IS NULL
+        WHERE cv.workflow_id = $1
+          AND cv.conversation_id = $2
+          AND cv.deleted_at IS NULL
+        ORDER BY cv.variable_key, cv.updated_at DESC NULLS LAST, cv.id DESC
       `, [workflowId, conversationId])
     ]);
     const triggerIds = [...new Set(messages.rows.map(dbTriggerIdOf).filter(Boolean))];
-    const runId = `platform:${workflowId}:${conversationId}`;
+    const temporalWorkflowId = `platform:${workflowId}:${conversationId}`;
     const executionWhereClause = triggerIds.length
-      ? 'e.trigger_message_id = ANY($2::text[])'
-      : 'e.run_id = $2';
+      ? 'e.event_id = ANY($2::text[])'
+      : '(e.temporal_workflow_id = $2 OR e.conversation_id = $3)';
     const executionParams = triggerIds.length
       ? [workflowId, triggerIds]
-      : [workflowId, runId];
+      : [workflowId, temporalWorkflowId, conversationId];
     const executions = (await client.query(`
       SELECT e.id,
              e.workflow_id,
-             e.trigger_message_id,
-             e.run_id,
+             e.event_id,
+             e.event_id AS trigger_message_id,
+             e.temporal_workflow_id,
+             e.temporal_workflow_id AS run_id,
              e.node_id,
              e.node_type,
              e.node_name,
@@ -5366,7 +5406,7 @@ async function dbConversationDetail(url) {
              CASE WHEN e.node_type = 'lingxi_send' THEN e.logs ELSE NULL END AS logs,
              CASE
                WHEN e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器'
-                 THEN jsonb_build_object('input', e.outputs::jsonb -> 'input', 'friendNick', e.outputs::jsonb -> 'friendNick', 'latestMsgTime', e.outputs::jsonb -> 'latestMsgTime', 'inputList', e.outputs::jsonb -> 'inputList', 'inputMessageList', e.outputs::jsonb -> 'inputMessageList', 'inputListMessageList', e.outputs::jsonb -> 'inputListMessageList', 'tagList', e.outputs::jsonb -> 'tagList', 'lingxiAccount', e.outputs::jsonb -> 'lingxiAccount', 'friendRemoteId', e.outputs::jsonb -> 'friendRemoteId', 'conversationType', e.outputs::jsonb -> 'conversationType', 'chatRoomName', e.outputs::jsonb -> 'chatRoomName', 'chatRoomWxId', e.outputs::jsonb -> 'chatRoomWxId', 'chatRoomRemoteId', e.outputs::jsonb -> 'chatRoomRemoteId', 'eventContent', e.outputs::jsonb -> 'eventContent', 'eventSourceType', e.outputs::jsonb -> 'eventSourceType')
+                 THEN jsonb_build_object('input', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'input', 'friendNick', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'friendNick', 'latestMsgTime', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'latestMsgTime', 'inputList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputList', 'inputMessageList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputMessageList', 'inputListMessageList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'inputListMessageList', 'tagList', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'tagList', 'lingxiAccount', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'lingxiAccount', 'friendRemoteId', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'friendRemoteId', 'conversationType', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'conversationType', 'chatRoomName', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'chatRoomName', 'chatRoomWxId', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'chatRoomWxId', 'chatRoomRemoteId', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'chatRoomRemoteId', 'eventContent', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'eventContent', 'eventSourceType', ${DB_TRIGGER_EFFECTIVE_OUTPUTS_SQL} -> 'eventSourceType')
                WHEN e.node_type = 'agent'
                  THEN jsonb_build_object('output', e.outputs::jsonb -> 'output')
                WHEN e.node_type IN ('condition', 'set_variable')
@@ -5381,6 +5421,7 @@ async function dbConversationDetail(url) {
              e.completed_at,
              e.duration_ms
       FROM public.workflow_node_executions e
+      ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
       WHERE e.workflow_id = $1
         AND e.deleted_at IS NULL
         AND ${executionWhereClause}
@@ -5389,10 +5430,13 @@ async function dbConversationDetail(url) {
     const referencedNodeIds = dbReferencedOutputNodeIds(executions);
     if (referencedNodeIds.length && triggerIds.length) {
       const referencedOutputs = (await client.query(`
-        SELECT e.trigger_message_id, e.node_id, e.outputs
+        SELECT e.event_id,
+               e.event_id AS trigger_message_id,
+               e.node_id,
+               e.outputs
         FROM public.workflow_node_executions e
         WHERE e.workflow_id = $1
-          AND e.trigger_message_id = ANY($2::text[])
+          AND e.event_id = ANY($2::text[])
           AND e.node_id = ANY($3::text[])
           AND e.deleted_at IS NULL
       `, [workflowId, triggerIds, referencedNodeIds])).rows;
@@ -5429,12 +5473,22 @@ async function dbConversationNodeExecution(url) {
   }
   return withDbClient(configId, async client => {
     const execution = await client.query(`
-      SELECT *
-      FROM public.workflow_node_executions
-      WHERE id = $1
-        AND workflow_id = $2
-        AND trigger_message_id = $3
-        AND deleted_at IS NULL
+      SELECT e.*,
+             e.event_id AS trigger_message_id,
+             e.temporal_workflow_id AS run_id,
+             CASE
+               WHEN (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+                 AND (e.outputs IS NULL OR e.outputs::jsonb = '{}'::jsonb)
+                 AND cm.raw_data IS NOT NULL
+                 THEN cm.raw_data
+               ELSE e.outputs
+             END AS outputs
+      FROM public.workflow_node_executions e
+      ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
+      WHERE e.id = $1
+        AND e.workflow_id = $2
+        AND e.event_id = $3
+        AND e.deleted_at IS NULL
       LIMIT 1
     `, [executionId, workflowId, triggerMessageId]);
     if (!execution.rows[0]) {
@@ -5460,12 +5514,14 @@ async function dbConversationHistoricalNode(url) {
     const [workflow, executionResult] = await Promise.all([
       client.query('SELECT id, graph_json FROM public.workflow WHERE id = $1 AND deleted_at IS NULL LIMIT 1', [workflowId]),
       client.query(`
-        SELECT *
-        FROM public.workflow_node_executions
-        WHERE workflow_id = $1
-          AND trigger_message_id = $2
-          AND deleted_at IS NULL
-        ORDER BY started_at ASC NULLS LAST, id ASC
+        SELECT e.*,
+               e.event_id AS trigger_message_id,
+               e.temporal_workflow_id AS run_id
+        FROM public.workflow_node_executions e
+        WHERE e.workflow_id = $1
+          AND e.event_id = $2
+          AND e.deleted_at IS NULL
+        ORDER BY e.started_at ASC NULLS LAST, e.id ASC
       `, [workflowId, triggerMessageId])
     ]);
     const currentGraph = parseDbJson(workflow.rows[0]?.graph_json, { nodes: [], edges: [] }) || { nodes: [], edges: [] };
@@ -5493,14 +5549,50 @@ async function dbConversationVariables(url) {
   }
   return withDbClient(configId, async client => {
     const variables = await client.query(`
-      SELECT DISTINCT ON (variable_key) *
-      FROM public.conversation_variables
-      WHERE workflow_id = $1
-        AND conversation_id = $2
-        AND deleted_at IS NULL
-      ORDER BY variable_key, updated_at DESC NULLS LAST, id DESC
+      SELECT DISTINCT ON (cv.variable_key)
+             cv.*,
+             wvd.description AS variable_description
+      FROM public.conversation_variables cv
+      LEFT JOIN public.workflow_variable_definition wvd
+        ON wvd.workflow_id = cv.workflow_id
+       AND wvd.variable_key = cv.variable_key
+       AND wvd.deleted_at IS NULL
+      WHERE cv.workflow_id = $1
+        AND cv.conversation_id = $2
+        AND cv.deleted_at IS NULL
+      ORDER BY cv.variable_key, cv.updated_at DESC NULLS LAST, cv.id DESC
     `, [workflowId, conversationId]);
     return { variables: normalizeDbConversationVariables(variables.rows) };
+  });
+}
+
+async function fetchDbConversationExecutions(configId, workflowId, conversationId) {
+  return withDbClient(configId, async client => {
+    const triggerIds = (await client.query(
+      "SELECT DISTINCT event_id AS trigger_message_id FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL",
+      [workflowId, conversationId]
+    )).rows.map(r => r.trigger_message_id).filter(Boolean);
+
+    if (!triggerIds.length) return [];
+
+    return (await client.query(`
+      SELECT e.*,
+             e.event_id AS trigger_message_id,
+             e.temporal_workflow_id AS run_id,
+             CASE
+               WHEN (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
+                 AND (e.outputs IS NULL OR e.outputs::jsonb = '{}'::jsonb)
+                 AND cm.raw_data IS NOT NULL
+                 THEN cm.raw_data
+               ELSE e.outputs
+             END AS outputs
+      FROM public.workflow_node_executions e
+      ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
+      WHERE e.workflow_id = $1
+        AND e.deleted_at IS NULL
+        AND e.event_id = ANY($2::text[])
+      ORDER BY e.started_at ASC NULLS LAST, e.id ASC
+    `, [workflowId, triggerIds])).rows;
   });
 }
 
@@ -5540,19 +5632,7 @@ async function sendDbConversationMessage(req) {
   }
   
   // Fetch executions from database
-  const executions = await withDbClient(configId, async client => {
-    const triggerIds = (await client.query(
-      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL",
-      [workflowId, conversationId]
-    )).rows.map(r => r.trigger_message_id).filter(Boolean);
-    
-    if (!triggerIds.length) return [];
-    
-    return (await client.query(
-      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id = $1 AND e.deleted_at IS NULL AND e.trigger_message_id = ANY($2::text[]) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
-      [workflowId, triggerIds]
-    )).rows;
-  });
+  const executions = await fetchDbConversationExecutions(configId, workflowId, conversationId);
   
   if (!executions.length) {
     const err = new Error("未找到该会话的执行记录");
@@ -5613,19 +5693,7 @@ async function previewDbConversationPayload(url) {
 
   requireTestDbConversationConfig(configId);
   
-  const executions = await withDbClient(configId, async client => {
-    const triggerIds = (await client.query(
-      "SELECT DISTINCT trigger_message_id FROM public.conversation_messages WHERE workflow_id = $1 AND conversation_id = $2 AND deleted_at IS NULL",
-      [workflowId, conversationId]
-    )).rows.map(r => r.trigger_message_id).filter(Boolean);
-    
-    if (!triggerIds.length) return [];
-    
-    return (await client.query(
-      "SELECT e.* FROM public.workflow_node_executions e WHERE e.workflow_id = $1 AND e.deleted_at IS NULL AND e.trigger_message_id = ANY($2::text[]) ORDER BY e.started_at ASC NULLS LAST, e.id ASC",
-      [workflowId, triggerIds]
-    )).rows;
-  });
+  const executions = await fetchDbConversationExecutions(configId, workflowId, conversationId);
   
   if (!executions.length) {
     const err = new Error("未找到该会话的执行记录");

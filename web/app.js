@@ -339,8 +339,13 @@ function updateCaseFromForm() {
   return c;
 }
 
+function isDbAnalyticsTabEnabled() {
+  return state.config?.showDbAnalyticsTab === true;
+}
+
 function setView(name, options = {}) {
-  const nextView = APP_VIEW_NAMES.has(name) ? name : 'cases';
+  let nextView = APP_VIEW_NAMES.has(name) ? name : 'cases';
+  if (nextView === 'dbAnalytics' && !isDbAnalyticsTabEnabled()) nextView = 'cases';
   try {
     window.localStorage.setItem(APP_ACTIVE_VIEW_STORAGE_KEY, nextView);
   } catch {
@@ -555,6 +560,7 @@ function renderListToolbars() {
   window.renderUpdateManagerButton?.({ visible, currentVersion: state.updateStatus.currentVersion, updateAvailable: state.updateCheck?.updateAvailable });
   if (!window.renderAntListPages) return;
   window.renderAntListPages({
+    showDbAnalyticsTab: isDbAnalyticsTabEnabled(),
     activeView: $('labelsView').classList.contains('active')
       ? 'labels'
       : $('dbAnalyticsView').classList.contains('active')
@@ -1307,17 +1313,30 @@ function renderSystemSettingsDialog() {
     mqSelectedId: state.mqSettingsSelectedId,
     dbConfigs: state.dbConfigs,
     dbSelectedId: state.dbSettingsSelectedId,
-    dbTesting: state.dbSettingsTesting
+    dbTesting: state.dbSettingsTesting,
+    showDbAnalyticsTab: isDbAnalyticsTabEnabled()
   });
 }
 
 async function openSystemSettings(tab = 'mq') {
   await Promise.all([loadMqConfigs(), loadDbConfigs()]);
   state.systemSettingsOpen = true;
-  state.systemSettingsTab = tab === 'database' ? 'database' : 'mq';
+  state.systemSettingsTab = ['mq', 'database', 'general'].includes(tab) ? tab : 'mq';
   state.mqSettingsSelectedId ||= state.mqConfigs[0]?.id || null;
   state.dbSettingsSelectedId ||= state.dbConfigs[0]?.id || '__new__';
   renderSystemSettingsDialog();
+}
+
+async function setShowDbAnalyticsTab(enabled) {
+  const nextConfig = { ...(state.config || {}), showDbAnalyticsTab: Boolean(enabled) };
+  state.config = normalizeConfigLabels(await api('/api/config', { method: 'PUT', body: JSON.stringify(nextConfig) }));
+  if (!isDbAnalyticsTabEnabled() && $('dbAnalyticsView').classList.contains('active')) {
+    setView('dbRecords', { skipDbAutoLoad: true });
+  } else {
+    renderListToolbars();
+  }
+  renderSystemSettingsDialog();
+  toast(isDbAnalyticsTabEnabled() ? '已开启「工作流运行分析」标签页' : '已隐藏「工作流运行分析」标签页');
 }
 
 function closeSystemSettings() {
@@ -2746,9 +2765,10 @@ function bindEvents() {
     if (type === 'open-record') showRecord(date, fileName).catch(showError);
     if (type === 'open-db-settings') openSystemSettings('database').catch(showError);
     if (type === 'set-system-settings-tab') {
-      state.systemSettingsTab = value === 'database' ? 'database' : 'mq';
+      state.systemSettingsTab = ['mq', 'database', 'general'].includes(value) ? value : 'mq';
       renderSystemSettingsDialog();
     }
+    if (type === 'set-show-db-analytics-tab') setShowDbAnalyticsTab(e.detail?.enabled).catch(showError);
     if (type === 'select-db-config') {
       state.dbSettingsSelectedId = value;
       renderDbRecordsPage();
@@ -2794,8 +2814,8 @@ function bindEvents() {
     if (type === 'load-db-node-execution') {
       loadDbConversationNodeExecution(workflowId, triggerMessageId, e.detail?.executionId).catch(showError);
     }
-    if (type === 'copy-conversation-id') copyText(value, '已复制 Conversation_id');
-    if (type === 'copy-trigger-message-id') copyText(value, '已复制 triggerMessageId');
+    if (type === 'copy-conversation-id') copyText(value, '已复制 conversation_id');
+    if (type === 'copy-trigger-message-id') copyText(value, '已复制 event_id');
     if (type === 'copy-trigger-output-json') copyText(JSON.stringify(dbTriggerMessageCopyPayload(payload), null, 2), '已复制消息 JSON');
     if (type === 'save-trigger-output-as-case') saveTriggerOutputAsCase(payload, name, businessScenario, expectedResult).catch(showError);
     if (type === 'manage-label-item') manageLabelItem(labelType, action, name, replacement).catch(showError);
