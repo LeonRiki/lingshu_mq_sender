@@ -1550,7 +1550,7 @@ function dbPoolForConfig(Pool, config, fingerprint) {
     database: config.database,
     user: config.user,
     password: config.password,
-    max: 1,
+    max: 3,
     idleTimeoutMillis: 60 * 60 * 1000,
     connectionTimeoutMillis: 5000
   });
@@ -1570,7 +1570,7 @@ function dbPoolForConfig(Pool, config, fingerprint) {
 }
 
 async function withDbClient(configId, callback, { allowConnect = false } = {}) {
-  return withDbClientQueue(() => withDbClientOnce(configId, callback, { allowConnect }));
+  return withDbClientOnce(configId, callback, { allowConnect });
 }
 
 async function withDbClientQueue(callback) {
@@ -2927,7 +2927,7 @@ async function listDbConversations(url) {
                               NULLIF(BTRIM(e.inputs::jsonb ->> 'friendNick'), ''))
               FROM public.workflow_node_executions e
               WHERE e.workflow_id = candidate.workflow_id
-                AND e.event_id = recent.event_id
+                AND e.event_id = (recent.event_id COLLATE "default")
                 AND e.deleted_at IS NULL
                 AND (e.node_type = 'lingxi_trigger' OR e.node_name = '灵犀触发器')
                 AND COALESCE(NULLIF(BTRIM(e.outputs::jsonb ->> 'friendNick'), ''),
@@ -2938,7 +2938,7 @@ async function listDbConversations(url) {
             (
               SELECT NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '')
               FROM public.channel_messages cm
-              WHERE cm.event_id = recent.event_id
+              WHERE cm.event_id = (recent.event_id COLLATE "default")
                 AND cm.deleted_at IS NULL
                 AND NULLIF(BTRIM(cm.raw_data ->> 'friendNick'), '') IS NOT NULL
               ORDER BY cm.id DESC
@@ -2968,7 +2968,7 @@ async function listDbConversations(url) {
                   OR EXISTS (
                     SELECT 1
                     FROM public.channel_messages cm
-                    WHERE cm.event_id = m.event_id
+                    WHERE cm.event_id = (m.event_id COLLATE "default")
                       AND cm.deleted_at IS NULL
                       AND (
                         (cm.raw_data -> 'input')::text ILIKE $${params.length}
@@ -2983,7 +2983,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions send
                   WHERE send.workflow_id = m.workflow_id
-                    AND send.event_id = m.event_id
+                    AND send.event_id = (m.event_id COLLATE "default")
                     AND send.deleted_at IS NULL
                     AND send.node_type = 'lingxi_send'
                     AND send.inputs::text ILIKE '%actionType%'
@@ -2994,7 +2994,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions e
                   WHERE e.workflow_id = m.workflow_id
-                    AND e.event_id = m.event_id
+                    AND e.event_id = (m.event_id COLLATE "default")
                     AND e.deleted_at IS NULL
                     AND (
                       e.inputs::text ILIKE $${params.length}
@@ -3008,7 +3008,7 @@ async function listDbConversations(url) {
                   SELECT 1
                   FROM public.workflow_node_executions send
                   WHERE send.workflow_id = m.workflow_id
-                    AND send.event_id = m.event_id
+                    AND send.event_id = (m.event_id COLLATE "default")
                     AND send.deleted_at IS NULL
                     AND send.node_type = 'lingxi_send'
                     AND send.inputs::text ILIKE '%actionType%'
@@ -3030,7 +3030,7 @@ async function listDbConversations(url) {
           FROM public.conversation_messages m
           JOIN public.workflow_node_executions e
            ON e.workflow_id = m.workflow_id
-           AND e.event_id = m.event_id
+           AND e.event_id = (m.event_id COLLATE "default")
            AND e.deleted_at IS NULL
           WHERE m.workflow_id = candidate.workflow_id
             AND m.conversation_id = candidate.conversation_id
@@ -3048,7 +3048,7 @@ async function listDbConversations(url) {
           FROM public.conversation_messages m
           JOIN public.workflow_node_executions e
            ON e.workflow_id = m.workflow_id
-           AND e.event_id = m.event_id
+           AND e.event_id = (m.event_id COLLATE "default")
            AND e.deleted_at IS NULL
           WHERE m.workflow_id = candidate.workflow_id
             AND m.conversation_id = candidate.conversation_id
@@ -3133,13 +3133,13 @@ async function listDbConversations(url) {
       LEFT JOIN LATERAL (
         SELECT c.raw_data
         FROM public.channel_messages c
-        WHERE c.event_id = m.event_id
+        WHERE c.event_id = (m.event_id COLLATE "default")
           AND c.deleted_at IS NULL
         ORDER BY c.id DESC
         LIMIT 1
       ) cm ON TRUE
       WHERE m.workflow_id = $1
-        AND m.conversation_id = ANY($2::text[])
+        AND m.conversation_id = ANY($2::varchar[])
         AND m.deleted_at IS NULL
       ORDER BY m.message_timestamp ASC NULLS LAST, m.id ASC
     `, [workflowId, conversationIds])).rows;
@@ -3181,7 +3181,7 @@ async function listDbConversations(url) {
       FROM public.workflow_node_executions e
       ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
       WHERE e.workflow_id = $1
-        AND e.event_id = ANY($2::text[])
+        AND e.event_id = ANY($2::varchar[])
         AND e.deleted_at IS NULL
         AND (
           e.node_type = 'lingxi_trigger'
@@ -4967,7 +4967,7 @@ async function queryDbWorkflowAnalytics(url) {
     const analyticsSql = `
       WITH active_messages AS MATERIALIZED (
         SELECT m.conversation_id,
-               NULLIF(BTRIM(m.event_id), '') AS trigger_message_id,
+               NULLIF(BTRIM(m.event_id COLLATE "default"), '') AS trigger_message_id,
                m.message_timestamp
         FROM public.conversation_messages m
         WHERE m.workflow_id = $1
@@ -5359,7 +5359,7 @@ async function dbConversationDetail(url) {
         LEFT JOIN LATERAL (
           SELECT c.raw_data
           FROM public.channel_messages c
-          WHERE c.event_id = m.event_id
+          WHERE c.event_id = (m.event_id COLLATE "default")
             AND c.deleted_at IS NULL
           ORDER BY c.id DESC
           LIMIT 1
@@ -5387,7 +5387,7 @@ async function dbConversationDetail(url) {
     const triggerIds = [...new Set(messages.rows.map(dbTriggerIdOf).filter(Boolean))];
     const temporalWorkflowId = `platform:${workflowId}:${conversationId}`;
     const executionWhereClause = triggerIds.length
-      ? 'e.event_id = ANY($2::text[])'
+      ? 'e.event_id = ANY($2::varchar[])'
       : '(e.temporal_workflow_id = $2 OR e.conversation_id = $3)';
     const executionParams = triggerIds.length
       ? [workflowId, triggerIds]
@@ -5436,8 +5436,8 @@ async function dbConversationDetail(url) {
                e.outputs
         FROM public.workflow_node_executions e
         WHERE e.workflow_id = $1
-          AND e.event_id = ANY($2::text[])
-          AND e.node_id = ANY($3::text[])
+          AND e.event_id = ANY($2::varchar[])
+          AND e.node_id = ANY($3::varchar[])
           AND e.deleted_at IS NULL
       `, [workflowId, triggerIds, referencedNodeIds])).rows;
       const outputsByNode = new Map(referencedOutputs.map(item => [
@@ -5590,7 +5590,7 @@ async function fetchDbConversationExecutions(configId, workflowId, conversationI
       ${DB_TRIGGER_CHANNEL_FALLBACK_JOIN}
       WHERE e.workflow_id = $1
         AND e.deleted_at IS NULL
-        AND e.event_id = ANY($2::text[])
+        AND e.event_id = ANY($2::varchar[])
       ORDER BY e.started_at ASC NULLS LAST, e.id ASC
     `, [workflowId, triggerIds])).rows;
   });
